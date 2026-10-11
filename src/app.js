@@ -2,8 +2,10 @@
 import { PLAYERS, SLOTS, SLOT, SLOT_KEYS, OFF_SLOTS, DEF_SLOTS, ATTRS, BASELINE, autoDepthChart, unitRatings } from './ratings.js';
 import { SPRITES } from './sprites.js';
 import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER } from './types.js';
-import { OFF_PLAYS, DEF_PLAYS, runPlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
+import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
   quarterText, fgDistance, fgChance, absSpot, createGame } from './engine.js';
+import { createLivePlay, snap, step as stepLive, playSeconds, DT } from './live.js';
+import { Stage, webglAvailable } from './field3d.js';
 import * as LG from './league.js';
 
 const SAVE_KEY = 'pokeball.save.v1';
@@ -470,30 +472,54 @@ function renderGame() {
   const g = S.game;
   if (!g) return `<section><p>No game in progress.</p></section>`;
   const us = userSide();
-  const decide = !g.final && needsUser(g) && !S.busy;
+  const live3d = !!stage;
+  const decide = !g.final && needsUser(g) && !S.busy && !L3.lp;
   let controls;
   if (g.final) {
     controls = `<div class="card final"><h2>${g.winner == null ? 'Tie game' : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose'}, ${Math.max(...g.score)} to ${Math.min(...g.score)}</h2>
       <div class="actions">${S.gameMeta?.quick ? '<button class="btn primary" data-act="quick">Play another quick game</button><button class="btn" data-act="home">Home</button>'
         : '<button class="btn primary" data-act="finishgame">Back to the season</button>'}</div></div>`;
   } else {
-    controls = `<div class="card callcard">${decide ? playCards(g) : `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI coaching this down'}</h3><span class="muted">Coach mode hands you 3rd and 4th downs and the last two minutes</span></div>`}
+    let head;
+    if (L3.lp) {
+      const lp = L3.lp;
+      const mine = lp.user === lp.o ? OFF_PLAYS[L3.off].name : DEF_PLAYS[L3.def].name;
+      head = `<div class="callhead"><h3>${lp.phase === 'pre' ? `Lined up: ${esc(mine)}` : 'Play in progress'}</h3><span class="muted">${downText(g)} at ${spotText(g)}</span></div>
+        ${lp.phase === 'pre' ? `<div class="actions"><button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap the ball' : 'Start the play'} <kbd>Space</kbd></button>
+        ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change play</button>'}</div>` : ''}`;
+    } else if (decide) head = playCards(g);
+    else head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">Coach mode hands you 3rd and 4th downs and the last two minutes</span></div>`;
+    controls = `<div class="card callcard">${head}
       <div class="simrow">
         <label class="check"><input type="checkbox" id="g-coach" ${S.coach ? 'checked' : ''}> Coach mode</label>
-        <button class="btn" data-act="sim" data-stop="drive">Sim drive</button>
-        <button class="btn" data-act="sim" data-stop="quarter">Sim quarter</button>
-        <button class="btn" data-act="sim" data-stop="game">Sim to the end</button>
+        <button class="btn" data-act="sim" data-stop="drive" ${L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : ''}>Sim drive</button>
+        <button class="btn" data-act="sim" data-stop="quarter" ${L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : ''}>Sim quarter</button>
+        <button class="btn" data-act="sim" data-stop="game" ${L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : ''}>Sim to the end</button>
       </div></div>`;
   }
-  return `<section class="game">
+  const field = live3d ? `<div class="stage-slot" id="stage-slot"></div>${keysHelp()}` : `<div class="fieldwrap">${renderField(g)}</div>`;
+  return `<section class="game ${live3d ? 'g3d' : ''}">
     ${scoreboard(g)}
-    <div class="fieldwrap">${renderField(g)}</div>
+    ${field}
     ${lastPlayHtml(g)}
     ${controls}
     <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
     <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : drivesHtml(g)}</div>
     <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
   </section>`;
+}
+
+function keysHelp() {
+  return `<details class="keys"><summary>Controls</summary><div class="keygrid">
+    <span><kbd>Space</kbd> snap, juke with the ball, dive to tackle</span>
+    <span><kbd>W A S D</kbd> or arrows: move your player</span>
+    <span><kbd>Shift</kbd> sprint</span>
+    <span><kbd>1</kbd>-<kbd>5</kbd> throw to that receiver</span>
+    <span><kbd>T</kbd> throw it away</span>
+    <span><kbd>E</kbd> truck through a tackler</span>
+    <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
+    <span>Leave the keys alone and your player runs on autopilot.</span>
+  </div></details>`;
 }
 
 function logHtml(g) {
@@ -560,31 +586,234 @@ function animatePlay(entry, done) {
 
 function doCall(call) {
   const g = S.game;
-  if (!g || g.final || S.busy) return;
+  if (!g || g.final || S.busy || L3.lp) return;
   const us = userSide();
   const off = g.poss === us ? call : aiOffenseCall(g);
   const def = g.poss === us ? aiDefenseCall(g) : call;
+  S.coachDown = false;
+  if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) { startLive(off, def, { userSide: us, autoSnap: g.poss === us ? null : 1.6 }); return; }
   S.busy = true;
   const entry = runPlay(g, off, def);
+  if (stage) { S.busy = false; afterLivePlay(entry); return; }
   animatePlay(entry, () => { S.busy = false; save(); render(); autoAdvance(); });
 }
 
-// Coach mode: the AI runs downs until a decision is yours.
+// Coach mode: the AI calls downs until a decision is yours. On the 3D field you still
+// play them; leave the keys alone and the AI plays your Pokémon too.
 function autoAdvance() {
   clearTimeout(timers.auto);
   const g = S.game;
-  if (!g || g.final || S.screen !== 'game' || !S.coach || needsUser(g)) return;
+  if (!g || g.final || S.screen !== 'game' || !S.coach || needsUser(g) || L3.lp) return;
   timers.auto = setTimeout(() => {
-    if (!S.game || S.game.final || S.screen !== 'game') return;
+    if (!S.game || S.game.final || S.screen !== 'game' || L3.lp) return;
+    const off = aiOffenseCall(g), def = aiDefenseCall(g);
+    if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) {
+      S.coachDown = true;
+      startLive(off, def, { userSide: userSide(), autoQB: true, autoSnap: 1.4 });
+      return;
+    }
     S.busy = true;
     render();
-    const entry = runPlay(g, aiOffenseCall(g), aiDefenseCall(g));
+    const entry = runPlay(g, off, def);
+    if (stage) { S.busy = false; afterLivePlay(entry); return; }
     animatePlay(entry, () => { S.busy = false; save(); render(); autoAdvance(); });
-  }, 650);
+  }, stage ? 900 : 650);
+}
+
+// ---------- the live 3D game ----------
+const L3 = { lp: null, off: null, def: null, acc: 0, last: 0, deadT: 0, autoSnap: null, keys: new Set(), edges: new Set(), ev: 0, raf: 0, flashT: 0, preview: null };
+let stage = null;
+let stageWrap = null;
+
+function ensureStage() {
+  if (stage || !webglAvailable()) return;
+  try {
+    stage = new Stage();
+  } catch { stage = null; return; }
+  stageWrap = document.createElement('div');
+  stageWrap.className = 'stagewrap';
+  stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
+    <div class="touch" id="touch" aria-hidden="true"><div class="stick" id="stick"><span></span></div>
+      <div class="tbtns"><button data-key="Space">Snap / Juke / Dive</button><button data-key="KeyE">Truck</button><button data-key="KeyQ">Switch</button>
+      <span class="trow">${[1, 2, 3, 4, 5].map((n) => `<button data-key="Digit${n}">${n}</button>`).join('')}</span></div></div>`;
+  stageWrap.prepend(stage.el);
+  bindTouch(stageWrap);
+  if (!L3.raf) L3.raf = requestAnimationFrame(loop);
+}
+
+function mountStage() {
+  const slot = document.getElementById('stage-slot');
+  if (!slot || !stageWrap) return;
+  slot.appendChild(stageWrap);
+  stage.resize();
+  if (!L3.lp) showPreview();
+}
+
+// Between plays, line both teams up at the new spot.
+function showPreview() {
+  const g = S.game;
+  if (!g || !stage) return;
+  const us = userSide();
+  const key = `${g.playNo}:${g.poss}:${g.spot}:${g.final}`;
+  if (L3.preview?.key === key && L3.preview.g === g) { stage.setPlay(L3.preview.lp); return; }
+  const saved = g.rng;
+  const lp = createLivePlay(g, g.poss === us ? 'slant' : 'inside_run', 'base', { userSide: us });
+  g.rng = saved;
+  lp.control = null; lp.preview = true;
+  L3.preview = { key, lp, g };
+  stage.setPlay(lp);
+  stage.snapCamera();
+}
+
+function startLive(off, def, opts) {
+  const g = S.game;
+  L3.lp = createLivePlay(g, off, def, opts);
+  L3.off = off; L3.def = def; L3.acc = 0; L3.deadT = 0; L3.ev = 0;
+  L3.autoSnap = opts.autoSnap ?? null;
+  L3.edges.clear();
+  stage.setPlay(L3.lp);
+  render();
+  const top = stageWrap?.getBoundingClientRect().top;
+  if (top != null && (top < 60 || top > window.innerHeight * 0.4)) window.scrollTo({ top: Math.max(0, window.scrollY + top - 70), behavior: reduceMotion ? 'auto' : 'smooth' });
+}
+
+function doSnap() {
+  const lp = L3.lp;
+  if (!lp || lp.phase !== 'pre') return;
+  snap(lp);
+  L3.autoSnap = null;
+  render();
+}
+
+function finishLive() {
+  const lp = L3.lp, g = S.game;
+  L3.lp = null;
+  const entry = runLivePlay(g, L3.off, L3.def, lp.result, playSeconds(lp));
+  S.coachDown = false;
+  afterLivePlay(entry);
+}
+
+function afterLivePlay(entry) {
+  save();
+  render();
+  if (entry) flash(entry.highlight === 'td' || entry.kind === 'score' ? 'TOUCHDOWN' : '', entry.highlight === 'td' ? 'td' : '');
+  autoAdvance();
+}
+
+function flash(text, tone = '') {
+  const el = document.getElementById('hud-flash');
+  if (!el || !text) return;
+  el.textContent = text;
+  el.className = `hud-flash on ${tone}`;
+  L3.flashT = performance.now() + 1400;
+}
+
+const FLASH = { int: ['INTERCEPTED!', 'to'], sack: ['SACK!', 'to'], broken: ['Broken tackle!', ''], juke: ['Juke!', ''], ghost: ['Phased through!', 'big'],
+  catch: ['Caught!', ''], incomplete: ['Incomplete', 'muted'], scramble: ['Scramble!', ''], truck: ['Truck stick!', ''] };
+
+function readInput(lp) {
+  const k = L3.keys, e = L3.edges;
+  const up = (k.has('ArrowUp') || k.has('KeyW') ? 1 : 0) - (k.has('ArrowDown') || k.has('KeyS') ? 1 : 0) + (L3.stick?.up ?? 0);
+  const right = (k.has('ArrowRight') || k.has('KeyD') ? 1 : 0) - (k.has('ArrowLeft') || k.has('KeyA') ? 1 : 0) + (L3.stick?.right ?? 0);
+  const m = stage.toPlayFrame(up, right);
+  const throwKey = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].find((d) => e.has(d));
+  const inp = {
+    mx: m.mx, my: m.my, sprint: k.has('ShiftLeft') || k.has('ShiftRight'),
+    juke: e.has('Space'), dive: e.has('Space'), truck: e.has('KeyE'),
+    throwTo: throwKey ? ['WR1', 'WR2', 'WR3', 'TE', 'RB'][Number(throwKey.slice(5)) - 1] : null,
+    throwAway: e.has('KeyT'), switchTo: e.has('KeyQ') || e.has('Tab') ? 'ball' : null,
+  };
+  e.clear();
+  return inp;
+}
+
+function hudTip(lp) {
+  if (!lp) return S.game && !S.game.final ? 'Call a play below' : '';
+  const c = lp.control;
+  if (lp.phase === 'pre') return lp.user === lp.o ? `Space to snap${lp.kind === 'pass' ? ' · then 1-5 to throw' : ''}` : 'Q to pick a defender · Space to start';
+  if (lp.phase === 'dead') return '';
+  if (!c) return 'Watching';
+  if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run') return '1-5 throw · T throw away · Arrows move · Space spin';
+  if (c.carrier) return 'Arrows run · Shift sprint · Space juke · E truck';
+  if (c.side !== lp.carrierTeam || c.side === 'def') return 'Arrows move · Space dive · Q switch to the ball';
+  return 'Arrows move';
+}
+
+function loop(now) {
+  L3.raf = requestAnimationFrame(loop);
+  if (!stage || S.screen !== 'game' || !document.getElementById('stage-slot')) { L3.last = now; return; }
+  const dt = Math.min(0.1, (now - (L3.last || now)) / 1000);
+  L3.last = now;
+  const lp = L3.lp;
+  if (lp) {
+    if (lp.phase === 'pre') {
+      stepLive(lp, null);
+      if (L3.edges.has('Space')) { L3.edges.clear(); doSnap(); }
+      else if (L3.edges.has('KeyQ') || L3.edges.has('Tab')) {
+        L3.edges.clear();
+        if (lp.user === lp.d) {
+          const order = ['MLB', 'OLB', 'SS', 'FS', 'CB1', 'CB2', 'CB3', 'LE', 'DE', 'DT1', 'DT2'].map((k) => lp.def[k]).filter(Boolean);
+          lp.control = order[(order.indexOf(lp.control) + 1) % order.length];
+        }
+      } else L3.edges.clear();
+      if (L3.autoSnap != null) { L3.autoSnap -= dt; if (L3.autoSnap <= 0) doSnap(); }
+    } else {
+      L3.acc += dt;
+      while (L3.acc >= DT) {
+        stepLive(lp, lp.phase === 'live' ? readInput(lp) : null);
+        L3.acc -= DT;
+      }
+      while (L3.ev < lp.events.length) {
+        const e = lp.events[L3.ev++];
+        const f = FLASH[e.kind];
+        if (f && !(e.kind === 'catch' && lp.user == null)) flash(f[0], f[1]);
+      }
+      if (lp.phase === 'dead') {
+        L3.deadT += dt;
+        if (L3.deadT > 1.5) { finishLive(); return; }
+      }
+    }
+  }
+  const tip = document.getElementById('hud-tip');
+  const t = hudTip(L3.lp);
+  if (tip && tip.textContent !== t) tip.textContent = t;
+  const call = document.getElementById('hud-call');
+  const ct = L3.lp ? `${OFF_PLAYS[L3.off].name} vs ${DEF_PLAYS[L3.def].name}` : '';
+  if (call && call.textContent !== ct) call.textContent = ct;
+  if (L3.flashT && now > L3.flashT) { L3.flashT = 0; const f = document.getElementById('hud-flash'); if (f) f.className = 'hud-flash'; }
+  stage.frame(now);
+}
+
+function onKey(e, down) {
+  if (S.screen !== 'game' || !stage || !S.game) return;
+  if (e.target.closest?.('input, select, textarea')) return;
+  const code = e.code;
+  const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyQ', 'KeyT', 'Tab',
+    'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(code);
+  if (!game) return;
+  if (!L3.lp) { if (code === 'Space' && down && e.target === document.body) e.preventDefault(); return; }
+  e.preventDefault();
+  if (down) { if (!L3.keys.has(code)) L3.edges.add(code); L3.keys.add(code); } else L3.keys.delete(code);
+}
+
+function bindTouch(root) {
+  const stick = root.querySelector('#stick');
+  let origin = null;
+  stick.addEventListener('pointerdown', (e) => { origin = { x: e.clientX, y: e.clientY, id: e.pointerId }; stick.setPointerCapture(e.pointerId); });
+  stick.addEventListener('pointermove', (e) => {
+    if (!origin || e.pointerId !== origin.id) return;
+    const dx = (e.clientX - origin.x) / 40, dy = (e.clientY - origin.y) / 40;
+    L3.stick = { up: Math.max(-1, Math.min(1, -dy)), right: Math.max(-1, Math.min(1, dx)) };
+    stick.firstElementChild.style.transform = `translate(${Math.max(-1, Math.min(1, dx)) * 22}px, ${Math.max(-1, Math.min(1, dy)) * 22}px)`;
+  });
+  const end = () => { origin = null; L3.stick = null; stick.firstElementChild.style.transform = ''; };
+  stick.addEventListener('pointerup', end); stick.addEventListener('pointercancel', end);
+  root.querySelectorAll('[data-key]').forEach((b) => b.addEventListener('pointerdown', (e) => { e.preventDefault(); L3.edges.add(b.dataset.key); }));
 }
 
 function startGame(game, meta) {
   S.game = game; S.gameMeta = meta; S.gameTab = 'log'; S.busy = false;
+  L3.lp = null; L3.preview = null;
   setScreen('game');
   autoAdvance();
 }
@@ -676,9 +905,12 @@ function onClick(e) {
     }
     case 'finishgame': finishLeagueGame(); break;
     case 'call': doCall(el.dataset.call); break;
+    case 'snap': doSnap(); break;
+    case 'recall': if (L3.lp?.phase === 'pre') { L3.lp = null; render(); } break;
     case 'sim': {
       const g = S.game;
-      if (!g || S.busy) return;
+      if (!g || S.busy || (L3.lp && L3.lp.phase !== 'pre')) return;
+      L3.lp = null;
       clearTimeout(timers.auto);
       simUntil(g, el.dataset.stop);
       save(); render(); autoAdvance();
@@ -755,13 +987,14 @@ function render() {
     case 'grades': body = renderGrades(); break;
     case 'depth': body = renderDepth(); break;
     case 'season': body = renderSeason(); break;
-    case 'game': body = renderGame(); break;
+    case 'game': ensureStage(); body = renderGame(); break;
     default: body = renderHome();
   }
   const y = window.scrollY;
   const boardScroll = document.querySelector('.board .tablewrap')?.scrollTop;
   const focusId = document.activeElement?.id;
   app.innerHTML = renderTop() + `<main>${body}</main>`;
+  if (S.screen === 'game') mountStage();
   if (S.screen === 'draft' && boardScroll != null) { const b = document.querySelector('.board .tablewrap'); if (b) b.scrollTop = boardScroll; }
   if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
   window.scrollTo(0, y);
@@ -777,6 +1010,9 @@ function start(data) {
   document.addEventListener('input', onInput);
   document.addEventListener('change', onChange);
   document.addEventListener('submit', onSubmit);
+  window.addEventListener('keydown', (e) => onKey(e, true));
+  window.addEventListener('keyup', (e) => onKey(e, false));
+  window.addEventListener('blur', () => L3.keys.clear());
   render();
   if (S.screen === 'draft') draftTick();
   if (S.screen === 'game') autoAdvance();

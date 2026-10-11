@@ -4,6 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ESB="${ESBUILD:-npx --yes esbuild@0.24.0}"
+[ -d node_modules/three ] || npm install --no-audit --no-fund
 $ESB src/app.js --bundle --format=iife --minify --target=es2020 --charset=utf8 --outfile=dist/app.js --log-level=warning
 node -e '
 const fs = require("fs");

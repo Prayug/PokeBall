@@ -289,6 +289,34 @@ mark { background: var(--amber); color: var(--turf-deep); padding: 0 4px; border
   .fp, .football { transition: none; }
   .dots::after { animation: none; }
 }
+
+/* 3D field */
+.stage-slot { min-height: clamp(320px, 62vh, 720px); }
+.stagewrap { position: relative; height: clamp(320px, 62vh, 720px); border-radius: var(--r); overflow: hidden; border: 1px solid var(--line); background: #0b1a2a; touch-action: none; user-select: none; }
+.stage, .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.hud { position: absolute; inset: 0; pointer-events: none; display: grid; grid-template-rows: auto 1fr auto; padding: 10px 12px; }
+.hud-call { justify-self: start; font: 600 14px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.08em; background: rgba(13, 43, 32, 0.78); padding: 7px 10px; border-radius: 4px; }
+.hud-call:empty, .hud-tip:empty { display: none; }
+.hud-flash { align-self: center; justify-self: center; font: 400 clamp(28px, 6vw, 56px)/1 var(--f-display); color: var(--chalk); text-shadow: 0 3px 0 rgba(0,0,0,0.55); opacity: 0; transform: scale(0.9); transition: opacity 0.18s, transform 0.18s; }
+.hud-flash.on { opacity: 1; transform: scale(1); }
+.hud-flash.to { color: var(--bad); }
+.hud-flash.td { color: var(--amber); }
+.hud-flash.big { color: var(--good); }
+.hud-flash.muted { color: var(--chalk-dim); font-size: clamp(22px, 4vw, 36px); }
+.hud-tip { justify-self: center; font: 600 14px/1.2 var(--f-data); letter-spacing: 0.06em; background: rgba(13, 43, 32, 0.8); padding: 7px 12px; border-radius: 4px; text-align: center; }
+.touch { display: none; }
+@media (pointer: coarse) {
+  .touch { display: flex; position: absolute; inset: auto 0 44px 0; justify-content: space-between; align-items: flex-end; padding: 0 12px; pointer-events: none; }
+  .stick { pointer-events: auto; width: 96px; height: 96px; border-radius: 50%; background: rgba(238, 242, 230, 0.12); border: 2px solid rgba(238, 242, 230, 0.35); display: grid; place-items: center; touch-action: none; }
+  .stick span { width: 42px; height: 42px; border-radius: 50%; background: rgba(238, 242, 230, 0.55); }
+  .tbtns { pointer-events: auto; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .tbtns button, .trow button { background: rgba(13, 43, 32, 0.82); border: 1px solid rgba(238, 242, 230, 0.4); border-radius: 6px; padding: 10px 12px; font: 600 14px/1 var(--f-data); text-transform: uppercase; }
+  .trow { display: flex; gap: 4px; }
+  .trow button { padding: 10px 11px; }
+}
+kbd { font: 600 12px/1 var(--f-data); background: var(--turf-deep); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 2px 5px; color: var(--chalk); }
+.keys summary { cursor: pointer; font: 600 13px/1.3 var(--f-data); text-transform: uppercase; letter-spacing: 0.08em; color: var(--chalk-dim); }
+.keygrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px 16px; padding: 8px 0; font-size: 14px; color: var(--chalk-dim); }
 </style>
 <div id="app"></div>
 <!--APP-->

@@ -31,7 +31,7 @@ export const DEF_PLAYS = {
 };
 
 // Separation adjustments by defensive call and route depth; run lane adjustments.
-const SCHEME = {
+export const SCHEME = {
   base: { screen: 0, short: 0, mid: 0, deep: 0, run: 0, zone: false },
   run_blitz: { screen: 2, short: 3, mid: 3, deep: 2, run: -5, zone: false },
   pass_blitz: { screen: 6, short: 3, mid: 4, deep: 4, run: 2, zone: false },
@@ -45,18 +45,18 @@ const SEP_OFFSET = 13.5;
 const BASE_CMP = { screen: 0.87, short: 0.75, mid: 0.63, deep: 0.41 };
 
 // ---------- random numbers (state lives in the game so saves resume exactly) ----------
-function rand(g) {
+export function rand(g) {
   g.rng = (g.rng + 0x6D2B79F5) >>> 0;
   let t = g.rng;
   t = Math.imul(t ^ (t >>> 15), t | 1);
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
-const randn = (g) => Math.sqrt(-2 * Math.log(1 - rand(g))) * Math.cos(2 * Math.PI * rand(g));
-const expo = (g, mean) => -Math.log(1 - rand(g)) * mean;
-const chance = (g, p) => rand(g) < p;
-const sigmoid = (x) => 1 / (1 + Math.exp(-x));
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+export const randn = (g) => Math.sqrt(-2 * Math.log(1 - rand(g))) * Math.cos(2 * Math.PI * rand(g));
+export const expo = (g, mean) => -Math.log(1 - rand(g)) * mean;
+export const chance = (g, p) => rand(g) < p;
+export const sigmoid = (x) => 1 / (1 + Math.exp(-x));
+export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const between = (g, lo, hi) => lo + Math.floor(rand(g) * (hi - lo + 1));
 function pickWeighted(g, weights) {
   const entries = Object.entries(weights).filter(([, w]) => w > 0);
@@ -122,7 +122,7 @@ function cond(g, ti, id, when) {
   }
 }
 
-function eff(g, ti, id, attr, ctx = {}) {
+export function eff(g, ti, id, attr, ctx = {}) {
   if (id == null) return 30;
   const p = PLAYERS[id];
   const ab = ABILITIES[p.ability];
@@ -158,13 +158,13 @@ function typeMod(attId, defId) {
 }
 
 // A contested rep: each side's value scaled by its type matchup against the other.
-function rep(aId, aVal, dId, dVal) {
+export function rep(aId, aVal, dId, dVal) {
   const am = typeMod(aId, dId), dm = typeMod(dId, aId);
   return { diff: aVal * am.mod - dVal * dm.mod, aSE: am.mult > 1, dSE: dm.mult > 1 };
 }
 
-const has = (id, special) => id != null && ABILITIES[PLAYERS[id].ability]?.special === special;
-const nm = (id) => (id == null ? 'nobody' : PLAYERS[id].name);
+export const has = (id, special) => id != null && ABILITIES[PLAYERS[id].ability]?.special === special;
+export const nm = (id) => (id == null ? 'nobody' : PLAYERS[id].name);
 
 // ---------- helpers on game state ----------
 function addLog(g, e) {
@@ -172,7 +172,7 @@ function addLog(g, e) {
   g.log.push(entry);
   return entry;
 }
-function st(g, ti, id) {
+export function st(g, ti, id) {
   const s = g.teams[ti].stats;
   if (!s[id]) s[id] = emptyStats();
   return s[id];
@@ -307,23 +307,37 @@ export function quarterTotals(g, ti) {
 // ---------- the play ----------
 export function runPlay(g, offCall, defCall) {
   if (g.final) return null;
-  const o = g.poss, d = 1 - o;
   const play = OFF_PLAYS[offCall];
   g.playNo++;
-  const before = { spot: g.spot, down: g.down, toGo: g.toGo, poss: o };
-  const hurry = (g.quarter === 2 || g.quarter >= 4) && g.clock <= 120 && (g.quarter === 2 || g.score[o] <= g.score[d]);
-  const milk = g.quarter >= 4 && g.score[o] > g.score[d] && g.clock < 360;
-
-  const base = { kind: 'play', off: offCall, def: defCall, down: before.down, toGo: before.toGo, spotBefore: before.spot,
-    from: absSpot(o, before.spot), team: o, yards: 0 };
+  const base = { kind: 'play', off: offCall, def: defCall, down: g.down, toGo: g.toGo, spotBefore: g.spot,
+    from: absSpot(g.poss, g.spot), team: g.poss, yards: 0 };
   let r;
   if (play.kind === 'punt') r = doPunt(g, base);
   else if (play.kind === 'fg') r = doFieldGoal(g, base);
   else if (play.kind === 'run') r = doRun(g, offCall, defCall);
   else r = doPass(g, offCall, defCall);
+  return finishPlay(g, r, base, offCall, defCall, between(g, 4, 8));
+}
+
+// A run or pass played out on the live field: live.js decides what happened and keeps the
+// player stats; this applies it to the down, distance, score and clock like any other play.
+export function runLivePlay(g, offCall, defCall, r, seconds) {
+  if (g.final) return null;
+  g.playNo++;
+  const base = { spotBefore: g.spot };
+  return finishPlay(g, r, base, offCall, defCall, clamp(Math.round(seconds), 2, 20));
+}
+
+function finishPlay(g, r, base, offCall, defCall, playSecs) {
+  const o = g.poss, d = 1 - o;
+  const play = OFF_PLAYS[offCall];
+  const before = { spot: base.spotBefore, down: g.down, toGo: g.toGo, poss: o };
+  if (r.special) { before.down = base.down; before.toGo = base.toGo; }
+  const hurry = (g.quarter === 2 || g.quarter >= 4) && g.clock <= 120 && (g.quarter === 2 || g.score[o] <= g.score[d]);
+  const milk = g.quarter >= 4 && g.score[o] > g.score[d] && g.clock < 360;
 
   // Clock
-  let elapsed = between(g, 4, 8);
+  let elapsed = playSecs;
   if (!r.clockStop) elapsed += hurry ? between(g, 8, 14) : milk ? between(g, 34, 39) : between(g, 25, 35);
   elapsed = Math.min(elapsed, g.clock);
   g.clock -= elapsed;
@@ -466,7 +480,7 @@ function pickTackler(g, d, weights) {
   return L[pickWeighted(g, w)];
 }
 
-function fumbleCheck(g, o, d, carrier, tackler) {
+export function fumbleCheck(g, o, d, carrier, tackler) {
   if (has(carrier, 'noFumble')) return false;
   let p = 0.009 + (eff(g, d, tackler, 'tkl') - eff(g, o, carrier, 'str')) / 4000;
   if (g.weather === 'rain') p += 0.005;
