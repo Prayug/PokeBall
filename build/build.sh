@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Bundles src/ into one self-contained dist/index.html.
+# Bundles src/ into dist/index.html. The animated sprite strips it loads on demand live next to
+# it in dist/sprites3d/ (written by build_sprites3d.py), so ship that folder with the page.
 # Needs esbuild: set ESBUILD to its path, or it runs `npx esbuild@0.24.0`.
 set -euo pipefail
 cd "$(dirname "$0")/.."

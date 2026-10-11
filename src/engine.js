@@ -517,7 +517,7 @@ function doRun(g, call, defCall) {
     const push = (power - (eff(g, d, D('DT1'), 'str') + eff(g, d, D('DT2'), 'str')) / 2) * 0.03;
     yards = Math.round(1.3 + push + lane * 0.04 + 1.3 * randn(g));
   } else {
-    let mean = 3.2 + lane * 0.1;
+    let mean = 2.5 + lane * 0.1;
     let sd = 3.0;
     if (dir === 'outside') {
       const edge = (eff(g, d, D('OLB'), 'spd') + eff(g, d, D('CB1'), 'spd')) / 2;
@@ -737,7 +737,7 @@ function doPass(g, call, defCall) {
   }
 
   // Incomplete or intercepted
-  let pInt = 0.045 + 0.005 * Math.max(0, -best.sep) + (pressure ? 0.04 : 0) - 0.0015 * (acc - 82) + (deep ? 0.03 : 0);
+  let pInt = 0.027 + 0.005 * Math.max(0, -best.sep) + (pressure ? 0.04 : 0) - 0.0015 * (acc - 82) + (deep ? 0.03 : 0);
   const hawk = cov != null && PLAYERS[cov].types.includes('Dark');
   if (hawk) pInt += 0.03;
   if (depth === 'screen') pInt *= 0.3;

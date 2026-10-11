@@ -44,7 +44,7 @@ function sprite(id, cls = '') {
 function typeChips(types) {
   return types.map((t) => `<span class="type" style="--tc:${TYPE_COLORS[t]}">${t}</span>`).join('');
 }
-function ovrTone(v) { return v >= 88 ? 'elite' : v >= 80 ? 'good' : v >= 70 ? 'ok' : 'low'; }
+function ovrTone(v) { return v >= 90 ? 'elite' : v >= 78 ? 'good' : v >= 62 ? 'ok' : 'low'; }
 function ovr(v) { return `<span class="ovr ${ovrTone(v)}">${v}</span>`; }
 function teamBadge(t) { return `<span class="tbadge" style="--team:${t.color}">${esc(t.abbr)}</span>`; }
 function user() { return S.league?.teams.find((t) => t.user); }
@@ -86,7 +86,7 @@ function renderHome() {
   const showcase = [130, 248, 135, 65, 448, 445].filter((id) => PLAYERS[id]);
   return `<section class="home">
     <div class="hero">
-      <p class="eyebrow">Gen 1 to 4 · 22 positions · 8-team league</p>
+      <p class="eyebrow">Gen 1 to 9 · 22 positions · 8-team league</p>
       <h1>Draft Pokémon. Coach football.</h1>
       <p class="lede">Every rating comes from real base stats: Speed makes receivers, Defense and HP make linemen, Sp. Atk makes quarterbacks. Type matchups decide the trenches.</p>
       <div class="showcase">${showcase.map((id) => `<figure>${sprite(id)}<figcaption>${esc(P(id).name)}<b>${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</b></figcaption></figure>`).join('')}</div>
@@ -103,7 +103,7 @@ function renderHome() {
           <label class="pill"><input type="radio" name="rounds" value="26" ${st.rounds === 26 ? 'checked' : ''}> 26 rounds, with 4 bench</label>
         </fieldset>
         <label class="check"><input type="checkbox" id="f-typecap" ${st.typeCap ? 'checked' : ''}> At most 4 Pokémon of one primary type</label>
-        <label class="check"><input type="checkbox" id="f-legend" ${st.legendaries ? 'checked' : ''}> Include legendaries (one per team)</label>
+        <label class="check"><input type="checkbox" id="f-legend" ${st.legendaries ? 'checked' : ''}> Include legendaries, Ultra Beasts and Paradox Pokémon (one per team)</label>
         <label class="check"><input type="checkbox" id="f-clock" ${st.clock ? 'checked' : ''}> 60-second pick clock</label>
         <button class="btn primary" type="submit">Start the draft</button>
       </form>
@@ -129,7 +129,7 @@ function phaseLabel(L) {
 function boardIds() {
   const L = S.league, me = user(), d = S.draft;
   const q = d.search.trim().toLowerCase();
-  let ids = LG.available(L).filter((id) => (!q || P(id).name.toLowerCase().includes(q)) && (!d.type || P(id).types.includes(d.type)));
+  let ids = LG.available(L).filter((id) => (!q || P(id).name.toLowerCase().includes(q)) && (!d.type || P(id).types.includes(d.type)) && (!d.gen || P(id).gen === Number(d.gen)));
   const open = LG.openSlots(me);
   const fit = (id) => {
     if (d.rate !== 'fit') return { slot: d.rate, v: P(id).ovr[d.rate] };
@@ -148,7 +148,7 @@ function boardRowsHtml() {
   const L = S.league, me = user();
   const myTurn = LG.currentPick(L)?.team === me.id;
   const rows = boardIds();
-  if (!rows.length) return `<tr><td colspan="13" class="empty">No Pokémon match. Clear the search or type filter.</td></tr>`;
+  if (!rows.length) return `<tr><td colspan="13" class="empty">No Pokémon match. Clear the search, type or generation filter.</td></tr>`;
   return rows.map(({ id, fit }) => {
     const p = P(id);
     const block = LG.blockReason(L, me, id);
@@ -187,6 +187,7 @@ function renderDraft() {
         <div class="filters">
           <input id="d-search" type="search" placeholder="Search Pokémon" value="${esc(d.search)}" aria-label="Search Pokémon">
           <select id="d-type" aria-label="Type filter"><option value="">All types</option>${types.map((t) => `<option ${d.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+          <select id="d-gen" aria-label="Generation filter"><option value="">All gens</option>${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<option value="${n}" ${String(d.gen ?? '') === String(n) ? 'selected' : ''}>Gen ${n}</option>`).join('')}</select>
           <select id="d-rate" aria-label="Rate at position"><option value="fit" ${d.rate === 'fit' ? 'selected' : ''}>Best open slot</option>${SLOT_KEYS.map((k) => `<option value="${k}" ${d.rate === k ? 'selected' : ''}>Rate at ${k}</option>`).join('')}</select>
         </div>
         <div class="tablewrap">
@@ -517,6 +518,7 @@ function keysHelp() {
     <span><kbd>1</kbd>-<kbd>5</kbd> throw to that receiver</span>
     <span><kbd>T</kbd> throw it away</span>
     <span><kbd>E</kbd> truck through a tackler</span>
+    <span><kbd>R</kbd> spin move</span>
     <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
   </div></details>`;
@@ -634,7 +636,7 @@ function ensureStage() {
   stageWrap.className = 'stagewrap';
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
     <div class="touch" id="touch" aria-hidden="true"><div class="stick" id="stick"><span></span></div>
-      <div class="tbtns"><button data-key="Space">Snap / Juke / Dive</button><button data-key="KeyE">Truck</button><button data-key="KeyQ">Switch</button>
+      <div class="tbtns"><button data-key="Space">Snap / Juke / Dive</button><button data-key="KeyE">Truck</button><button data-key="KeyR">Spin</button><button data-key="KeyQ">Switch</button>
       <span class="trow">${[1, 2, 3, 4, 5].map((n) => `<button data-key="Digit${n}">${n}</button>`).join('')}</span></div></div>`;
   stageWrap.prepend(stage.el);
   bindTouch(stageWrap);
@@ -709,7 +711,7 @@ function flash(text, tone = '') {
 }
 
 const FLASH = { int: ['INTERCEPTED!', 'to'], sack: ['SACK!', 'to'], broken: ['Broken tackle!', ''], juke: ['Juke!', ''], ghost: ['Phased through!', 'big'],
-  catch: ['Caught!', ''], incomplete: ['Incomplete', 'muted'], scramble: ['Scramble!', ''], truck: ['Truck stick!', ''] };
+  catch: ['Caught!', ''], incomplete: ['Incomplete', 'muted'], scramble: ['Scramble!', ''], truck: ['Truck stick!', ''], spin: ['Spin move!', ''] };
 
 function readInput(lp) {
   const k = L3.keys, e = L3.edges;
@@ -719,7 +721,7 @@ function readInput(lp) {
   const throwKey = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].find((d) => e.has(d));
   const inp = {
     mx: m.mx, my: m.my, sprint: k.has('ShiftLeft') || k.has('ShiftRight'),
-    juke: e.has('Space'), dive: e.has('Space'), truck: e.has('KeyE'),
+    juke: e.has('Space'), dive: e.has('Space'), truck: e.has('KeyE'), spin: e.has('KeyR'),
     throwTo: throwKey ? ['WR1', 'WR2', 'WR3', 'TE', 'RB'][Number(throwKey.slice(5)) - 1] : null,
     throwAway: e.has('KeyT'), switchTo: e.has('KeyQ') || e.has('Tab') ? 'ball' : null,
   };
@@ -734,7 +736,7 @@ function hudTip(lp) {
   if (lp.phase === 'dead') return '';
   if (!c) return 'Watching';
   if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run') return '1-5 throw · T throw away · Arrows move · Space spin';
-  if (c.carrier) return 'Arrows run · Shift sprint · Space juke · E truck';
+  if (c.carrier) return 'Arrows run · Shift sprint · Space juke · R spin · E truck';
   if (c.side !== lp.carrierTeam || c.side === 'def') return 'Arrows move · Space dive · Q switch to the ball';
   return 'Arrows move';
 }
@@ -788,7 +790,7 @@ function onKey(e, down) {
   if (S.screen !== 'game' || !stage || !S.game) return;
   if (e.target.closest?.('input, select, textarea')) return;
   const code = e.code;
-  const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyQ', 'KeyT', 'Tab',
+  const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'Tab',
     'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(code);
   if (!game) return;
   if (!L3.lp) { if (code === 'Space' && down && e.target === document.body) e.preventDefault(); return; }
@@ -957,6 +959,7 @@ function onInput(e) {
 function onChange(e) {
   const t = e.target;
   if (t.id === 'd-type') { S.draft.type = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
+  if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
 }

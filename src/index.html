@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>PokeBall</title>
 <meta name="description" content="Draft Pokémon into a 22-man football roster and coach them through a season.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -297,6 +298,7 @@ mark { background: var(--amber); color: var(--turf-deep); padding: 0 4px; border
 .hud { position: absolute; inset: 0; pointer-events: none; display: grid; grid-template-rows: auto 1fr auto; padding: 10px 12px; }
 .hud-call { justify-self: start; font: 600 14px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.08em; background: rgba(13, 43, 32, 0.78); padding: 7px 10px; border-radius: 4px; }
 .hud-call:empty, .hud-tip:empty { display: none; }
+.hud-call { grid-row: 1; } .hud-flash { grid-row: 2; } .hud-tip { grid-row: 3; align-self: end; }
 .hud-flash { align-self: center; justify-self: center; font: 400 clamp(28px, 6vw, 56px)/1 var(--f-display); color: var(--chalk); text-shadow: 0 3px 0 rgba(0,0,0,0.55); opacity: 0; transform: scale(0.9); transition: opacity 0.18s, transform 0.18s; }
 .hud-flash.on { opacity: 1; transform: scale(1); }
 .hud-flash.to { color: var(--bad); }
