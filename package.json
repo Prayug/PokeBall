@@ -1,0 +1,13 @@
+{
+  "name": "pokeball",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bash build/build.sh",
+    "balance": "node test/balance.mjs",
+    "live": "node test/live.mjs"
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  }
+}
