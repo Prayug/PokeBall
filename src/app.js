@@ -1,9 +1,9 @@
 // PokeBall UI: home, draft room, grades, depth chart, season hub and game screen.
-import { PLAYERS, SLOTS, SLOT, SLOT_KEYS, OFF_SLOTS, DEF_SLOTS, ATTRS, BASELINE, autoDepthChart, unitRatings } from './ratings.js';
+import { PLAYERS, SLOTS, SLOT, SLOT_KEYS, OFF_SLOTS, DEF_SLOTS, ATTRS, BASELINE, autoDepthChart, unitRatings, applyGrowth } from './ratings.js';
 import { SPRITES } from './sprites.js';
-import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER } from './types.js';
+import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER, effectLabel, bestMultiplier } from './types.js';
 import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
-  quarterText, fgDistance, fgChance, absSpot, createGame } from './engine.js';
+  quarterText, fgDistance, fgChance, absSpot, createGame, manualSub } from './engine.js';
 import { createLivePlay, snap, step as stepLive, playSeconds, DT } from './live.js';
 import { Stage, webglAvailable } from './field3d.js';
 import * as LG from './league.js';
@@ -17,19 +17,54 @@ const S = {
   screen: 'home', league: null, game: null, gameMeta: null,
   draft: { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false },
   depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 22, legendaries: false, typeCap: true, clock: true },
-  banner: null,
+  banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
 };
 let timers = { draft: null, clock: null, auto: null };
 
 // ---------- persistence ----------
 function save() {
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({ league: S.league, game: S.game, gameMeta: S.gameMeta, screen: S.screen }));
+    localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot()));
     localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, setup: S.setup }));
   } catch { /* storage unavailable: play continues unsaved */ }
 }
 function loadSaved() {
-  try { return JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch { return null; }
+  try {
+    const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+    if (s?.league) LG.migrateLeague(s.league);
+    return s;
+  } catch { return null; }
+}
+function snapshot() {
+  if (S.league && !S.gameMeta?.quick) return { league: S.league, game: S.game, gameMeta: S.gameMeta, screen: S.screen };
+  // S.league stays null until Continue, and quick games are never persisted, so keep the stored league and its game.
+  const prev = loadSaved();
+  const keep = prev?.gameMeta && !prev.gameMeta.quick;
+  return { league: S.league ?? prev?.league ?? null, game: keep ? prev.game : null, gameMeta: keep ? prev.gameMeta : null, screen: keep ? prev.screen : 'home' };
+}
+function resumeScreen(L, game) {
+  if (game && !game.final) return 'game';
+  return { draft: 'draft', grades: 'grades', offseason: 'offseason' }[L.phase] ?? 'season';
+}
+function loadSnapshot(snap) {
+  S.league = LG.migrateLeague(snap.league); S.game = snap.game ?? null; S.gameMeta = snap.gameMeta ?? null;
+  S.offCuts = null; S.subSel = null; S.resultIdx = null;
+  setScreen(resumeScreen(S.league, S.game));
+  if (S.screen === 'game') autoAdvance();
+}
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function importSave(text) {
+  let data;
+  try { data = JSON.parse(text); } catch { S.importMsg = 'That is not valid JSON.'; render(); return; }
+  if (!Array.isArray(data?.league?.teams) || !data.league.teams.some((t) => t.user)) { S.importMsg = 'No PokeBall league found in that file.'; render(); return; }
+  S.importMsg = '';
+  loadSnapshot(data);
 }
 function loadPrefs() {
   try { const p = JSON.parse(localStorage.getItem(PREF_KEY) || 'null'); if (p) { S.coach = !!p.coach; Object.assign(S.setup, p.setup ?? {}); } } catch { /* ignore */ }
@@ -70,7 +105,8 @@ function renderTop() {
   const items = [];
   if (L) {
     if (L.phase === 'draft') items.push(['draft', 'Draft room']);
-    if (L.phase !== 'draft') items.push(['grades', 'Draft grades'], ['depth', 'Depth chart'], ['season', 'Season']);
+    else if (L.phase === 'offseason') items.push(['offseason', 'Offseason'], ['season', 'Last season']);
+    else items.push(['grades', 'Draft grades'], ['depth', 'Depth chart'], ['season', 'Season']);
   }
   if (S.game && !S.game.final) items.push(['game', 'Live game']);
   return `<header class="top">
@@ -108,11 +144,19 @@ function renderHome() {
         <button class="btn primary" type="submit">Start the draft</button>
       </form>
       <div class="card side">
-        ${saved?.league ? `<h2>Continue</h2><p>${esc(saved.league.teams[0].name)} · ${phaseLabel(saved.league)}</p>
-          <button class="btn" data-act="continue">Continue league</button><hr>` : ''}
+        ${saved?.league ? `<h2>Continue</h2><p>${esc(saved.league.teams[0].name)} · Season ${saved.league.season ?? 1} · ${phaseLabel(saved.league)}</p>
+          <div class="actions"><button class="btn" data-act="continue">Continue league</button><button class="btn" data-act="exportsave">Export save</button></div><hr>` : ''}
         <h2>Quick game</h2>
         <p>Two AI-drafted rosters, kickoff right away. You coach the home side.</p>
         <button class="btn" data-act="quick">Play a quick game</button>
+        <hr>
+        <details class="importbox" ${S.importMsg ? 'open' : ''}><summary>Import a save</summary>
+          <p class="small muted">Load a league from an exported file, or paste its contents. This replaces the league saved in this browser.</p>
+          <input type="file" id="import-file" accept="application/json,.json">
+          <textarea id="import-text" rows="3" placeholder="Paste save JSON"></textarea>
+          <button class="btn" data-act="importpaste">Load pasted save</button>
+          ${S.importMsg ? `<p class="small bad">${esc(S.importMsg)}</p>` : ''}
+        </details>
       </div>
     </div>
   </section>`;
@@ -122,6 +166,7 @@ function phaseLabel(L) {
   if (L.phase === 'grades') return 'Draft complete';
   if (L.phase === 'season') return `Week ${L.week + 1} of ${L.schedule.length}`;
   if (L.phase === 'playoffs') return 'Playoffs';
+  if (L.phase === 'offseason') return 'Offseason';
   return 'Season over';
 }
 
@@ -172,7 +217,7 @@ function renderDraft() {
   return `<section class="draft">
     <div class="draft-head">
       <div>
-        <p class="eyebrow">Round ${pk?.round ?? '-'} of ${L.settings.rounds} · Pick ${L.pickIndex + 1} of ${L.picks.length}</p>
+        <p class="eyebrow">${(L.season ?? 1) > 1 ? `Season ${L.season} rookie draft · ` : ''}Round ${pk?.round ?? '-'} of ${L.picks[L.picks.length - 1].round} · Pick ${L.pickIndex + 1} of ${L.picks.length}</p>
         <h1>${myTurn ? 'You are on the clock' : `${esc(onClock?.name ?? '')} are picking`}</h1>
       </div>
       <div class="clockbox ${myTurn ? 'live' : ''}">
@@ -299,6 +344,7 @@ function renderGrades() {
       <tbody>${order.map(({ t, g }) => `<tr class="${t.user ? 'me' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="muted">${esc(t.coachName)}${t.favTypes ? ` (${t.favTypes.join(', ')})` : ''}</td>
         ${units.map(([k]) => `<td><span class="grade g-${g[k].grade[0]}">${g[k].grade}</span><span class="muted small"> ${g[k].value}</span></td>`).join('')}</tr>`).join('')}</tbody>
     </table></div>
+    ${tradeCardHtml(L)}
     <div class="actions">
       <button class="btn" data-act="go" data-to="depth">Edit depth chart</button>
       ${L.phase === 'grades' ? '<button class="btn primary" data-act="startseason">Start the season</button>' : '<button class="btn primary" data-act="go" data-to="season">Go to season</button>'}
@@ -306,33 +352,69 @@ function renderGrades() {
   </section>`;
 }
 
+function tradeCardHtml(L) {
+  const T = L.trade;
+  if (!T) return '';
+  const from = L.teams[T.team];
+  if (T.status === 'accepted') {
+    const me = user(), slot = Object.keys(me.lineup).find((k) => me.lineup[k] === T.youGet);
+    const fit = slot && P(T.youGet).best[0] !== slot;
+    return `<div class="card trade done"><h3>Trade</h3><p>You sent ${esc(P(T.youSend).name)} to ${esc(from.name)} for ${esc(P(T.youGet).name)}.</p>
+      ${fit ? `<p class="small muted">${esc(P(T.youGet).name)} took ${esc(P(T.youSend).name)}'s spot at ${slot}. Auto-arrange the depth chart to get the full gain.</p>
+      <div class="actions"><button class="btn" data-act="go" data-to="depth">Open the depth chart</button></div>` : ''}</div>`;
+  }
+  if (!LG.tradeOpen(L)) return '';
+  const card = (id, label) => {
+    const p = P(id), k = p.best[0];
+    return `<div class="tside"><span class="muted small">${label}</span>${sprite(id, 'md')}<b>${esc(p.name)}</b><span class="types">${typeChips(p.types)}</span><span><span class="slot">${k}</span>${ovr(p.ovr[k])}</span></div>`;
+  };
+  return `<div class="card trade"><h3>Trade offer <span class="muted">${teamBadge(from)} ${esc(from.coachName)}</span></h3>
+    <div class="tswap">${card(T.youGet, 'You get')}<span class="at">for</span>${card(T.youSend, 'You send')}</div>
+    <p class="small muted">${esc(from.name)} want ${esc(P(T.youSend).name)}. By overall, your best lineup improves by ${T.gain} points. The offer stands until your first game.</p>
+    <div class="actions"><button class="btn primary" data-act="tradeyes">Accept</button><button class="btn" data-act="tradeno">Decline</button></div></div>`;
+}
+
+function conditionTag(id) {
+  const c = S.league?.condition?.[id];
+  if (!c) return '';
+  return c.out ? '<span class="cond out">Out this week</span>' : `<span class="cond sore">Sore ${c.energy}%</span>`;
+}
+
 // ---------- depth chart ----------
-const OFF_ROWS = [['WR1', 'WR3', 'LT', 'LG', 'C', 'RG', 'RT', 'TE', 'WR2'], ['QB'], ['RB']];
-const DEF_ROWS = [['FS'], ['CB1', 'CB3', 'SS', 'CB2'], ['OLB', 'MLB'], ['DE', 'DT2', 'DT1', 'LE']];
+// [slot, column, row] on an 11-column field seen from behind the offense; row 4 is the line of scrimmage.
+const FORMATION = [
+  ['FS', 4, 1], ['SS', 8, 1],
+  ['CB1', 1, 2], ['CB3', 2, 2], ['MLB', 6, 2], ['OLB', 9, 2], ['CB2', 11, 2],
+  ['DE', 3, 3], ['DT2', 5, 3], ['DT1', 7, 3], ['LE', 9, 3],
+  ['WR1', 1, 5], ['LT', 4, 5], ['LG', 5, 5], ['C', 6, 5], ['RG', 7, 5], ['RT', 8, 5], ['TE', 9, 5], ['WR2', 11, 5],
+  ['WR3', 2, 6], ['QB', 6, 6],
+  ['RB', 6, 7],
+];
 function renderDepth() {
   const me = user();
   const u = unitRatings(me.lineup);
-  const cell = (k) => {
+  const cell = ([k, col, row]) => {
     const id = me.lineup[k];
     const p = P(id);
     const misfit = p.best[0] !== k && p.ovr[p.best[0]] - p.ovr[k] >= 6;
-    return `<button class="dslot ${S.depthSel === k ? 'sel' : ''}" data-act="dslot" data-slot="${k}">
+    return `<button class="dslot ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}">
       <span class="slot">${k}</span>${sprite(id, 'md')}<span class="dn">${esc(p.name)}</span>${ovr(p.ovr[k])}
-      ${misfit ? `<span class="fitnote">Best at ${p.best[0]} ${p.ovr[p.best[0]]}</span>` : ''}</button>`;
+      ${misfit ? `<span class="fitnote">Best at ${p.best[0]} ${p.ovr[p.best[0]]}</span>` : ''}${conditionTag(id)}</button>`;
   };
-  const rows = (R) => R.map((r) => `<div class="frow">${r.map(cell).join('')}</div>`).join('');
   return `<section class="depth">
     <p class="eyebrow">${esc(me.name)}</p>
     <h1>Depth chart</h1>
     <p class="lede">Tap a slot, then tap another slot or a bench Pokémon to swap them. Overalls update for the new position.</p>
     <div class="unitbar">${[['Pass offense', u.passOff], ['Run offense', u.runOff], ['Pass rush', u.passRush], ['Coverage', u.coverage], ['Run defense', u.runDef]]
       .map(([l, v]) => `<div><span class="muted small">${l}</span><b>${Math.round(v)}</b></div>`).join('')}</div>
-    <div class="formations">
-      <div class="card form off"><h3>Offense</h3>${rows(OFF_ROWS)}<div class="los" aria-hidden="true"></div></div>
-      <div class="card form def"><h3>Defense</h3>${rows(DEF_ROWS)}</div>
-    </div>
+    <div class="gridwrap"><div class="gridiron">
+      <span class="gside def">Defense</span><span class="gside off">Offense</span>
+      <div class="los" aria-hidden="true"></div>
+      ${FORMATION.map(cell).join('')}
+    </div></div>
     <div class="card"><h3>Bench</h3><div class="benchrow">${me.bench.length ? me.bench.map((id) => `<button class="dslot bench" data-act="dbench" data-id="${id}">${sprite(id, 'md')}<span class="dn">${esc(P(id).name)}</span>
-      ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}</button>`).join('') : '<p class="muted">No bench. Draft 26 rounds to carry 4 backups.</p>'}</div></div>
+      ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 26 rounds to carry 4 backups.</p>'}</div></div>
+    ${Object.keys(S.league.condition ?? {}).length ? '<p class="small muted">Sore Pokémon start the next game below full energy, and the bench subs in as they tire. A Pokémon who is out sits the next game when the bench can cover him; with no bench he plays hurt.</p>' : ''}
     <div class="actions"><button class="btn" data-act="autodepth">Auto-arrange for best overall</button>
     <button class="btn primary" data-act="go" data-to="${S.league.phase === 'grades' ? 'grades' : 'season'}">Done</button></div>
   </section>`;
@@ -349,36 +431,211 @@ function renderSeason() {
     const gm = LG.userGame(L);
     const opp = L.teams[gm.home === me.id ? gm.away : gm.home];
     main = `<div class="card matchup">
-      <p class="eyebrow">Week ${L.week + 1} of ${L.schedule.length}</p>
+      <p class="eyebrow">Season ${L.season ?? 1} · Week ${L.week + 1} of ${L.schedule.length}</p>
       <div class="vs">${teamBlock(L.teams[gm.away])}<span class="at">at</span>${teamBlock(L.teams[gm.home])}</div>
       <p class="muted">${esc(opp.name)} coach: ${esc(opp.coachName)}</p>
       <div class="actions"><button class="btn primary" data-act="playweek">Play the game</button><button class="btn" data-act="simweek">Simulate it</button></div>
-    </div>`;
+    </div>${scoutHtml(L, me.id, opp.id)}${tradeCardHtml(L)}`;
   } else if (L.phase === 'playoffs') {
     const P_ = L.playoffs;
     const mine = P_.games.find((g) => g.home === me.id || g.away === me.id);
     main = `<div class="card matchup"><p class="eyebrow">${P_.round === 0 ? 'Semifinals' : 'Championship'}</p>
-      ${P_.games.map((g) => `<div class="vs small">${teamBlock(L.teams[g.away])}<span class="at">at</span>${teamBlock(L.teams[g.home])}</div>`).join('')}
+      ${bracketHtml(L)}
       <div class="actions">${mine ? '<button class="btn primary" data-act="playweek">Play your playoff game</button><button class="btn" data-act="simweek">Simulate it</button>'
-        : '<p class="muted">You missed this round. Watch it play out.</p><button class="btn primary" data-act="simweek">Simulate the round</button>'}</div></div>`;
+        : '<p class="muted">You missed this round. Watch it play out.</p><button class="btn primary" data-act="simweek">Simulate the round</button>'}</div></div>
+      ${mine ? scoutHtml(L, me.id, mine.home === me.id ? mine.away : mine.home) : ''}`;
   } else if (L.phase === 'done') {
-    const champ = L.teams[L.champion];
-    main = `<div class="card matchup champ"><p class="eyebrow">Season complete</p><h2>${esc(champ.name)} are champions</h2>
-      <div class="champrow">${Object.values(champ.lineup).slice(0, 6).map((id) => sprite(id, 'md')).join('')}</div>
-      <div class="actions"><button class="btn primary" data-act="newleague">Start a new league</button></div></div>`;
+    main = championHtml(L, st);
+  } else if (L.phase === 'offseason') {
+    main = `<div class="card matchup"><p class="eyebrow">Season ${L.season} offseason</p><h2>Training camp is open</h2>
+      <div class="actions"><button class="btn primary" data-act="go" data-to="offseason">Make your cuts</button></div></div>`;
   }
-  const recent = L.results.slice(-4).reverse();
+  const results = L.results.map((r, i) => ({ r, i })).reverse();
   return `<section class="season">
     <h1>${esc(me.name)} · ${record(st.find((r) => r.id === me.id))}</h1>
     <div class="season-grid">
       <div class="col">${main}
-        <div class="card"><h3>Recent results</h3>${recent.length ? `<ul class="results">${recent.map(resultLine).join('')}</ul>` : '<p class="muted">No games played yet.</p>'}</div>
+        <div class="card"><h3>Results ${results.length ? '<span class="muted small">Open a game for its box score</span>' : ''}</h3>${results.length ? `<ul class="results scroll">${results.map(({ r, i }) => resultLine(r, i)).join('')}</ul>` : '<p class="muted">No games played yet.</p>'}</div>
+        ${historyHtml(L)}
       </div>
       <div class="col">
         <div class="card"><h3>Standings</h3><div class="tablewrap"><table class="stand"><thead><tr><th>Team</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">PF</th><th class="num">PA</th><th class="num">Diff</th></tr></thead>
           <tbody>${st.map((r, i) => { const t = L.teams[r.id]; return `<tr class="${t.user ? 'me' : ''} ${i === 3 ? 'cut' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="num">${r.w}</td><td class="num">${r.l}</td><td class="num">${r.t}</td><td class="num">${r.pf}</td><td class="num">${r.pa}</td><td class="num">${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`; }).join('')}</tbody></table></div>
           <p class="small muted">Top 4 make the playoffs.</p></div>
         <div class="card"><h3>League leaders</h3><div class="leaders">${Object.entries(lead).map(([k, rows]) => `<div><h4>${k}</h4><ol>${rows.slice(0, 3).map((r) => `<li>${sprite(r.id, 'xs')}<span>${esc(P(r.id).name)}</span><em>${L.teams[r.team].abbr}</em><b>${statFor(k, r)}</b></li>`).join('') || '<li class="muted">None yet</li>'}</ol></div>`).join('')}</div></div>
+        <div class="card"><h3>Your save</h3><p class="small muted">Download the league to keep it safe or move it to another browser. Import it from the home screen.</p>
+          <div class="actions"><button class="btn" data-act="exportsave">Export save</button><button class="btn" data-act="recap">Download recap</button></div></div>
+      </div>
+    </div>
+  </section>`;
+}
+
+function edgeRow(e) {
+  const [mySlot, myId, thSlot, thId] = e.mine === 'off' ? [e.oSlot, e.oId, e.dSlot, e.dId] : [e.dSlot, e.dId, e.oSlot, e.oId];
+  const [myMult, thMult] = e.mine === 'off' ? [e.oMult, e.dMult] : [e.dMult, e.oMult];
+  const tag = (m) => (effectLabel(m) ? `<span class="eff ${m > 1 ? 'se' : m === 0 ? 'ne' : 'nve'}">${effectLabel(m)}</span>` : '<span class="eff">neutral</span>');
+  return `<li class="edge ${e.edge > 0 ? 'good' : e.edge < 0 ? 'bad' : ''}">
+    <span class="eside"><span class="slot">${mySlot}</span>${sprite(myId, 'xs')}<span class="en">${esc(P(myId).name)}</span>${tag(myMult)}</span>
+    <span class="vsx">vs</span>
+    <span class="eside"><span class="slot">${thSlot}</span>${sprite(thId, 'xs')}<span class="en">${esc(P(thId).name)}</span>${tag(thMult)}</span></li>`;
+}
+
+function scoutHtml(L, myId, oppId) {
+  const R = LG.scoutReport(L, myId, oppId);
+  const opp = L.teams[oppId];
+  const lineupRow = (slots) => slots.map((k) => `<span class="sl" title="${esc(P(R.opp.lineup[k]).name)} (${k})">${sprite(R.opp.lineup[k], 'sm')}<em>${k}</em></span>`).join('');
+  const W = WEATHER;
+  const weather = R.weather.length ? R.weather.map((w) => `<li>${sprite(w.id, 'xs')} ${esc(P(w.id).name)} (${w.side === 'you' ? 'yours' : 'theirs'}) brings ${W[w.weather].name.toLowerCase()} most games: ${esc(W[w.weather].text)}.</li>`).join('')
+    : '<li class="muted">No weather setters in either lineup. Expect clear skies most weeks.</li>';
+  const health = R.health.length ? `<h4>Your health</h4><ul class="health">${R.health.map((h) => `<li>${sprite(h.id, 'xs')} ${esc(P(h.id).name)} ${h.out ? '<span class="cond out">Out this week</span>' : `<span class="cond sore">Starts at ${h.energy}%</span>`}</li>`).join('')}</ul>` : '';
+  return `<div class="card scout"><h3>Scouting report <span class="muted">${teamBadge(opp)} ${esc(opp.name)}</span></h3>
+    <p class="plan"><b>Game plan.</b> ${esc(R.plan)} ${esc(R.lean)}</p>
+    <p class="small muted">${esc(R.coachNote)}</p>
+    <div class="opprow"><span class="muted small">Their offense</span>${lineupRow(OFF_SLOTS)}</div>
+    <div class="opprow"><span class="muted small">Their defense</span>${lineupRow(DEF_SLOTS)}</div>
+    <div class="edges"><div><h4>Your best type edges</h4>${R.best.length ? `<ul>${R.best.map(edgeRow).join('')}</ul>` : '<p class="muted small">None this week.</p>'}</div>
+    <div><h4>Where they have the edge</h4>${R.worst.length ? `<ul>${R.worst.map(edgeRow).join('')}</ul>` : '<p class="muted small">Nothing to worry about.</p>'}</div></div>
+    <h4>Weather</h4><ul class="weather">${weather}</ul>
+    ${health}
+  </div>`;
+}
+
+function bracketHtml(L) {
+  const B = LG.bracket(L);
+  if (!B) return '';
+  const side = (id, seed, score, winner) => id == null ? '<div class="bteam tbd">To be decided</div>'
+    : `<div class="bteam ${winner === id ? 'won' : winner != null ? 'lost' : ''} ${L.teams[id].user ? 'me' : ''}"><em>${seed}</em>${teamBadge(L.teams[id])}<span>${esc(L.teams[id].name)}</span><b>${score ?? ''}</b></div>`;
+  const game = (g) => `<div class="bgame">${side(g.home, g.seeds[0], g.homeScore, g.winner)}${side(g.away, g.seeds[1], g.awayScore, g.winner)}</div>`;
+  return `<div class="bracket"><div class="bround"><h4>Semifinals</h4>${B.semis.map(game).join('')}</div>
+    <div class="bround"><h4>Championship</h4>${game(B.final)}</div>
+    <div class="bround champcol"><h4>Champion</h4>${B.champion != null ? `<div class="bteam won">${teamBadge(L.teams[B.champion])}<span>${esc(L.teams[B.champion].name)}</span></div>` : '<div class="bteam tbd">To be decided</div>'}</div></div>`;
+}
+
+function seasonFinish(L, id) {
+  if (L.champion === id) return 'Won the championship';
+  const B = LG.bracket(L);
+  if (!B) return 'Missed the playoffs';
+  if (B.final.home === id || B.final.away === id) return 'Lost in the championship';
+  if (B.semis.some((g) => g.home === id || g.away === id)) return 'Lost in the semifinals';
+  return 'Missed the playoffs';
+}
+
+function awardsHtml(L, list) {
+  if (!list.length) return '';
+  return `<ul class="awards">${list.map((a) => `<li>${sprite(a.id, 'md')}<span><em>${esc(a.label)}</em><b>${esc(P(a.id).name)}</b> ${teamBadge(L.teams[a.team])}<span class="small muted">${esc(a.line)}</span></span></li>`).join('')}</ul>`;
+}
+
+function championHtml(L, st) {
+  const champ = L.teams[L.champion], me = user();
+  const mine = st.find((r) => r.id === me.id);
+  const myStats = Object.entries(L.seasonStats).filter(([, s]) => s.team === me.id);
+  const star = myStats.length ? myStats.reduce((a, b) => (LG.impact(b[1]) > LG.impact(a[1]) ? b : a)) : null;
+  return `<div class="card matchup champ"><p class="eyebrow">Season ${L.season ?? 1} complete</p><h2>${esc(champ.name)} are champions</h2>
+    <div class="champrow">${Object.values(champ.lineup).slice(0, 6).map((id) => sprite(id, 'md')).join('')}</div>
+    <h4>Your season</h4>
+    <p>${esc(me.name)} went ${record(mine)}, scored ${mine.pf} and allowed ${mine.pa}. ${seasonFinish(L, me.id)}.
+      ${star ? ` Team star: ${esc(P(Number(star[0])).name)}, ${esc(LG.statLine(star[1]))}.` : ''}</p>
+    <h4>Awards</h4>${awardsHtml(L, LG.awards(L))}
+    <h4>Playoff bracket</h4>${bracketHtml(L)}
+    <div class="actions"><button class="btn primary" data-act="offseason">Start the offseason</button><button class="btn" data-act="recap">Download recap</button><button class="btn" data-act="newleague">Start a new league</button></div>
+    <p class="small muted">The offseason keeps all eight rosters. Pokémon who played a lot of snaps develop, every team cuts ${LG.CUTS}, and a rookie draft refills the roster, worst record first.</p></div>`;
+}
+
+function historyHtml(L) {
+  if (!L.history?.length) return '';
+  return `<div class="card"><h3>League history</h3><ul class="history">${L.history.slice().reverse().map((h) => {
+    const mvp = h.awards.find((a) => a.key === 'mvp');
+    const mine = h.records.find((r) => L.teams[r.id].user);
+    return `<li><em>Season ${h.season}</em>${teamBadge(L.teams[h.champion])}<span>${esc(L.teams[h.champion].name)} won it all.${mvp ? ` MVP ${esc(P(mvp.id).name)}.` : ''}</span><span class="muted small">You: ${record(mine)}</span></li>`;
+  }).join('')}</ul></div>`;
+}
+
+function recapText(L) {
+  const st = LG.standings(L);
+  const lines = [`PokeBall · ${user().name} · Season ${L.season ?? 1}`, ''];
+  if (L.champion != null) lines.push(`Champion: ${L.teams[L.champion].name}`, '');
+  lines.push('Standings');
+  st.forEach((r, i) => lines.push(`${i + 1}. ${L.teams[r.id].name} ${record(r)} (PF ${r.pf}, PA ${r.pa})`));
+  const B = LG.bracket(L);
+  if (B) {
+    lines.push('', 'Playoffs');
+    for (const g of [...B.semis, B.final]) {
+      if (g.home == null) continue;
+      lines.push(`${L.teams[g.away].name} ${g.awayScore ?? '-'} at ${L.teams[g.home].name} ${g.homeScore ?? '-'}`);
+    }
+  }
+  const aw = LG.awards(L);
+  if (aw.length) {
+    lines.push('', 'Awards');
+    for (const a of aw) lines.push(`${a.label}: ${P(a.id).name} (${L.teams[a.team].abbr}), ${a.line}`);
+  }
+  lines.push('', 'Results');
+  for (const r of L.results) {
+    lines.push(`${r.playoff ? 'Playoffs' : `Week ${r.week + 1}`}: ${L.teams[r.away].abbr} ${r.score[1]} at ${L.teams[r.home].abbr} ${r.score[0]}`);
+  }
+  return lines.join('\n');
+}
+
+// ---------- stored box score ----------
+const STAT_KEYS = ['pa', 'pc', 'py', 'ptd', 'pint', 'sk', 'ra', 'ry', 'rtd', 'rlong', 'fum', 'tg', 'rc', 'rcy', 'rctd', 'rclong', 'tk', 'dsk', 'dint', 'pd', 'ff', 'sn'];
+const fullStats = (s) => Object.fromEntries(STAT_KEYS.map((k) => [k, s[k] ?? 0]));
+
+function renderResult() {
+  const L = S.league, r = L?.results[S.resultIdx];
+  if (!r?.box) return `<section><p>That game has no box score.</p><button class="btn" data-act="go" data-to="season">Back to the season</button></section>`;
+  const teams = [L.teams[r.home], L.teams[r.away]];
+  const g = {
+    score: r.score, qs: r.quarters,
+    teams: teams.map((t, i) => ({ id: t.id, name: t.name, abbr: t.abbr, color: t.color, team: r.box.team[i],
+      stats: Object.fromEntries(Object.entries(r.box.stats[i]).map(([id, s]) => [id, fullStats(s)])) })),
+  };
+  const winner = r.winner == null ? 'Tie game' : `${L.teams[r.winner].name} win`;
+  return `<section class="result">
+    <p class="eyebrow">${r.playoff ? (r.round === 0 ? 'Semifinal' : 'Championship') : `Week ${r.week + 1}`} · ${WEATHER[r.weather].name}</p>
+    <h1>${esc(teams[1].abbr)} ${r.score[1]}, ${esc(teams[0].abbr)} ${r.score[0]}</h1>
+    <p class="lede">${esc(winner)}. ${esc(teams[1].name)} at ${esc(teams[0].name)}.</p>
+    <div class="card"><h3>Scoring plays</h3>${r.box.scoring.length ? `<ol class="pbp scoring">${r.box.scoring.map((e) => `<li><span class="when">${quarterText(e.q)} ${clockText(e.clock)}</span><span class="sit">${teamBadge(teams[e.team])}</span><span class="txt">${esc(e.text)}</span></li>`).join('')}</ol>` : '<p class="muted">No points scored.</p>'}</div>
+    <div class="card">${boxHtml(g)}</div>
+    <div class="actions"><button class="btn primary" data-act="go" data-to="season">Back to the season</button></div>
+  </section>`;
+}
+
+// ---------- offseason ----------
+function renderOffseason() {
+  const L = S.league, me = user(), O = L.offseason;
+  if (!O) return '<section><p>No offseason in progress.</p></section>';
+  const need = Math.min(LG.CUTS, me.roster.length);
+  S.offCuts ??= new Set(O.cuts[me.id]);
+  const cuts = S.offCuts;
+  const mineCamp = O.camp.filter((c) => c.team === me.id);
+  const gainText = (g) => Object.entries(g).map(([k, v]) => `+${v} ${ATTRS[k]}`).join(', ');
+  const slotOf = (id) => Object.keys(me.lineup).find((k) => me.lineup[k] === id);
+  const rows = me.roster.slice().sort((a, b) => {
+    const sa = slotOf(a), sb = slotOf(b);
+    return (sa ? SLOT_KEYS.indexOf(sa) : 99) - (sb ? SLOT_KEYS.indexOf(sb) : 99);
+  });
+  const others = L.teams.filter((t) => !t.user);
+  return `<section class="offseason">
+    <p class="eyebrow">Season ${L.season} offseason</p>
+    <h1>Training camp and cuts</h1>
+    <p class="lede">Pokémon who played the most snaps last season developed. Now cut exactly ${need} to make room for the rookie draft. Cut Pokémon go back into the draft pool.</p>
+    <div class="season-grid">
+      <div class="col">
+        <div class="card"><h3>Your camp report</h3>${mineCamp.length ? `<ul class="camp">${mineCamp.map((c) => `<li>${sprite(c.id, 'sm')}<span><b>${esc(P(c.id).name)}</b> <span class="slot">${c.slot}</span>${ovr(P(c.id).ovr[c.slot])}</span><span class="small good">${gainText(c.gains)}</span></li>`).join('')}</ul>` : '<p class="muted">Nobody played enough snaps to develop.</p>'}
+          <p class="small muted">Each ${LG.SNAPS_PER_POINT} snaps is worth +2 to a rating the Pokémon's position uses, up to +8 a season and +${LG.GROWTH_CAP} in a career.</p></div>
+        <div class="card"><h3>Your roster <span class="muted">${cuts.size} of ${need} cut</span></h3>
+          <ul class="cutlist">${rows.map((id) => {
+            const k = slotOf(id) ?? P(id).best[0];
+            return `<li><label class="check ${cuts.has(id) ? 'cut' : ''}"><input type="checkbox" data-cut="${id}" ${cuts.has(id) ? 'checked' : ''}>
+              <span class="slot">${slotOf(id) ?? 'BN'}</span>${sprite(id, 'xs')}<span class="cn">${esc(P(id).name)}</span>${ovr(P(id).ovr[k])}</label></li>`;
+          }).join('')}</ul>
+          <div class="actions"><button class="btn primary" data-act="finishoffseason" ${cuts.size === need ? '' : 'disabled'}>Confirm cuts and start the rookie draft</button>
+          <button class="btn" data-act="suggestcuts">Use suggested cuts</button></div></div>
+      </div>
+      <div class="col">
+        <div class="card"><h3>Around the league</h3><ul class="leaguecuts">${others.map((t) => `<li>${teamBadge(t)}<span>Cutting ${O.cuts[t.id].map((id) => esc(P(id).name)).join(', ')}</span></li>`).join('')}</ul></div>
+        <div class="card"><h3>Top developers</h3><ul class="camp">${O.camp.slice().sort((a, b) => Object.values(b.gains).reduce((x, y) => x + y, 0) - Object.values(a.gains).reduce((x, y) => x + y, 0)).slice(0, 8)
+          .map((c) => `<li>${sprite(c.id, 'xs')}<span>${esc(P(c.id).name)} ${teamBadge(L.teams[c.team])}</span><span class="small good">${gainText(c.gains)}</span></li>`).join('')}</ul></div>
       </div>
     </div>
   </section>`;
@@ -386,9 +643,11 @@ function renderSeason() {
 function statFor(k, r) { return { 'Passing yards': r.py, 'Rushing yards': r.ry, 'Receiving yards': r.rcy, Sacks: r.dsk, Interceptions: r.dint, Tackles: r.tk }[k]; }
 function record(r) { return r ? `${r.w}-${r.l}${r.t ? `-${r.t}` : ''}` : '0-0'; }
 function teamBlock(t) { return `<div class="tblock" style="--team:${t.color}"><span class="tabbr">${esc(t.abbr)}</span><span>${esc(t.name)}</span></div>`; }
-function resultLine(r) {
+function resultLine(r, i) {
   const L = S.league, h = L.teams[r.home], a = L.teams[r.away];
-  return `<li>${r.playoff ? '<em class="po">Playoffs</em>' : `<em>Wk ${r.week + 1}</em>`}${teamBadge(a)} <b class="${r.winner === a.id ? 'won' : ''}">${r.score[1]}</b> at ${teamBadge(h)} <b class="${r.winner === h.id ? 'won' : ''}">${r.score[0]}</b></li>`;
+  const inner = `${r.playoff ? '<em class="po">Playoffs</em>' : `<em>Wk ${r.week + 1}</em>`}${teamBadge(a)} <b class="${r.winner === a.id ? 'won' : ''}">${r.score[1]}</b> at ${teamBadge(h)} <b class="${r.winner === h.id ? 'won' : ''}">${r.score[0]}</b>`;
+  const mine = a.user || h.user ? 'mine' : '';
+  return r.box ? `<li class="${mine}"><button class="resline" data-act="openresult" data-i="${i}">${inner}<span class="open">Box score</span></button></li>` : `<li class="${mine}">${inner}</li>`;
 }
 
 // ---------- game ----------
@@ -487,7 +746,7 @@ function renderGame() {
       head = `<div class="callhead"><h3>${lp.phase === 'pre' ? `Lined up: ${esc(mine)}` : 'Play in progress'}</h3><span class="muted">${downText(g)} at ${spotText(g)}</span></div>
         ${lp.phase === 'pre' ? `<div class="actions"><button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap the ball' : 'Start the play'} <kbd>Space</kbd></button>
         ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change play</button>'}</div>` : ''}`;
-    } else if (decide) head = playCards(g);
+    } else if (decide) head = playCards(g) + presnapHtml(g) + tendenciesHtml(g);
     else head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">Coach mode hands you 3rd and 4th downs and the last two minutes</span></div>`;
     controls = `<div class="card callcard">${head}
       <div class="simrow">
@@ -503,10 +762,81 @@ function renderGame() {
     ${field}
     ${lastPlayHtml(g)}
     ${controls}
-    <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
-    <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : drivesHtml(g)}</div>
+    <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
+    <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>
     <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
   </section>`;
+}
+
+// Type matchups for the down about to be played, from the lineups on the field now.
+function presnapHtml(g) {
+  const us = userSide(), them = 1 - us;
+  const onOff = g.poss === us;
+  const ms = onOff ? LG.matchups(g.teams[us].lineup, g.teams[them].lineup) : LG.matchups(g.teams[them].lineup, g.teams[us].lineup);
+  const rows = ms.map((m) => ({ ...m, mine: onOff ? 'off' : 'def', edge: onOff ? m.net : -m.net }));
+  const good = rows.filter((r) => r.edge > 0).length, bad = rows.filter((r) => r.edge < 0).length;
+  const group = (key, title) => `<div><h4>${title}</h4><ul>${rows.filter((r) => r.group === key).map(edgeRow).join('')}</ul></div>`;
+  return `<details class="presnap" ${S.presnapClosed ? '' : 'open'}><summary>Pre-snap board <span class="muted small">${good} type edge${good === 1 ? '' : 's'} for you, ${bad} for them</span></summary>
+    <div class="edges">${group('trench', onOff ? 'Your line vs their front' : 'Your front vs their line')}${group('cover', onOff ? 'Your receivers vs their coverage' : 'Your coverage vs their receivers')}</div></details>`;
+}
+
+function tendenciesHtml(g) {
+  const us = userSide(), them = 1 - us;
+  const plays = g.log.filter((e) => e.off && e.def && e.down && ['run', 'pass'].includes(OFF_PLAYS[e.off]?.kind));
+  const theirOff = plays.filter((e) => e.team === them), theirDef = plays.filter((e) => e.team === us);
+  const pct = (list, f) => Math.round((100 * list.filter(f).length) / list.length);
+  const isRun = (e) => OFF_PLAYS[e.off].kind === 'run';
+  const lines = [];
+  const first = theirOff.filter((e) => e.down === 1);
+  if (first.length >= 3) lines.push(`Run on 1st down ${pct(first, isRun)}% of the time, inside runs ${pct(first, (e) => e.off === 'inside_run')}% (${first.length} plays).`);
+  const third = theirOff.filter((e) => e.down === 3);
+  if (third.length >= 3) lines.push(`Pass on 3rd down ${pct(third, (e) => !isRun(e))}% (${third.length} plays).`);
+  const long3 = theirDef.filter((e) => e.down >= 3 && e.toGo >= 7);
+  if (long3.length >= 3) lines.push(`Blitz on 3rd and long ${pct(long3, (e) => e.def.endsWith('blitz'))}% (${long3.length} plays).`);
+  const fav = (list, key, names) => {
+    const counts = {};
+    for (const e of list) counts[e[key]] = (counts[e[key]] ?? 0) + 1;
+    const [k, c] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    return `${names[k].name} ${Math.round((100 * c) / list.length)}%`;
+  };
+  if (theirOff.length >= 6) lines.push(`Favorite call on offense: ${fav(theirOff, 'off', OFF_PLAYS)}.`);
+  if (theirDef.length >= 6) lines.push(`Favorite call on defense: ${fav(theirDef, 'def', DEF_PLAYS)}.`);
+  if (!lines.length) return '<p class="small muted tend">Their tendencies show up here after a few drives.</p>';
+  return `<div class="tend"><h4>${esc(g.teams[them].abbr)} tendencies this game</h4><ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul></div>`;
+}
+
+// Coach's substitutions: pick a slot, then a bench Pokémon.
+function lineupHtml(g) {
+  const us = userSide(), t = g.teams[us], opp = g.teams[1 - us];
+  const can = !g.final && !S.busy && !L3.lp;
+  const sel = S.subSel;
+  const onField = new Set(Object.values(t.lineup));
+  const bench = t.roster.filter((id) => !onField.has(id));
+  const across = {};
+  for (const [o, d] of LG.MATCHUP_PAIRS) { across[o] ??= d; across[d] ??= o; }
+  const slotRow = (k) => {
+    const id = t.lineup[k], e = Math.round(t.energy[id] ?? 100);
+    const locked = t.locks?.[k] != null, starter = t.starters[k];
+    return `<li class="${sel === k ? 'sel' : ''}"><button class="subslot" data-act="subslot" data-slot="${k}" ${can ? '' : 'disabled'}>
+      <span class="slot">${k}</span>${sprite(id, 'xs')}<span class="cn">${esc(P(id).name)}</span>${ovr(P(id).ovr[k])}<span class="en ${e < 60 ? 'low' : ''}">${e}%</span>
+      ${locked ? '<span class="lock">Coach</span>' : id !== starter ? '<span class="lock auto">Auto sub</span>' : ''}</button>
+      ${locked ? `<button class="btn tiny" data-act="subback" data-slot="${k}" ${can ? '' : 'disabled'}>Starter back</button>` : ''}</li>`;
+  };
+  let pickList = '';
+  if (sel) {
+    const foe = opp.lineup[across[sel]];
+    pickList = `<div class="card subpick"><h4>Sub in at ${sel}${foe ? ` · across from ${esc(P(foe).name)} (${P(foe).types.join('/')})` : ''}</h4>
+      ${bench.length ? `<ul>${bench.map((id) => {
+        const m = foe ? bestMultiplier(P(id), P(foe)) : 1;
+        const lbl = effectLabel(m);
+        return `<li><button class="subslot" data-act="subin" data-id="${id}" ${can ? '' : 'disabled'}>${sprite(id, 'xs')}<span class="cn">${esc(P(id).name)}</span><span class="types">${typeChips(P(id).types)}</span>${ovr(P(id).ovr[sel])}
+          <span class="en">${Math.round(t.energy[id] ?? 100)}%</span>${lbl ? `<span class="eff ${m > 1 ? 'se' : m === 0 ? 'ne' : 'nve'}">${lbl}</span>` : ''}</button></li>`;
+      }).join('')}</ul>` : '<p class="muted small">Nobody on the bench. A 26-round league carries four backups.</p>'}
+      <button class="btn tiny" data-act="subcancel">Cancel</button></div>`;
+  }
+  return `<p class="small muted">Pick a slot, then a bench Pokémon. Your subs stay in until you send the starter back, and the auto-sub leaves those slots alone.${can ? '' : ' Subs wait until the play is over.'}</p>
+    <div class="subgrid"><div><h4>Offense</h4><ul class="sublist">${OFF_SLOTS.map(slotRow).join('')}</ul></div>
+    <div><h4>Defense</h4><ul class="sublist">${DEF_SLOTS.map(slotRow).join('')}</ul></div></div>${pickList}`;
 }
 
 function keysHelp() {
@@ -812,7 +1142,7 @@ function bindTouch(root) {
 }
 
 function startGame(game, meta) {
-  S.game = game; S.gameMeta = meta; S.gameTab = 'log'; S.busy = false;
+  S.game = game; S.gameMeta = meta; S.gameTab = 'log'; S.busy = false; S.subSel = null;
   L3.lp = null; L3.preview = null;
   setScreen('game');
   autoAdvance();
@@ -853,14 +1183,43 @@ function onClick(e) {
     case 'go': setScreen(el.dataset.to); break;
     case 'continue': {
       const saved = loadSaved();
-      if (saved?.league) {
-        S.league = saved.league; S.game = saved.game; S.gameMeta = saved.gameMeta;
-        setScreen(S.game && !S.game.final ? 'game' : saved.league.phase === 'draft' ? 'draft' : saved.league.phase === 'grades' ? 'grades' : 'season');
-        if (S.screen === 'game') autoAdvance();
-      }
+      if (saved?.league) loadSnapshot(saved);
+      break;
+    }
+    case 'exportsave': {
+      const data = S.league ? snapshot() : loadSaved();
+      if (!data?.league) break;
+      const name = data.league.teams.find((t) => t.user)?.abbr ?? 'league';
+      download(`pokeball-${name.toLowerCase()}-season${data.league.season ?? 1}.json`, JSON.stringify(data), 'application/json');
+      break;
+    }
+    case 'importpaste': importSave(document.getElementById('import-text')?.value ?? ''); break;
+    case 'recap': if (L) download(`pokeball-season${L.season ?? 1}-recap.txt`, recapText(L), 'text/plain'); break;
+    case 'openresult': S.resultIdx = Number(el.dataset.i); setScreen('result'); break;
+    case 'tradeyes': if (LG.acceptTrade(L)) { save(); render(); } break;
+    case 'tradeno': if (L.trade) { L.trade.status = 'declined'; save(); render(); } break;
+    case 'offseason': LG.startOffseason(L); S.offCuts = null; setScreen('offseason'); break;
+    case 'suggestcuts': S.offCuts = new Set(L.offseason.cuts[user().id]); render(); break;
+    case 'finishoffseason': {
+      LG.finishOffseason(L, [...(S.offCuts ?? [])]);
+      S.offCuts = null;
+      S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false };
+      setScreen('draft');
+      break;
+    }
+    case 'subslot': S.subSel = S.subSel === el.dataset.slot ? null : el.dataset.slot; render(); break;
+    case 'subcancel': S.subSel = null; render(); break;
+    case 'subin': case 'subback': {
+      const g = S.game;
+      if (!g || g.final || S.busy || L3.lp) break;
+      if (act === 'subin' && S.subSel) manualSub(g, userSide(), S.subSel, Number(el.dataset.id));
+      if (act === 'subback') manualSub(g, userSide(), el.dataset.slot, null);
+      S.subSel = null; L3.preview = null;
+      save(); render();
       break;
     }
     case 'quick': {
+      applyGrowth({});
       const seed = Math.floor(Math.random() * 2 ** 31);
       const Q = LG.quickRosters(seed);
       const [a, b] = Q.teams;
@@ -959,6 +1318,13 @@ function onChange(e) {
   if (t.id === 'd-type') { S.draft.type = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
+  if (t.id === 'import-file' && t.files?.[0]) t.files[0].text().then(importSave);
+  if (t.dataset?.cut) {
+    const id = Number(t.dataset.cut);
+    S.offCuts ??= new Set();
+    if (t.checked) S.offCuts.add(id); else S.offCuts.delete(id);
+    render();
+  }
 }
 function onSubmit(e) {
   if (e.target.id !== 'setup-form') return;
@@ -981,12 +1347,16 @@ function onSubmit(e) {
 
 // ---------- render ----------
 function render() {
+  applyGrowth(S.screen === 'game' && S.gameMeta?.quick ? {} : S.league?.growth ?? {});
   let body;
+  const L = S.league;
   switch (S.screen) {
-    case 'draft': body = S.league ? renderDraft() : renderHome(); break;
-    case 'grades': body = renderGrades(); break;
-    case 'depth': body = renderDepth(); break;
-    case 'season': body = renderSeason(); break;
+    case 'draft': body = L?.phase === 'draft' ? renderDraft() : renderHome(); break;
+    case 'grades': body = L ? renderGrades() : renderHome(); break;
+    case 'depth': body = L && L.phase !== 'draft' ? renderDepth() : renderHome(); break;
+    case 'season': body = L && L.schedule.length ? renderSeason() : renderHome(); break;
+    case 'result': body = L ? renderResult() : renderHome(); break;
+    case 'offseason': body = L?.phase === 'offseason' ? renderOffseason() : renderHome(); break;
     case 'game': ensureStage(); body = renderGame(); break;
     default: body = renderHome();
   }
@@ -1004,8 +1374,9 @@ function start(data) {
   loadPrefs();
   const snap = data?.state;
   if (snap?.league || snap?.game) {
-    S.league = snap.league; S.game = snap.game; S.gameMeta = snap.gameMeta; S.screen = snap.screen ?? 'home';
+    S.league = LG.migrateLeague(snap.league); S.game = snap.game; S.gameMeta = snap.gameMeta; S.screen = snap.screen ?? 'home';
   }
+  document.addEventListener('toggle', (e) => { if (e.target.classList?.contains('presnap')) S.presnapClosed = !e.target.open; }, true);
   document.addEventListener('click', onClick);
   document.addEventListener('input', onInput);
   document.addEventListener('change', onChange);

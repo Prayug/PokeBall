@@ -83,7 +83,7 @@ function buildPlayers() {
     }
     for (const k of Object.keys(shown)) shown[k] = Math.max(1, Math.min(99, shown[k]));
     const player = { id: p.id, name: p.name, types: p.types, gen: p.gen, legendary: p.legendary, ability,
-      stats: p.stats, height: p.height, weight: p.weight, attrs: shown, ovr: {} };
+      stats: p.stats, height: p.height, weight: p.weight, attrs: shown, baseAttrs: { ...shown }, ovr: {} };
     for (const s of SLOTS) player.ovr[s.key] = slotOverall(shown, s.key);
     player.best = SLOT_KEYS.slice().sort((a, b) => player.ovr[b] - player.ovr[a]);
     out[p.id] = player;
@@ -99,6 +99,23 @@ export function slotOverall(attrs, slot) {
 
 export const PLAYERS = buildPlayers();
 export const ALL_IDS = Object.keys(PLAYERS).map(Number);
+
+// League development: growth = { id: { attr: points } } on top of the base ratings.
+// PLAYERS is shared, so the active league's growth is applied in place.
+let appliedGrowth = null;
+export function applyGrowth(growth = {}) {
+  if (growth === appliedGrowth) return;
+  const touched = new Set([...Object.keys(appliedGrowth ?? {}), ...Object.keys(growth)]);
+  appliedGrowth = growth;
+  for (const key of touched) {
+    const p = PLAYERS[key];
+    if (!p) continue;
+    const add = growth[key] ?? {};
+    for (const k of Object.keys(p.baseAttrs)) p.attrs[k] = Math.max(1, Math.min(99, p.baseAttrs[k] + (add[k] ?? 0)));
+    for (const s of SLOTS) p.ovr[s.key] = slotOverall(p.attrs, s.key);
+    p.best = SLOT_KEYS.slice().sort((a, b) => p.ovr[b] - p.ovr[a]);
+  }
+}
 
 // Typical starter quality at each slot (70th percentile of the non-legendary pool),
 // used to judge how much a pick improves a roster.

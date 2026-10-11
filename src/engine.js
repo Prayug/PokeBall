@@ -67,7 +67,7 @@ function pickWeighted(g, weights) {
 
 // ---------- setup ----------
 const emptyStats = () => ({ pa: 0, pc: 0, py: 0, ptd: 0, pint: 0, sk: 0, ra: 0, ry: 0, rtd: 0, rlong: 0, fum: 0,
-  tg: 0, rc: 0, rcy: 0, rctd: 0, rclong: 0, tk: 0, dsk: 0, dint: 0, pd: 0, ff: 0 });
+  tg: 0, rc: 0, rcy: 0, rctd: 0, rclong: 0, tk: 0, dsk: 0, dint: 0, pd: 0, ff: 0, sn: 0 });
 const emptyTeamStats = () => ({ plays: 0, yds: 0, passYds: 0, rushYds: 0, fd: 0, to: 0, top: 0, third: [0, 0], sacks: 0, pen: 0 });
 
 function makeSide(t) {
@@ -75,7 +75,8 @@ function makeSide(t) {
   return {
     id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach ?? 'balanced',
     starters: { ...t.lineup }, lineup: { ...t.lineup }, bench: [...(t.bench ?? [])], roster,
-    energy: Object.fromEntries(roster.map((id) => [id, 100])),
+    energy: Object.fromEntries(roster.map((id) => [id, t.energy?.[id] ?? 100])),
+    locks: {},
     stats: Object.fromEntries(roster.map((id) => [id, emptyStats()])),
     team: emptyTeamStats(),
     units: unitRatings(t.lineup),
@@ -206,6 +207,7 @@ function checkSubs(g, ti, slots) {
   const t = g.teams[ti];
   const onField = new Set(Object.values(t.lineup));
   for (const slot of slots) {
+    if (t.locks?.[slot] != null) continue;
     const cur = t.lineup[slot];
     const value = (id) => PLAYERS[id].ovr[slot] * (0.85 + 0.15 * energyOf(g, ti, id) / 100);
     const cands = [t.starters[slot], ...t.bench].filter((id) => id !== cur && !onField.has(id) && energyOf(g, ti, id) >= 75);
@@ -216,6 +218,28 @@ function checkSubs(g, ti, slots) {
       addLog(g, { kind: 'sub', text: `${t.abbr} sub: ${nm(best)} in for ${nm(cur)} at ${slot}.` });
     }
   }
+}
+
+// Coach's substitution: the auto-sub leaves a locked slot alone until the starter returns.
+// Pass id = null to send the starter back in.
+export function manualSub(g, ti, slot, id) {
+  const t = g.teams[ti];
+  t.locks ??= {};
+  const cur = t.lineup[slot];
+  const onField = new Set(Object.values(t.lineup));
+  if (id == null) {
+    delete t.locks[slot];
+    const s = t.starters[slot];
+    if (s === cur || onField.has(s) || !t.roster.includes(s)) return false;
+    t.lineup[slot] = s;
+    addLog(g, { kind: 'sub', text: `${t.abbr} sub: ${nm(s)} back in for ${nm(cur)} at ${slot}.` });
+    return true;
+  }
+  if (onField.has(id) || !t.roster.includes(id)) return false;
+  t.lineup[slot] = id;
+  t.locks[slot] = id;
+  addLog(g, { kind: 'sub', text: `${t.abbr} sub: ${nm(id)} in for ${nm(cur)} at ${slot}, coach's call.` });
+  return true;
 }
 
 function applyFatigue(g) {
@@ -235,6 +259,8 @@ function applyFatigue(g) {
         const w = WEATHER[g.weather];
         if (w.immune && !w.immune.some((ty) => p.types.includes(ty))) drain *= 1.3;
         t.energy[id] = Math.max(0, t.energy[id] - drain);
+        const s = st(g, ti, id);
+        s.sn = (s.sn ?? 0) + 1;
       } else {
         t.energy[id] = Math.min(100, t.energy[id] + (has(id, 'recover') ? 1.4 : 0.7));
       }
