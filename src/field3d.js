@@ -16,7 +16,7 @@ import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel,
 import { Animator } from './anim3d.js';
 import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
-import { flightAt } from './live.js';
+import { flightAt, SIDE as SIDE_W } from './live.js';
 
 const reduceMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const RECEIVER_KEYS = ['WR1', 'WR2', 'WR3', 'TE', 'RB'];
@@ -119,6 +119,72 @@ export class Stage {
     S.add(this.label);
     this.art = new THREE.Group();
     S.add(this.art);
+    // Developer overlay (debug mode only): collision circles, velocity, assignments, routes
+    // and the ball's flight, all in one preallocated line buffer.
+    this.dbgMax = 6000;
+    this.dbgPos = new Float32Array(this.dbgMax * 3); this.dbgCol = new Float32Array(this.dbgMax * 3);
+    const dg = new THREE.BufferGeometry();
+    dg.setAttribute('position', new THREE.BufferAttribute(this.dbgPos, 3));
+    dg.setAttribute('color', new THREE.BufferAttribute(this.dbgCol, 3));
+    this.dbgLines = new THREE.LineSegments(dg, new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true, opacity: 0.9, fog: false }));
+    this.dbgLines.frustumCulled = false; this.dbgLines.renderOrder = 20; this.dbgLines.visible = false;
+    S.add(this.dbgLines);
+  }
+
+  // The developer overlay for this frame.
+  debugOverlay(lp) {
+    const L = this.dbgLines;
+    L.visible = !!this.debug && !!lp;
+    if (!L.visible) return;
+    const P = this.dbgPos, C = this.dbgCol;
+    let n = 0;
+    const seg = (x1, y1, z1, x2, y2, z2, col) => {
+      if (n + 2 > this.dbgMax || !Number.isFinite(x1 + y1 + z1 + x2 + y2 + z2)) return;
+      _c.set(col);
+      P.set([x1, y1, z1, x2, y2, z2], n * 3);
+      C.set([_c.r, _c.g, _c.b, _c.r, _c.g, _c.b], n * 3);
+      n += 2;
+    };
+    const w1 = new THREE.Vector3(), w2 = new THREE.Vector3();
+    const line = (a, b, col, h = 0.08) => { this.world(a.x, a.y, h, w1); this.world(b.x, b.y, h, w2); seg(w1.x, w1.y, w1.z, w2.x, w2.y, w2.z, col); };
+    const CONTACT_COL = { APPROACHING: '#8fd3ff', ENGAGED: '#ffd23f', PUSHING: '#ff9b3d', SHEDDING: '#ff4d4d', DISENGAGED: '#c084fc' };
+    for (const p of lp.players) {
+      const a = this.actorOf(p);
+      const cx = a ? (a.pos.x - this.los) * this.dir : p.x, cy = a ? a.pos.z * this.dir : p.y;
+      const col = CONTACT_COL[p.contact] ?? (p.side === 'off' ? '#5eead4' : '#fca5a5');
+      // Collision circle.
+      for (let i = 0; i < 16; i++) {
+        const t1 = (i / 16) * Math.PI * 2, t2 = ((i + 1) / 16) * Math.PI * 2;
+        line({ x: cx + Math.cos(t1) * p.r, y: cy + Math.sin(t1) * p.r }, { x: cx + Math.cos(t2) * p.r, y: cy + Math.sin(t2) * p.r }, col, 0.06);
+      }
+      // Velocity (half a second ahead) and facing.
+      line({ x: cx, y: cy }, { x: cx + p.vx * 0.5, y: cy + p.vy * 0.5 }, '#ffffff', 0.1);
+      line({ x: cx, y: cy }, { x: cx + p.fx * p.r * 1.3, y: cy + p.fy * p.r * 1.3 }, '#facc15', 0.12);
+      // Assignment: the man he is blocking, rushing, covering or chasing.
+      const t = p.tgt ?? p.aim ?? p.pick ?? p.man;
+      if (t && lp.phase === 'live') line({ x: cx, y: cy }, t, p.side === 'off' ? '#22d3ee' : '#f472b6', 0.14);
+      // The rest of his route.
+      if (p.route && p.role === 'route') {
+        let prev = { x: cx, y: cy };
+        for (let i = p.wp ?? 0; i < p.route.length; i++) { const w = p.route[i]; line(prev, w, '#a3e635', 0.05); prev = w; }
+      }
+    }
+    // Ball flight.
+    const F = lp.thrown;
+    if (F && lp.ball.state === 'air') {
+      let prev = flightAt(F, 0);
+      for (let i = 1; i <= 24; i++) {
+        const at = flightAt(F, (i / 24) * F.T);
+        this.world(prev.x, prev.y, prev.z, w1); this.world(at.x, at.y, at.z, w2);
+        seg(w1.x, w1.y, w1.z, w2.x, w2.y, w2.z, '#ffffff');
+        prev = at;
+      }
+    }
+    // Line of scrimmage spot for this play's result.
+    if (lp.spotX != null) line({ x: lp.spotX, y: -SIDE_W }, { x: lp.spotX, y: SIDE_W }, '#ef4444', 0.05);
+    L.geometry.setDrawRange(0, n);
+    L.geometry.attributes.position.needsUpdate = true;
+    L.geometry.attributes.color.needsUpdate = true;
   }
 
   // ---------- play ----------
@@ -420,6 +486,7 @@ export class Stage {
     }
     this.placeBall(lp, held, t, dt);
     this.markers(lp, now, dt);
+    this.debugOverlay(lp);
     // Camera
     this.rig.update(dt, this.framing(lp), this.camera.aspect, obstacles, this.snapNext || reduceMotion);
     this.snapNext = false;
@@ -448,6 +515,8 @@ export class Stage {
       // Losing the block: the pair is drifting back the way he faces from, so he leans back.
       s.pushBack = (p.vx * p.fx + p.vy * p.fy) < -0.25;
       s.shed = p.contact === 'SHEDDING';
+      const S = p.shed ?? p.eng.shed;
+      if (S) { s.shedMove = S.move; s.shedU = clampN(S.t / 0.24, 0, 1); s.shedder = !!p.shed; }
     }
     const holding = lp.ball.state === 'held' && lp.ball.holder === p && lp.phase !== 'pre';
     s.carrier = holding;
@@ -684,25 +753,45 @@ export class Stage {
   }
 
   // What the camera should frame this frame.
+  // The camera's state machine. Each frame the play decides which shot it is in, and the shot
+  // decides what must be in frame:
+  //   PRE_SNAP     the whole formation, low behind the deepest back
+  //   DROPBACK     the pocket and the first yards of the routes
+  //   PASS_FLIGHT  the ball, leaning toward where it comes down and widening for deep balls
+  //   CATCH        the catch point, a beat tighter
+  //   RUN          the carrier, led by where he is going
+  //   TACKLE       the pile, tight
+  //   POST_PLAY    held where the play ended through the result
+  // The rig springs toward each shot (critically damped), so changes never snap.
   framing(lp) {
-    const f = this.frm ?? (this.frm = { focus: new THREE.Vector3(), fwd: 1, spread: 10, pre: true, deep: 0, tight: false, qb: new THREE.Vector3() });
-    // RESULT: hold the shot where the play ended.
-    if (this.gameState === 'PLAY_RESULT' && this.frmInit) { f.tight = true; f.pre = false; f.shot = 'post'; return f; }
+    const f = this.frm ?? (this.frm = { focus: new THREE.Vector3(), fwd: 1, spread: 10, pre: true, deep: 0, tight: false, qb: new THREE.Vector3(), state: 'PRE_SNAP' });
+    const set = (st) => { if (f.state !== st) { f.state = st; f.since = lp.t; } this.rig.shot = st; };
+    if (this.gameState === 'PLAY_RESULT' && this.frmInit) { f.tight = true; f.pre = false; f.shot = 'post'; set('POST_PLAY'); return f; }
     this.frmInit = true;
     f.fwd = this.dir; f.pre = lp.phase === 'pre'; f.deep = 0; f.tight = false;
     const qb = this.actorOf(lp.off.QB);
     if (qb) f.qb.copy(qb.pos); else f.qb.copy(this.world(-5, 0));
     const b = lp.ball;
+    const caught = lp.caught && lp.catchAt != null && lp.t - lp.catchAt < 0.7;
     if (f.pre) {
       // The whole formation: from the deepest back to a few yards past the line, wider for
       // spread sets.
       let back = 0, wide = 0;
       for (const p of lp.players) if (p.side === 'off') { back = Math.min(back, p.home?.x ?? p.x); wide = Math.max(wide, Math.abs(p.home?.y ?? p.y)); }
-      // Low behind the deepest back, so he, the quarterback and the line are all in the
-      // bottom half of the frame and the routes run up into the top half.
       this.world(back + 3.5, 0, 0, f.focus);
       f.spread = clampN(10 + Math.max(0, wide - 15) * 0.25, 10, 18);
       f.shot = 'pre';
+      set('PRE_SNAP');
+    } else if (lp.phase === 'dead') {
+      const c = lp.carrier ?? lp.ball.holder;
+      if (c) this.world(lp.spotX ?? c.x, c.y, 0, f.focus); else this.world(b.x, b.y, 0, f.focus);
+      f.spread = 10; f.tight = true; f.shot = 'post';
+      set('POST_PLAY');
+    } else if (lp.tackle) {
+      const k = lp.tackle.c;
+      this.world(k.x, k.y, 0, f.focus);
+      f.spread = 9; f.tight = true; f.shot = 'run';
+      set('TACKLE');
     } else if (b.state === 'air' && lp.thrown) {
       const T = lp.thrown;
       const u = clampN((lp.t - T.t0) / T.T, 0, 1);
@@ -711,12 +800,19 @@ export class Stage {
       f.deep = Math.hypot(T.tx - T.sx, T.ty - T.sy);
       f.spread = 12 + Math.min(14, f.deep * 0.3);
       f.shot = 'pass';
-    } else if (lp.carrierSet || lp.phase === 'dead') {
+      set('PASS_FLIGHT');
+    } else if (caught && lp.carrier) {
+      const c = lp.carrier;
+      this.world(c.x + c.vx * 0.2, c.y + c.vy * 0.2, 0, f.focus);
+      f.spread = 10; f.shot = 'run';
+      set('CATCH');
+    } else if (lp.carrierSet) {
+      // Lead the carrier: where he will be in half a second, so open field ahead is in frame.
       const c = lp.carrier ?? lp.ball.holder;
-      if (c) this.world(c.x + c.vx * 0.3, c.y + c.vy * 0.3, 0, f.focus); else this.world(b.x, b.y, 0, f.focus);
+      if (c) this.world(c.x + c.vx * 0.5, c.y + c.vy * 0.35, 0, f.focus); else this.world(b.x, b.y, 0, f.focus);
       f.spread = 10;
-      f.tight = lp.phase === 'dead';
-      f.shot = lp.phase === 'dead' ? 'post' : 'run';
+      f.shot = 'run';
+      set('RUN');
     } else {
       // Pocket: between the quarterback and the line, so the drop, the rush and the first
       // yards of the routes all stay in view.
@@ -724,6 +820,7 @@ export class Stage {
       this.world(Math.max(q.x, -9) + 3, q.y * 0.4, 0, f.focus);
       f.spread = 12;
       f.shot = lp.kind === 'pass' ? 'pass' : 'run';
+      set(lp.kind === 'pass' ? 'DROPBACK' : 'RUN');
     }
     return f;
   }

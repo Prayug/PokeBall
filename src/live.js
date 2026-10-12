@@ -942,7 +942,52 @@ function rushWant(lp, p) {
   if (lp.kind === 'pass' && !lp.carrierSet && p.edge && lp.t < 1.6 && Math.abs(p.y) > Math.abs(c.y) + 1.2) {
     return seek(p, { x: c.x + 1.5, y: c.y + p.edge * 2.4 }, 1, 0.3);
   }
+  // A rusher whose way to the quarterback is walled off by the pile at the line picks the
+  // nearest open lane through it instead of pressing into bodies.
+  if (lp.kind === 'pass' && !lp.carrierSet && p.x > c.x + 2) {
+    const lane = rushLane(lp, p, c);
+    if (lane) return seek(p, lane, fooled ? 0.7 : 1, 0.05);
+  }
   intercept(p, c, fooled ? 0.7 : 1);
+}
+// The point to aim for to get through the line, or null if the straight path is open.
+function rushLane(lp, p, c) {
+  // Room along the path from him to (x, y): the closest any body comes to that segment.
+  const clear = (x, y) => {
+    const sx = x - p.x, sy = y - p.y, L2 = sx * sx + sy * sy || 1;
+    let m = 99;
+    for (const q of lp.players) {
+      if (q === p) continue;
+      const u = clamp(((q.x - p.x) * sx + (q.y - p.y) * sy) / L2, 0, 1);
+      m = Math.min(m, Math.hypot(q.x - (p.x + sx * u), q.y - (p.y + sy * u)) - q.r);
+    }
+    return m - p.r;
+  };
+  // Is anybody on the straight line within the next three yards?
+  const dx = c.x - p.x, dy = c.y - p.y, d = len(dx, dy) || 1;
+  let blocked = false;
+  for (const q of lp.players) {
+    if (q === p) continue;
+    const rx = q.x - p.x, ry = q.y - p.y, along = (rx * dx + ry * dy) / d;
+    if (along <= 0 || along > 3) continue;
+    if (Math.abs(rx * dy - ry * dx) / d < q.r + p.r * 0.8) { blocked = true; break; }
+  }
+  if (!blocked) return null;
+  // Candidate lanes a yard or two ahead, from his own y outward; the closest one with room.
+  const ax = p.x - 1.6;
+  let best = null;
+  for (let k = 0; k <= 16; k++) {
+    for (const s of k ? [-1, 1] : [1]) {
+      const y = p.y + s * k * 0.6, room = clear(ax, y);
+      if (room > 0.1) { const cost = k * 0.6 + Math.abs(y - c.y) * 0.15; if (!best || cost < best.cost) best = { x: ax, y, cost }; }
+    }
+    if (best) break;
+  }
+  if (best) return best;
+  // No lane at all: loop around the end of the line.
+  let wide = 0;
+  for (const q of lp.players) if (q.side !== p.side && Math.abs(q.x) < 3) wide = Math.max(wide, Math.abs(q.y) + q.r);
+  return { x: p.x, y: sgn(p.y || 0.01) * (wide + p.r + 0.6) };
 }
 
 function coverWant(lp, p) {
@@ -1262,7 +1307,7 @@ function animIdle(lp, dt) { for (const p of lp.players) p.anim += dt * 2; }
 // Bodies don't pass through each other: overlapping capsules are pushed apart until they
 // just touch. Ball carriers and engaged blockers hold their ground and the other one gives;
 // when both hold, both give. Contact itself (blocks, tackles) happens at the capsule edge.
-const SEP_MAX = 0.14;
+const SEP_MAX = 0.12;
 function separate(lp, passes = 2) {
   const ps = lp.players;
   const holds = (p) => !!(p.eng || p.carrier);
@@ -1284,7 +1329,7 @@ function separate(lp, passes = 2) {
         let ka = ha && !hb ? 0 : !ha && hb ? 1 : 0.5;
         // A free teammate and the carrier share the shove; neither bulldozes the other.
         const mate = a.side === b.side && (a.carrier || b.carrier);
-        if (mate && !a.eng && !b.eng) ka = a.carrier ? 0.25 : 0.75;
+        if (mate && !a.eng && !b.eng) ka = a.carrier ? 0.35 : 0.65;
         a.x -= ux * over * ka; a.y -= uy * over * ka;
         b.x += ux * over * (1 - ka); b.y += uy * over * (1 - ka);
         // A body pressed into another loses the speed it had into it (a free player running
@@ -1305,10 +1350,13 @@ function slide(p, ux, uy) {
   p.vx -= ux * vn; p.vy -= uy * vn;
   const tx = -uy, ty = ux;
   const w = p.want ?? p;
-  const s = sgn((p.vx * tx + p.vy * ty) * 3 + (w.vx * tx + w.vy * ty) || 1);
-  p.vx += tx * s * vn * 0.6; p.vy += ty * s * vn * 0.6;
-  const sp = len(p.vx, p.vy), cap = sp0 * 0.8;
-  if (sp > cap) { p.vx *= cap / sp; p.vy *= cap / sp; }
+  const vt = p.vx * tx + p.vy * ty, wt = w.vx * tx + w.vy * ty;
+  const s = sgn(vt * 3 + wt || 1);
+  // Keep at least half the lost speed as a slide along the body, never more than he had.
+  const want = Math.max(Math.abs(vt), vn * 0.6);
+  p.vx += tx * (s * want - vt); p.vy += ty * (s * want - vt);
+  const sp = len(p.vx, p.vy);
+  if (sp > sp0) { p.vx *= sp0 / sp; p.vy *= sp0 / sp; }
 }
 
 // ---------- blocking ----------

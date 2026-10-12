@@ -865,7 +865,7 @@ function renderGame() {
     let head;
     if (L3.lp) {
       const lp = L3.lp;
-      const mine = lp.user === lp.o ? OFF_PLAYS[L3.off].name : DEF_PLAYS[L3.def].name;
+      const mine = (lp.user === lp.o ? OFF_PLAYS[L3.off]?.name : DEF_PLAYS[L3.def]?.name) ?? '';
       dock = lp.phase === 'pre' ? 'lined' : 'live';
       head = `<div class="callhead"><h3>${lp.phase === 'pre' ? `Lined up: ${esc(mine)}` : 'Play in progress'}</h3><span class="muted">${downText(g)} at ${spotText(g)}</span></div>
         ${lp.phase === 'pre' ? `<div class="actions"><button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap the ball' : 'Start the play'} <kbd>Space</kbd></button>
@@ -1142,6 +1142,8 @@ function doCall(call) {
   if (!g || g.final || S.busy || L3.lp) return;
   if (stage && L3.flow !== 'PLAY_SELECTION' && L3.flow != null) return;
   const us = userSide();
+  // A call from the wrong side's sheet (a stale click, a script) is ignored.
+  if (!(g.poss === us ? OFF_PLAYS : DEF_PLAYS)[call]) return;
   const off = g.poss === us ? call : aiOffenseCall(g);
   const def = g.poss === us ? aiDefenseCall(g) : call;
   S.coachDown = false;
@@ -1210,7 +1212,7 @@ const setState = setFlow;
 let stage = null;
 let stageWrap = null;
 // Hooks for the browser tests (test/browser.mjs): read-only views of the game's state.
-if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode };
+if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug };
 
 function ensureStage() {
   if (stage || !webglAvailable()) return;
