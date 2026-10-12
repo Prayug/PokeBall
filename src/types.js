@@ -135,6 +135,19 @@ export const ABILITIES = {
   Drought: { text: 'Brings harsh sun to its games', weather: 'sun' },
   'Sand Stream': { text: 'Brings a sandstorm to its games', weather: 'sand' },
   'Snow Warning': { text: 'Brings hail to its games', weather: 'hail' },
+  // Gen 5 to 9
+  'Sand Rush': { text: '+10 speed in a sandstorm', attr: { spd: 10 }, when: 'sand' },
+  'Slush Rush': { text: '+10 speed in hail', attr: { spd: 10 }, when: 'hail' },
+  'Sheer Force': { text: '+6 strength', attr: { str: 6 } },
+  'Tough Claws': { text: '+5 strength', attr: { str: 5 } },
+  'Strong Jaw': { text: '+5 tackling', attr: { tkl: 5 } },
+  Fluffy: { text: '+5 blocking', attr: { blk: 5 } },
+  Unburden: { text: '+6 speed', attr: { spd: 6 } },
+  Multiscale: { text: 'Super-effective matchups against it are halved', special: 'filter' },
+  'Prism Armor': { text: 'Super-effective matchups against it are halved', special: 'filter' },
+  Defiant: { text: 'Immune to Intimidate', special: 'clearBody' },
+  Competitive: { text: 'Immune to Intimidate', special: 'clearBody' },
+  'Protosynthesis': { text: '+5 to everything in harsh sun', attr: { all: 5 }, when: 'sun' },
 };
 
 // A Pokémon's football ability: its first curated ability, else its first ability.

@@ -1,53 +1,88 @@
-"""Builds src/sprites3d.js (animated 3D-model sprite strips) and src/sprites.js (stills for the menus).
+"""Builds the animated pixel sprite strips for the field and the menu stills.
 
-Usage: python3 build_sprites3d.py <gif_cache_dir> <out_src_dir>
-Source: the animated 3D-model sprites from Pokémon Showdown, as mirrored in PokeAPI/sprites
-(sprites/pokemon/other/showdown/{id}.gif and .../showdown/back/{id}.gif).
-Each direction becomes one horizontal strip of FRAMES frames, cropped to the union of the
-frames' bounding boxes so the feet stay put while the animation plays.
+Usage: python3 build_sprites3d.py <gif_cache_dir> <out_src_dir> <out_dist_dir>
+Source: PokeAPI/sprites. Gen 1-5 use the animated Black/White pixel sprites, front and back
+(sprites/pokemon/versions/generation-v/black-white/animated/{id}.gif and .../back/{id}.gif).
+Later Pokémon have no Black/White animation, so they use the pixel sprites in
+sprites/pokemon/{id}.png and back/{id}.png as one-frame strips; the field animates those
+with its own bob and stride.
+
+Each direction becomes one horizontal strip, sampled at even steps through the GIF's own
+timing and cropped to the union of the frames' bounding boxes so the feet stay put. Pixels
+are kept at their native size (lossless WebP) so the field can draw them crisp.
+
+Outputs:
+  <out_src_dir>/sprites3d.js   index: id -> [chunk, front w, front h, back w, back h,
+                               front frames, back frames, seconds per loop]
+  <out_src_dir>/sprites.js     small stills for the menus (bundled into the app)
+  <out_dist_dir>/sprites3d/N.js  the strips, PER_CHUNK Pokémon per file, loaded on demand by
+                                 a <script> tag (works from file:// and from a static host)
 """
-import base64, io, json, os, re, sys, urllib.request
+import base64, glob, io, json, os, re, sys, urllib.error, urllib.request
+from multiprocessing import Pool
 from PIL import Image
 
-cache, out_dir = sys.argv[1:3]
-FRAMES, CELL, STILL = 8, 104, 96
-BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/'
+cache, out_dir, dist_dir = sys.argv[1:4]
+MAX_FRAMES, STILL, PER_CHUNK = 12, 96, 3
+BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/'
+BW = BASE + 'versions/generation-v/black-white/animated/'
 
 data = open(os.path.join(out_dir, 'data.js'), encoding='utf-8').read()
 ids = [int(x) for x in re.findall(r'"id":(\d+)', data)]
 os.makedirs(cache, exist_ok=True)
 
 
-def fetch(pid, back):
-    path = os.path.join(cache, f'{pid}{"b" if back else ""}.gif')
-    if not os.path.exists(path):
-        with urllib.request.urlopen(BASE + ('back/' if back else '') + f'{pid}.gif') as r, open(path, 'wb') as f:
+def download(url, path):
+    try:
+        with urllib.request.urlopen(url) as r, open(path, 'wb') as f:
             f.write(r.read())
-    return Image.open(path)
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False
+        raise
+
+
+def fetch(pid, back):
+    b = 'back/' if back else ''
+    gif = os.path.join(cache, f'bw{pid}{"b" if back else ""}.gif')
+    if os.path.exists(gif) or download(BW + b + f'{pid}.gif', gif):
+        return Image.open(gif)
+    png = os.path.join(cache, f'px{pid}{"b" if back else ""}.png')
+    if os.path.exists(png) or download(BASE + b + f'{pid}.png', png):
+        return Image.open(png)
+    raise SystemExit(f'no sprite for {pid}')
 
 
 def frames(im):
+    """Frames sampled at even times through the animation, and the loop length in seconds."""
     n = getattr(im, 'n_frames', 1)
-    picks = sorted({round(i * n / FRAMES) % n for i in range(FRAMES)})
-    out = []
+    if n == 1:
+        return [im.convert('RGBA')], 1.0
+    durs, all_frames = [], []
     for i in range(n):
         im.seek(i)
-        fr = im.convert('RGBA')
-        if i in picks:
-            out.append(fr)
-    while len(out) < FRAMES:
-        out.append(out[len(out) % len(picks)])
-    return out[:FRAMES]
+        all_frames.append(im.convert('RGBA'))
+        durs.append(max(20, im.info.get('duration', 100) or 100))
+    total = sum(durs)
+    count = min(MAX_FRAMES, n)
+    out, t, k, acc = [], 0, 0, 0
+    for s in range(count):
+        t = s * total / count
+        while k < n - 1 and acc + durs[k] <= t:
+            acc += durs[k]; k += 1
+        out.append(all_frames[k])
+    return out, total / 1000
 
 
-def b64(img, fmt='WEBP'):
+def b64(img, lossless=True):
     buf = io.BytesIO()
-    img.save(buf, fmt, quality=82, method=6)
-    return f'data:image/{fmt.lower()};base64,' + base64.b64encode(buf.getvalue()).decode()
+    img.save(buf, 'WEBP', lossless=lossless, quality=100 if lossless else 82, method=4)
+    return 'data:image/webp;base64,' + base64.b64encode(buf.getvalue()).decode()
 
 
 def strip(im):
-    frs = frames(im)
+    frs, secs = frames(im)
     box = None
     for fr in frs:
         bb = fr.getchannel('A').point(lambda a: 255 if a > 24 else 0).getbbox()
@@ -55,30 +90,46 @@ def strip(im):
             box = bb if box is None else (min(box[0], bb[0]), min(box[1], bb[1]), max(box[2], bb[2]), max(box[3], bb[3]))
     box = box or (0, 0, *frs[0].size)
     w, h = box[2] - box[0], box[3] - box[1]
-    s = min(1.0, CELL / max(w, h))
-    cw, ch = max(1, round(w * s)), max(1, round(h * s))
-    sheet = Image.new('RGBA', (cw * FRAMES, ch))
+    sheet = Image.new('RGBA', (w * len(frs), h))
     for i, fr in enumerate(frs):
-        sheet.paste(fr.crop(box).resize((cw, ch), Image.LANCZOS), (i * cw, 0))
-    return sheet, cw, ch, frs[0].crop(box)
+        sheet.paste(fr.crop(box), (i * w, 0))
+    return sheet, w, h, len(frs), secs, frs[0].crop(box)
 
 
-out3d, stills, total = {}, {}, 0
-for pid in ids:
-    f_sheet, fw, fh, first = strip(fetch(pid, False))
-    b_sheet, bw, bh, _ = strip(fetch(pid, True))
-    f_uri, b_uri = b64(f_sheet), b64(b_sheet)
-    out3d[pid] = {'f': f_uri, 'fw': fw, 'fh': fh, 'b': b_uri, 'bw': bw, 'bh': bh}
+def build(pid):
+    f_sheet, fw, fh, fn, secs, first = strip(fetch(pid, False))
+    b_sheet, bw, bh, bn, _, _ = strip(fetch(pid, True))
     s = min(1.0, STILL / max(first.size))
-    still = first.resize((max(1, round(first.size[0] * s)), max(1, round(first.size[1] * s))), Image.LANCZOS)
-    stills[pid] = b64(still)
-    total += len(f_uri) + len(b_uri)
+    still = first.resize((max(1, round(first.size[0] * s)), max(1, round(first.size[1] * s))), Image.NEAREST)
+    return [fw, fh, bw, bh, fn, bn, round(secs, 2)], [b64(f_sheet), b64(b_sheet)], b64(still)
+
+
+index, stills, chunks = {}, {}, {}
+with Pool() as pool:
+    for n, (pid, (dims, pair, still)) in enumerate(zip(ids, pool.map(build, ids))):
+        c = n // PER_CHUNK
+        index[pid] = [c, *dims]
+        chunks.setdefault(c, {})[pid] = pair
+        stills[pid] = still
+
+sdir = os.path.join(dist_dir, 'sprites3d')
+os.makedirs(sdir, exist_ok=True)
+for old in glob.glob(os.path.join(sdir, '*.js')):
+    os.remove(old)
+total = 0
+for c, strips in chunks.items():
+    body = '__pbSprites(' + json.dumps(strips, separators=(',', ':')) + ');\n'
+    with open(os.path.join(sdir, f'{c}.js'), 'w') as f:
+        f.write(body)
+    total += len(body)
 
 with open(os.path.join(out_dir, 'sprites3d.js'), 'w') as f:
-    f.write('// Generated by build/build_sprites3d.py from the Pokémon Showdown 3D-model sprites. Do not edit.\n')
-    f.write(f'export const FRAMES = {FRAMES};\n')
-    f.write('export const SPRITES3D = ' + json.dumps(out3d, separators=(',', ':')) + ';\n')
+    f.write('// Generated by build/build_sprites3d.py from the PokeAPI pixel sprites. Do not edit.\n')
+    f.write('// id -> [chunk, front width, front height, back width, back height, front frames, back frames,\n')
+    f.write('// seconds per idle loop]; the strips live in dist/sprites3d/<chunk>.js and load on demand.\n')
+    f.write('export const SPRITE_INDEX = ' + json.dumps(index, separators=(',', ':')) + ';\n')
 with open(os.path.join(out_dir, 'sprites.js'), 'w') as f:
-    f.write('// Generated by build/build_sprites3d.py from the Pokémon Showdown 3D-model sprites. Do not edit.\n')
+    f.write('// Generated by build/build_sprites3d.py from the PokeAPI pixel sprites. Do not edit.\n')
     f.write('export const SPRITES = ' + json.dumps(stills, separators=(',', ':')) + ';\n')
-print(len(out3d), 'pokemon;', round(total / 1e6, 1), 'MB of animated strips')
+print(len(index), 'pokemon in', len(chunks), 'chunks;', round(total / 1e6, 1), 'MB of animated strips;',
+      round(sum(map(len, stills.values())) / 1e6, 1), 'MB of stills')

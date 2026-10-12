@@ -517,7 +517,7 @@ function doRun(g, call, defCall) {
     const push = (power - (eff(g, d, D('DT1'), 'str') + eff(g, d, D('DT2'), 'str')) / 2) * 0.03;
     yards = Math.round(1.3 + push + lane * 0.04 + 1.3 * randn(g));
   } else {
-    let mean = 3.2 + lane * 0.1;
+    let mean = 2.5 + lane * 0.1;
     let sd = 3.0;
     if (dir === 'outside') {
       const edge = (eff(g, d, D('OLB'), 'spd') + eff(g, d, D('CB1'), 'spd')) / 2;
@@ -737,7 +737,7 @@ function doPass(g, call, defCall) {
   }
 
   // Incomplete or intercepted
-  let pInt = 0.045 + 0.005 * Math.max(0, -best.sep) + (pressure ? 0.04 : 0) - 0.0015 * (acc - 82) + (deep ? 0.03 : 0);
+  let pInt = 0.027 + 0.005 * Math.max(0, -best.sep) + (pressure ? 0.04 : 0) - 0.0015 * (acc - 82) + (deep ? 0.03 : 0);
   const hawk = cov != null && PLAYERS[cov].types.includes('Dark');
   if (hawk) pInt += 0.03;
   if (depth === 'screen') pInt *= 0.3;
@@ -760,7 +760,10 @@ function doPass(g, call, defCall) {
 }
 
 // ---------- AI coach ----------
-export function aiOffenseCall(g) {
+// The AI's leanings are split from its dice so the play caller can show which call fits the
+// down without consuming g.rng: offenseLean gives a kick call or a pass rate, the weight tables
+// below rank the calls within each kind.
+export function offenseLean(g) {
   const o = g.poss, d = 1 - o;
   const t = g.teams[o];
   const lead = g.score[o] - g.score[d];
@@ -771,10 +774,10 @@ export function aiOffenseCall(g) {
   if (g.down === 4) {
     const desperate = late && lead < 0 && (g.clock < 150 || (lead < -8 && g.clock < 420));
     const needTD = late && lead < -3 && g.clock < 150;
-    if (desperate && (needTD || dist > 52)) return passOrRun(g, 0.85);
-    if (g.toGo <= 1 && g.spot >= 45 && g.spot <= 97 && !(late && lead > 0)) return passOrRun(g, 0.3);
+    if (desperate && (needTD || dist > 52)) return 0.85;
+    if (g.toGo <= 1 && g.spot >= 45 && g.spot <= 97 && !(late && lead > 0)) return 0.3;
     if (dist <= 52) return 'fg';
-    if (g.toGo <= 2 && g.spot >= 60) return passOrRun(g, 0.4);
+    if (g.toGo <= 2 && g.spot >= 60) return 0.4;
     return 'punt';
   }
   let pPass = 0.52;
@@ -787,34 +790,48 @@ export function aiOffenseCall(g) {
   pPass += (t.units.passOff - t.units.runOff) / 50;
   if (t.coach === 'speed') pPass += 0.05;
   if (t.coach === 'trench') pPass -= 0.07;
-  return passOrRun(g, clamp(pPass, 0.1, 0.95));
+  return clamp(pPass, 0.1, 0.95);
 }
 
-function passOrRun(g, pPass) {
+export function aiOffenseCall(g) {
+  const lean = offenseLean(g);
+  return typeof lean === 'string' ? lean : passOrRun(g, lean);
+}
+
+export function passWeights(g) {
   const o = g.poss, d = 1 - o;
   const t = g.teams[o], L = t.lineup, DL = g.teams[d].lineup;
   const A = (ti, id, a) => eff(g, ti, id, a);
-  if (chance(g, pPass)) {
-    const long = g.toGo >= 8, short = g.toGo <= 4;
-    const speedEdge = Math.max(A(o, L.WR1, 'spd') - A(d, DL.CB1, 'cov'), A(o, L.WR2, 'spd') - A(d, DL.CB2, 'cov'));
-    const red = g.spot >= 85;
-    const w = {
-      screen: short ? 0.6 : 1, slant: short ? 2.2 : 1.2, out: short ? 1.6 : 1, curl: long ? 1.6 : 1.3,
-      te_seam: 0.6 + Math.max(0, A(o, L.TE, 'hnd') - 70) / 20,
-      post: red ? 0.2 : (long ? 1.0 : 0.45) + Math.max(0, speedEdge) / 35,
-      pa_deep: red ? 0.1 : (g.down === 1 ? 0.55 : 0.2) + Math.max(0, speedEdge) / 40,
-    };
-    if (t.coach === 'speed') { w.post *= 1.4; w.pa_deep *= 1.4; }
-    if (g.toGo > 15) { w.screen *= 0.5; w.slant *= 0.4; }
-    return pickWeighted(g, w);
-  }
+  const long = g.toGo >= 8, short = g.toGo <= 4;
+  const speedEdge = Math.max(A(o, L.WR1, 'spd') - A(d, DL.CB1, 'cov'), A(o, L.WR2, 'spd') - A(d, DL.CB2, 'cov'));
+  const red = g.spot >= 85;
+  const w = {
+    screen: short ? 0.6 : 1, slant: short ? 2.2 : 1.2, out: short ? 1.6 : 1, curl: long ? 1.6 : 1.3,
+    te_seam: 0.6 + Math.max(0, A(o, L.TE, 'hnd') - 70) / 20,
+    post: red ? 0.2 : (long ? 1.0 : 0.45) + Math.max(0, speedEdge) / 35,
+    pa_deep: red ? 0.1 : (g.down === 1 ? 0.55 : 0.2) + Math.max(0, speedEdge) / 40,
+  };
+  if (t.coach === 'speed') { w.post *= 1.4; w.pa_deep *= 1.4; }
+  if (g.toGo > 15) { w.screen *= 0.5; w.slant *= 0.4; }
+  return w;
+}
+
+export function runWeights(g) {
+  const o = g.poss;
+  const t = g.teams[o], L = t.lineup;
+  const A = (ti, id, a) => eff(g, ti, id, a);
   const w = { inside_run: 1.2, outside_run: 1 + (A(o, L.RB, 'spd') - 70) / 30, draw: g.toGo >= 7 ? 0.8 : 0.25 };
   if (g.toGo <= 1) w.qb_sneak = 0.6 + Math.max(0, A(o, L.QB, 'str') - 65) / 30;
   if (t.coach === 'trench') w.inside_run *= 1.5;
-  return pickWeighted(g, w);
+  return w;
 }
 
-export function aiDefenseCall(g) {
+function passOrRun(g, pPass) {
+  if (chance(g, pPass)) return pickWeighted(g, passWeights(g));
+  return pickWeighted(g, runWeights(g));
+}
+
+export function defenseWeights(g) {
   const d = 1 - g.poss;
   const coach = g.teams[d].coach;
   const lead = g.score[d] - g.score[g.poss];
@@ -826,8 +843,10 @@ export function aiDefenseCall(g) {
   if (g.quarter >= 4 && lead > 0 && lead <= 8 && g.clock < 120) w.prevent = (w.prevent ?? 0) + 4;
   if (coach === 'trench') { w.pass_blitz = (w.pass_blitz ?? 0) * 1.5 + 0.5; w.run_blitz = (w.run_blitz ?? 0) * 1.3; }
   if (coach === 'speed') w.man_press = (w.man_press ?? 0) * 1.6 + 0.5;
-  return pickWeighted(g, w);
+  return w;
 }
+
+export function aiDefenseCall(g) { return pickWeighted(g, defenseWeights(g)); }
 
 export function simPlay(g) { return runPlay(g, aiOffenseCall(g), aiDefenseCall(g)); }
 

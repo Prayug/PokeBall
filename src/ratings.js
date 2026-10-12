@@ -45,31 +45,76 @@ function percentile(sorted, v) {
   return (lo + hi / 2) / sorted.length;
 }
 
+// Inverse of the standard normal CDF (Acklam's approximation, plenty for ratings).
+function invNorm(p) {
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const q = Math.min(p, 1 - p);
+  let z;
+  if (q < 0.02425) {
+    const r = Math.sqrt(-2 * Math.log(q));
+    z = (((((c[0] * r + c[1]) * r + c[2]) * r + c[3]) * r + c[4]) * r + c[5]) / ((((d[0] * r + d[1]) * r + d[2]) * r + d[3]) * r + 1);
+  } else {
+    const r = (q - 0.5) * (q - 0.5), t = q - 0.5;
+    z = (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * t / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  }
+  return p > 0.5 ? -z : z;
+}
+
+// Where v sits in the pool as a z-score: ranks are mapped onto a bell curve so the elite
+// pull away from the pack and the dregs fall off. Values past the pool's best (legendaries)
+// keep climbing at the pool's spread.
+function zScore(sorted, v) {
+  const n = sorted.length, top = sorted[n - 1], zTop = invNorm(1 - 0.5 / n);
+  if (v > top) {
+    const sd = (top - sorted[Math.floor(n * 0.16)]) / (zTop + 1) || 1;
+    return zTop + (v - top) / sd;
+  }
+  return invNorm(Math.min(1 - 0.5 / n, Math.max(0.5 / n, percentile(sorted, v))));
+}
+
+// Attributes center on 60 with a 16-point spread; position overalls center on 50 with a
+// 16-point spread, so a 99 is the best in the league at that spot, an 80 is a solid starter
+// and a 50 is a middling backup.
+const ATTR_MID = 60, ATTR_SD = 16, OVR_MID = 50, OVR_SD = 16;
+
 function buildPlayers() {
   const base = POKEMON.filter((p) => !p.legendary);
   const keys = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
   const dist = Object.fromEntries(keys.map((k) => [k, base.map((p) => p.stats[k]).sort((a, b) => a - b)]));
   const wDist = base.map((p) => p.weight).sort((a, b) => a - b);
   const hDist = base.map((p) => p.height).sort((a, b) => a - b);
-  const out = {};
+  const bstDist = base.map((p) => keys.reduce((t, k) => t + p.stats[k], 0)).sort((a, b) => a - b);
+  // Raw attribute mixes from stat percentiles, height and weight.
+  const raws = new Map();
   for (const p of POKEMON) {
     const q = Object.fromEntries(keys.map((k) => [k, percentile(dist[k], p.stats[k])]));
     const w = percentile(wDist, p.weight), h = percentile(hDist, p.height);
-    const str = 0.6 * q.atk + 0.4 * w;
-    const raw = {
-      spd: 0.8 * q.spe + 0.2 * (1 - w),
-      str,
-      blk: 0.5 * q.def + 0.3 * q.hp + 0.2 * w,
-      rush: 0.5 * q.atk + 0.3 * q.spe + 0.2 * str,
-      arm: 0.7 * q.spa + 0.3 * q.atk,
-      acc: 0.6 * q.spd + 0.4 * q.spa,
-      hnd: 0.5 * q.spa + 0.3 * q.spe + 0.2 * h,
-      cov: 0.5 * q.spe + 0.3 * q.spd + 0.2 * q.def,
-      tkl: 0.4 * q.atk + 0.4 * q.def + 0.2 * w,
-      sta: q.hp,
-    };
+    // Overall power (base stat total) lifts everything a little: a fully trained Pokémon
+    // beats a gimmick with one big stat.
+    const bst = percentile(bstDist, keys.reduce((t, k) => t + p.stats[k], 0));
+    const str = 0.55 * q.atk + 0.35 * w + 0.1 * q.hp;
+    raws.set(p.id, {
+      spd: 0.8 * q.spe + 0.2 * (1 - w) + 0.1 * bst,
+      str: str + 0.1 * bst,
+      blk: 0.45 * q.def + 0.25 * q.hp + 0.25 * w + 0.1 * bst,
+      rush: 0.45 * q.atk + 0.35 * q.spe + 0.2 * str + 0.1 * bst,
+      arm: 0.65 * q.spa + 0.35 * q.atk + 0.1 * bst,
+      acc: 0.6 * q.spd + 0.4 * q.spa + 0.1 * bst,
+      hnd: 0.45 * q.spa + 0.3 * q.spe + 0.25 * h + 0.1 * bst,
+      cov: 0.5 * q.spe + 0.3 * q.spd + 0.2 * q.def + 0.1 * bst,
+      tkl: 0.4 * q.atk + 0.35 * q.def + 0.25 * w + 0.1 * bst,
+      sta: 0.75 * q.hp + 0.25 * q.def + 0.1 * bst,
+    });
+  }
+  const rawDist = Object.fromEntries(Object.keys(ATTRS).map((k) => [k, base.map((p) => raws.get(p.id)[k]).sort((a, b) => a - b)]));
+  const out = {};
+  for (const p of POKEMON) {
+    const raw = raws.get(p.id);
     const attrs = {};
-    for (const [k, v] of Object.entries(raw)) attrs[k] = Math.max(1, Math.min(99, Math.round(25 + 74 * v)));
+    for (const k of Object.keys(ATTRS)) attrs[k] = Math.round(ATTR_MID + ATTR_SD * zScore(rawDist[k], raw[k]));
     const ability = pickAbility(p.abilities);
     // Always-on bonuses from type traits and unconditional abilities go into the
     // displayed ratings; conditional ones apply during games.
@@ -81,20 +126,27 @@ function buildPlayers() {
       const best = Object.keys(shown).reduce((a, b) => (shown[a] >= shown[b] ? a : b));
       shown[best] += 4;
     }
-    for (const k of Object.keys(shown)) shown[k] = Math.max(1, Math.min(99, shown[k]));
-    const player = { id: p.id, name: p.name, types: p.types, gen: p.gen, legendary: p.legendary, ability,
+    for (const k of Object.keys(shown)) shown[k] = Math.max(10, Math.min(99, shown[k]));
+    out[p.id] = { id: p.id, name: p.name, types: p.types, gen: p.gen, legendary: p.legendary, ability,
       stats: p.stats, height: p.height, weight: p.weight, attrs: shown, ovr: {} };
-    for (const s of SLOTS) player.ovr[s.key] = slotOverall(shown, s.key);
-    player.best = SLOT_KEYS.slice().sort((a, b) => player.ovr[b] - player.ovr[a]);
-    out[p.id] = player;
   }
+  // Position overalls: the slot's attribute mix, graded on a curve against the whole pool.
+  const ids = Object.keys(out);
+  for (const s of SLOTS) {
+    const sorted = base.map((p) => slotScore(out[p.id].attrs, s.key)).sort((a, b) => a - b);
+    for (const id of ids) {
+      const z = zScore(sorted, slotScore(out[id].attrs, s.key));
+      out[id].ovr[s.key] = Math.max(1, Math.min(99, Math.round(OVR_MID + OVR_SD * z)));
+    }
+  }
+  for (const id of ids) out[id].best = SLOT_KEYS.slice().sort((a, b) => out[id].ovr[b] - out[id].ovr[a]);
   return out;
 }
 
-export function slotOverall(attrs, slot) {
+function slotScore(attrs, slot) {
   let v = 0;
   for (const [k, w] of Object.entries(SLOT[slot].w)) v += attrs[k] * w;
-  return Math.round(v);
+  return v;
 }
 
 export const PLAYERS = buildPlayers();
