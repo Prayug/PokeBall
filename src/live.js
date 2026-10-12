@@ -450,6 +450,12 @@ export function snap(lp) {
     lp.ball = { state: 'snap', holder: null, x: c.x + 0.4, y: c.y, z: 0.3, from: { x: c.x + 0.4, y: c.y }, t0: 0, T: 0.22 + dist(c, qb) * 0.02 };
   } else lp.ball.holder = qb;
   if (lp.kind === 'run' && lp.play.dir === 'sneak') setCarrier(lp, qb);
+  // Front responsibilities: each down lineman owns the gap he is shaded toward; the widest
+  // rusher on each side keeps contain.
+  const front = lp.players.filter((p) => p.side === 'def' && p.role === 'rush');
+  for (const p of front) if (['LE', 'DE', 'DT1', 'DT2'].includes(p.slot)) p.gapY = p.y + sgn(p.y || 0.01) * 0.6;
+  const wide = (s) => front.filter((p) => sgn(p.y) === s).sort((a, b) => Math.abs(b.y) - Math.abs(a.y))[0];
+  for (const s of [-1, 1]) { const w = wide(s); if (w) w.edge = s; }
   event(lp, 'snap', '', c ?? qb, qb);
 }
 
@@ -788,37 +794,82 @@ function routeWant(lp, p) {
   seek(p, w, 0.97, w.stop ? 1.0 : 0.01);
 }
 
+// Pass protection. At the snap the line slides into a cup around the quarterback's drop spot:
+// each blocker owns the rusher matched to him left to right (slide protection), kick-steps back
+// to the arc between that rusher and the quarterback and meets him there, so the pocket is a
+// shape on the field, not a scrum at the line. A blocker whose man is taken or gone picks up
+// the free rusher nearest the quarterback.
+function protect(lp) {
+  if (lp.prot) return;
+  lp.prot = true;
+  const bl = lp.players.filter((p) => p.side === 'off' && p.role === 'passblock').sort((a, b) => a.y - b.y);
+  const ru = lp.players.filter((p) => p.side === 'def' && p.role === 'rush').sort((a, b) => a.y - b.y);
+  // Match in order, linemen first; extra blockers (a back or tight end) take the widest leftover.
+  const line = bl.filter((p) => ['LT', 'LG', 'C', 'RG', 'RT'].includes(p.slot));
+  const used = new Set();
+  const pairs = [];
+  for (const b of bl) for (const r of ru) pairs.push([Math.abs(b.y - r.y) + (line.includes(b) ? 0 : 2), b, r]);
+  pairs.sort((a, b) => a[0] - b[0]);
+  for (const [, b, r] of pairs) if (!b.pick && !used.has(r)) { b.pick = r; used.add(r); }
+}
+function pocketSpot(lp, p, toward) {
+  // The cup: a circle around the drop spot whose front edge sits a yard and a half behind the
+  // line; the tackles' spots swing wider and deeper so the edge rushers are run past the QB.
+  const cx = lp.dropX, cy = 0;
+  const R = Math.max(3.2, -lp.dropX - 1.6);
+  let ax = toward.x - cx, ay = toward.y - cy;
+  const l = len(ax, ay) || 1; ax /= l; ay /= l;
+  return { x: cx + ax * R, y: cy + ay * R * 1.15 };
+}
 function passBlockWant(lp, p) {
-  const qb = lp.off.QB;
+  protect(lp);
   if (p.eng) return;
-  // Pick up the most dangerous rusher nobody has.
-  let best = null, bd = 99;
-  for (const q of lp.players) {
-    if (q.side !== 'def' || q.role !== 'rush' || q.eng) continue;
-    const taken = lp.players.some((b) => b !== p && b.side === 'off' && b.pick === q);
-    const dd = dist(q, p) + (taken ? 3 : 0) + Math.abs(q.y - p.y) * 0.4;
-    if (dd < bd) { bd = dd; best = q; }
+  const qb = lp.off.QB;
+  let m = p.pick;
+  // The assigned man is blocked by someone else, beaten past the pocket or out of the play:
+  // help on the free rusher nearest the quarterback.
+  if (!m || m.eng || m.stun > 0.3 || m.x < qb.x - 1) {
+    let best = null, bd = 9;
+    for (const q of lp.players) {
+      if (q.side !== 'def' || q.role !== 'rush' || q.eng || q.stun > 0.3) continue;
+      const taken = lp.players.some((b) => b !== p && b.side === 'off' && b.pick === q && !b.eng);
+      const dd = dist(q, qb) * 0.6 + dist(q, p) * 0.4 + (taken ? 4 : 0);
+      if (dd < bd) { bd = dd; best = q; }
+    }
+    m = best;
+    if (m) p.pick = m;
   }
-  p.pick = best;
-  p.aim = best;
-  if (!best || bd > 9) { seek(p, { x: lp.dropX + 3, y: p.y * 0.8 }, 0.4); return; }
-  // Stay between the rusher and the quarterback.
-  const ax = qb.x - best.x, ay = qb.y - best.y, l = len(ax, ay) || 1;
-  seek(p, { x: best.x + (ax / l) * 0.9, y: best.y + (ay / l) * 0.9 }, 0.9, 0.5);
+  p.aim = m;
+  if (!m) {
+    // Nobody to block: settle into the cup and look for work.
+    const s = pocketSpot(lp, p, { x: p.x + 4, y: p.y });
+    seek(p, s, 0.35, 0.6);
+    return;
+  }
+  // Meet the rusher on the arc, or in front of it if he is still out wide.
+  const s = pocketSpot(lp, p, m);
+  const dm = dist(m, s);
+  const ax = qb.x - m.x, ay = qb.y - m.y, l = len(ax, ay) || 1;
+  const front = { x: m.x + (ax / l) * (m.r + p.r + 0.15), y: m.y + (ay / l) * (m.r + p.r + 0.15) };
+  seek(p, dm < 2.2 || dist(p, m) < 2 ? front : { x: (s.x * 2 + front.x) / 3, y: (s.y * 2 + front.y) / 3 }, 0.85, 0.4);
 }
 
 function runBlockWant(lp, p) {
   if (p.eng) return;
-  let tgt = p.assign && !p.assign.eng ? p.assign : null;
+  let tgt = p.assign && !p.assign.eng && p.assign.stun <= 0.3 ? p.assign : null;
   if (!tgt || dist(tgt, p) > 7) {
+    tgt = null;
     let bd = 6;
     for (const q of lp.players) if (q.side === 'def' && !q.eng && dist(q, p) < bd) { bd = dist(q, p); tgt = q; }
   }
-  if (!tgt) { seek(p, { x: p.x + 3, y: p.y }, 0.5); return; }
+  if (!tgt) { seek(p, { x: p.x + 3, y: p.y + (p.y - lp.holeY > 0 ? 0.6 : -0.6) }, 0.5); return; }
   p.aim = tgt;
+  // Take the defender on his hole-side shoulder so the drive pushes him away from the lane.
+  const side = sgn(tgt.y - lp.holeY);
   const c = lp.carrier ?? lp.off.RB;
   const ax = (c?.x ?? -4) - tgt.x, ay = (c?.y ?? 0) - tgt.y, l = len(ax, ay) || 1;
-  seek(p, { x: tgt.x + (ax / l) * 0.8, y: tgt.y + (ay / l) * 0.8 }, 0.85, 0.4);
+  const k = tgt.r + p.r + 0.1;
+  seek(p, { x: tgt.x + (ax / l) * k * 0.8, y: tgt.y + (ay / l) * k * 0.8 - side * 0.35 }, 0.85, 0.4);
 }
 
 function stalkWant(lp, p) {
@@ -853,6 +904,16 @@ function rushWant(lp, p) {
   if (!c) return;
   // Draws and play-action freeze the front for a beat.
   const fooled = (lp.play.dir === 'draw' || lp.play.pa) && lp.t < 0.5;
+  // Against a run each lineman fills his own gap until the ball declares itself: he plays his
+  // gap a yard into the backfield and only chases once the carrier is in his lane or past the
+  // line. That is what keeps the cutback lanes closed.
+  if (lp.kind === 'run' && lp.play.dir !== 'draw' && p.gapY != null && c.x < 0.5 && Math.abs(c.y - p.gapY) > 2.2 && lp.t < 2.2) {
+    return seek(p, { x: Math.max(0.3, c.x + 2), y: p.gapY + (c.y - p.gapY) * 0.2 }, 0.7, 0.5);
+  }
+  // Pass rush: keep outside leverage on the edge so the quarterback cannot escape that way.
+  if (lp.kind === 'pass' && !lp.carrierSet && p.edge && lp.t < 1.6 && Math.abs(p.y) > Math.abs(c.y) + 1.2) {
+    return seek(p, { x: c.x + 1.5, y: c.y + p.edge * 2.4 }, 1, 0.3);
+  }
   intercept(p, c, fooled ? 0.7 : 1);
 }
 
@@ -962,18 +1023,18 @@ function carrierWant(lp, p) {
     const r = (a * Math.PI) / 180;
     const dx = Math.cos(r) * fwd, dy = Math.sin(r);
     let danger = 0;
-    for (let k = 1; k <= 3; k++) {
+    for (let k = 0.5; k <= 3; k = k < 1 ? 1 : k + 1) {
       const px = p.x + dx * 2.2 * k, py = p.y + dy * 2.2 * k;
       for (const q of lp.players) {
         if (q === p || q.stun > 0.2) continue;
         const dd = Math.hypot(q.x - px, q.y - py);
         if (q.side === p.side) {
           // Own blockers are walls too: aim for the seams between bodies, not through them.
-          if (k < 3 && dd < q.r + p.r + 0.3) danger += (q.eng ? 0.9 : 0.5) / k;
+          if (k < 3 && dd < q.r + p.r + 0.3) danger += (q.eng ? 0.9 : 0.5) / Math.max(k, 0.7);
           continue;
         }
-        const w = q.eng ? 0.35 : 1;
-        danger += (w * 2.4) / (0.6 + dd * dd) / k;
+        const w = q.eng ? (k < 1 && dd < q.r + p.r ? 1.2 : 0.35) : 1;
+        danger += (w * 2.4) / (0.6 + dd * dd) / Math.max(k, 0.7);
       }
       if (Math.abs(py) > SIDE - 1) danger += 0.8 / k;
     }
@@ -1011,7 +1072,6 @@ function move(lp, p, dt) {
   if (p.eng) return; // engaged players move as a pair in blocks()
   let { vx, vy } = p.want ?? { vx: 0, vy: 0 };
   // Nobody but the ball carrier runs off the field into the bench area.
-  if (!p.carrier && Math.abs(p.y) > SIDE + 1 && vy * p.y > 0) vy = 0;
   // Carrying the ball costs a step and long runs wear the carrier down, while pursuers find
   // a little extra, so only a carrier who is truly faster than the defense breaks away.
   const tired = p.carrier ? clamp((Math.abs(p.x - (p.runFrom ?? p.x)) - 12) * 0.004, 0, 0.1) : 0;
@@ -1031,6 +1091,8 @@ function move(lp, p, dt) {
   if (p.truck > 0) top *= 0.94;
   p.slow = Math.max(0, p.slow - dt);
   if (!(p === lp.control && lp.manual) && !p.carrier) [vx, vy] = steer(lp, p, vx, vy);
+  // Routes and pursuit bend along the sideline instead of running out over it.
+  if (!p.carrier && Math.abs(p.y) > SIDE - 1.5 && vy * p.y > 0) vy *= clamp((SIDE + 0.5 - Math.abs(p.y)) / 2, 0, 1);
   kin(p, vx, vy, top, dt, p.juke > 0 ? 2.2 : p.truck > 0 ? 1.6 : 1);
 }
 
@@ -1050,7 +1112,7 @@ function steer(lp, p, vx, vy) {
     const lat = -rx * uy + ry * ux; // + when q is to the left of the path
     const need = p.r + q.r + 0.15;
     if (Math.abs(lat) >= need) continue;
-    const k = ((need - Math.abs(lat)) / need) * (1 - along / look) * (q.side === p.side ? 0.5 : 1.2);
+    const k = ((need - Math.abs(lat)) / need) * (1 - along / look) * (q.eng ? 1.6 : q.side === p.side ? 0.5 : 1.2);
     const side = lat === 0 ? (p.y > q.y ? 1 : -1) : -sgn(lat);
     ax += -uy * side * k; ay += ux * side * k;
   }
@@ -1155,17 +1217,51 @@ function separate(lp, passes = 2) {
         const ux = dx / d, uy = dy / d, over = Math.min(need - Math.min(d, need), SEP_MAX);
         // A ball carrier squeezing past his own blockers moves them, not himself.
         const ha = holds(a) && !(b.carrier && a.side === b.side), hb = holds(b) && !(a.carrier && a.side === b.side);
-        const ka = ha && !hb ? 0 : !ha && hb ? 1 : 0.5;
+        let ka = ha && !hb ? 0 : !ha && hb ? 1 : 0.5;
+        // A free teammate and the carrier share the shove; neither bulldozes the other.
+        const mate = a.side === b.side && (a.carrier || b.carrier);
+        if (mate && !a.eng && !b.eng) ka = a.carrier ? 0.25 : 0.75;
         a.x -= ux * over * ka; a.y -= uy * over * ka;
         b.x += ux * over * (1 - ka); b.y += uy * over * (1 - ka);
+        // A body pressed into another loses the speed it had into it (a free player running
+        // into a block slides off it instead of grinding in and being shoved back each step).
+        if (!a.eng && !inTackle(lp, a) && ka > 0 && !(mate && a.carrier)) slide(a, ux, uy);
+        if (!b.eng && !inTackle(lp, b) && ka < 1 && !(mate && b.carrier)) slide(b, -ux, -uy);
       }
     }
   }
 }
 
+// p pressed against a body in direction (ux, uy): the speed into it turns into a slide around
+// it, toward the side he was already drifting (or the side of the spot he wants).
+function slide(p, ux, uy) {
+  const vn = p.vx * ux + p.vy * uy;
+  if (vn <= 0) return;
+  const sp0 = len(p.vx, p.vy);
+  p.vx -= ux * vn; p.vy -= uy * vn;
+  const tx = -uy, ty = ux;
+  const w = p.want ?? p;
+  const s = sgn((p.vx * tx + p.vy * ty) * 3 + (w.vx * tx + w.vy * ty) || 1);
+  p.vx += tx * s * vn * 0.6; p.vy += ty * s * vn * 0.6;
+  const sp = len(p.vx, p.vy), cap = sp0 * 0.8;
+  if (sp > cap) { p.vx *= cap / sp; p.vy *= cap / sp; }
+}
+
 // ---------- blocking ----------
+// A block is a sequence of contact states, set on both players each step:
+//   APPROACHING  a blocker closing on his man (within three yards)
+//   ENGAGED      hands on, the first moments of the fit
+//   PUSHING      one side is winning and drives the pair
+//   SHEDDING     the defender's move to get off (rip, swim or bull rush), a quarter second
+//   DISENGAGED   just released; the defender cannot be re-blocked for a moment
+// Who wins comes from ratings, type and size: mass moves the pair, agility sheds faster.
+const SHED_T = 0.24;
 function blocks(lp) {
   const g = lp.g;
+  for (const p of lp.players) {
+    if (p.contact === 'DISENGAGED' && (p.shedT ?? 0) > 0) continue;
+    p.contact = null;
+  }
   // New engagements
   for (const b of lp.players) {
     if (b.eng || b.stun > 0 || b.carrier) continue;
@@ -1178,33 +1274,79 @@ function blocks(lp) {
       engage(lp, b, d);
       break;
     }
+    if (!b.eng && b.aim && dist(b, b.aim) < 3) { b.contact = 'APPROACHING'; b.tgt = b.aim; }
   }
-  // Existing engagements: push and shed
+  // Existing engagements: fit, push, shed
   for (const b of lp.players) {
     if (!b.eng || b.side !== lp.carrierTeam) continue;
     const d = b.eng;
-    b.engT += DT;
+    b.engT += DT; d.engT = b.engT;
+    b.tgt = d; d.tgt = b;
     const passPro = lp.kind === 'pass' && !lp.carrierSet;
     const bv = passPro ? b.a.blk * 0.75 + b.a.str * 0.25 : b.a.blk * 0.5 + b.a.str * 0.5;
     const dv = passPro ? d.a.rush : d.a.str * 0.6 + d.a.tkl * 0.4;
     const R = rep(d.id, dv, b.id, bv);
-    // Rate of getting off the block, per second.
-    const base = passPro ? 0.66 : lp.carrierSet ? 0.16 : 0.1;
-    let rate = base * Math.exp(R.diff / 9) * (b.engT < 0.4 ? 0.4 : 1);
+    const mass = clamp(Math.log(d.kg / b.kg), -1.2, 1.2);   // > 0: the defender is heavier
+    // The shed move already under way finishes, then the pair comes apart.
+    if (d.shed) {
+      d.shed.t += DT;
+      b.contact = d.contact = 'SHEDDING';
+      const S = d.shed;
+      if (S.move !== 'bull') {
+        // Rip or swim: the defender's near shoulder slips past the blocker's.
+        const nx = d.x + S.sx * S.speed * DT, ny = d.y + S.sy * S.speed * DT;
+        if (!lp.players.some((q) => q !== d && q !== b && Math.hypot(q.x - nx, q.y - ny) < (q.r + d.r) * 0.95)) { d.x = nx; d.y = ny; }
+      }
+      // He goes around the blocker's body, never through it.
+      const ox = d.x - b.x, oy = d.y - b.y, ol = len(ox, oy) || 1, min = (b.r + d.r) * 0.92;
+      if (ol < min) { const k = Math.min(min - ol, 0.08); d.x += (ox / ol) * k; d.y += (oy / ol) * k; }
+      b.vx *= 0.8; b.vy *= 0.8;
+      if (S.t >= SHED_T) {
+        unengage(b);
+        b.stun = S.move === 'bull' ? 0.45 : 0.3; b.stunFall = S.move === 'bull' && mass > 0.3;
+        d.shedFrom = b; d.shedT = passPro ? 0.8 : 0.5; d.shed = null;
+        b.contact = d.contact = 'DISENGAGED';
+        if (passPro) lp.pressureBy = d;
+        event(lp, 'shed', S.move, d, b);
+      }
+      continue;
+    }
+    // Rate of getting off the block, per second: rating and type edge, quick feet shed sooner,
+    // and nobody sheds in the first instants of the fit.
+    const base = passPro ? 0.42 : lp.carrierSet ? 0.13 : 0.08;
+    const quick = clamp((d.a.acc - b.a.acc) / 60, -0.4, 0.5);
+    let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.45 ? 0.3 : 1);
     if (!passPro) rate = Math.max(rate, 0.1);
     // Blocks far from the ball break up on their own.
     if (lp.carrierSet && dist(d, lp.carrier) > 6 && b.engT > 0.6) rate = Math.max(rate, 2.5);
     if (chance(g, rate * DT)) {
-      unengage(b);
-      b.stun = 0.35; d.shedFrom = b; d.shedT = passPro ? 0.8 : 0.5;
-      if (passPro) lp.pressureBy = d;
+      // The move fits the body: big and strong bull rushes, light and quick swims, the rest rip.
+      const move = mass > 0.25 && d.a.str >= d.a.acc ? 'bull' : d.a.acc > 70 || mass < -0.3 ? 'swim' : 'rip';
+      const target = lp.carrierSet ? lp.carrier : lp.off.QB;
+      const side = sgn((target.y - b.y) * 0.3 + (d.y - b.y)) || 1;
+      const ux = target.x - d.x, l = len(ux, side) || 1;
+      d.shed = { move, t: 0, sx: (ux / l) * 0.5, sy: side * 0.9, speed: move === 'swim' ? 4.2 : 3.2 };
+      b.contact = d.contact = 'SHEDDING';
       continue;
     }
-    // The pair drifts toward whoever is winning.
+    // The pair drifts toward whoever is winning. In pass protection the rusher drives toward the
+    // quarterback, slowed by the blocker sitting on the cup's edge; in a run block the blocker
+    // drives the defender away from the hole.
     const target = lp.carrierSet ? lp.carrier : lp.off.QB;
     let ux = target.x - d.x, uy = target.y - d.y; const l = len(ux, uy) || 1; ux /= l; uy /= l;
-    const push = clamp((passPro ? 0.4 : -0.1) + R.diff * 0.065, -2, 2.2);
+    let push = clamp((passPro ? 0.3 : -0.15) + R.diff * 0.06 + mass * 0.55, -2.2, 2.2);
+    if (passPro) {
+      // Inside the cup the blocker anchors: the deeper the rusher gets, the harder it is.
+      const S = pocketSpot(lp, b, d), behind = (S.x - b.x) * sgn(b.x - lp.dropX + 0.01);
+      if (behind > 0) push *= Math.max(0.25, 1 - behind * 0.4);
+    } else if (push < 0 && lp.holeY != null && (lp.kind === 'run')) {
+      // Drive him off the lane: back and to the side away from the hole.
+      const away = sgn(d.y - lp.holeY);
+      ux = 0.75; uy = away * 0.66;
+      push = -push;
+    }
     const vx = ux * push, vy = uy * push * 0.6;
+    b.contact = d.contact = Math.abs(push) > 0.5 && b.engT > 0.3 ? 'PUSHING' : 'ENGAGED';
     for (const q of [b, d]) { q.vx = vx; q.vy = vy; q.x += vx * DT; q.y += vy * DT; }
     // Keep the blocker in front, squaring up over a few frames (never a jump on contact).
     const mx = (b.x + d.x) / 2, my = (b.y + d.y) / 2;
@@ -1215,7 +1357,7 @@ function blocks(lp) {
     fx = fx / fl + ux * 0.12; fy = fy / fl + uy * 0.12; const fl2 = len(fx, fy) || 1; fx /= fl2; fy /= fl2;
     ease(b, mx + fx * half, my + fy * half); ease(d, mx - fx * half, my - fy * half);
   }
-  for (const p of lp.players) if (p.shedT > 0) { p.shedT -= DT; if (p.shedT <= 0) p.shedFrom = null; }
+  for (const p of lp.players) if (p.shedT > 0) { p.shedT -= DT; if (p.shedT <= 0) { p.shedFrom = null; if (p.contact === 'DISENGAGED') p.contact = null; } }
 }
 
 // Slide a body toward a spot at no more than 6 yards a second.
@@ -1228,7 +1370,7 @@ function ease(p, x, y, speed = 6) {
 const SQUARE_K = 1 - Math.exp(-DT * 10);
 
 function engage(lp, b, d) { b.eng = d; d.eng = b; b.engT = 0; d.engT = 0; }
-function unengage(p) { const q = p.eng; if (q) q.eng = null; p.eng = null; }
+function unengage(p) { const q = p.eng; if (q) { q.eng = null; q.shed = null; } p.eng = null; p.shed = null; }
 
 // ---------- passing ----------
 function throwSpeed(qb) { return 17 + 0.09 * qb.a.arm; }
