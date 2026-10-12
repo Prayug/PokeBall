@@ -32,6 +32,18 @@ export const CAMERA_DEFAULTS = {
 export const CAMERA_LIMITS = { distance: [6, 45], height: [2.5, 40], pitch: [5, 70], fov: [25, 75] };
 export const cameraDefaults = () => JSON.parse(JSON.stringify(CAMERA_DEFAULTS));
 
+// One step of a critically damped spring pulling x toward target (angular frequency w).
+function spring(x, v, target, w, dt) {
+  const n = Math.max(1, Math.ceil(dt / (1 / 120)));
+  const h = dt / n;
+  for (let i = 0; i < n; i++) {
+    v.x += (w * w * (target.x - x.x) - 2 * w * v.x) * h;
+    v.y += (w * w * (target.y - x.y) - 2 * w * v.y) * h;
+    v.z += (w * w * (target.z - x.z) - 2 * w * v.z) * h;
+    x.x += v.x * h; x.y += v.y * h; x.z += v.z * h;
+  }
+}
+
 export class CameraRig {
   constructor(camera) {
     this.camera = camera;
@@ -44,6 +56,9 @@ export class CameraRig {
     this.shake = 0;
     this.fov = 42;
     this.cal = cameraDefaults();
+    this.vPos = new THREE.Vector3();
+    this.vLook = new THREE.Vector3();
+    this.shot = 'PRE_SNAP';
   }
 
   setCalibration(c) {
@@ -109,10 +124,26 @@ export class CameraRig {
       if (d < o.r + 1.4) this.wantPos.y = Math.max(this.wantPos.y, o.h + 1.6);
     }
     this.wantPos.y = Math.max(this.wantPos.y, 1.8);
-    const kp = snap ? 1 : 1 - Math.exp(-dt * (f.pre ? 3.5 : 2.8));
-    const kl = snap ? 1 : 1 - Math.exp(-dt * (f.pre ? 4.5 : 4.2));
-    this.pos.lerp(this.wantPos, kp);
-    this.look.lerp(this.wantLook, kl);
+    // Occlusion: a body standing between the lens and the focus, near the lens, would fill the
+    // frame; rise until the sight line clears his head.
+    {
+      const lx = this.wantLook.x - this.wantPos.x, lz = this.wantLook.z - this.wantPos.z, L = Math.hypot(lx, lz) || 1;
+      for (const o of obstacles) {
+        const ox = o.x - this.wantPos.x, oz = o.z - this.wantPos.z;
+        const along = (ox * lx + oz * lz) / L;
+        if (along < 0.5 || along > L * 0.45) continue;
+        const across = Math.abs(ox * lz - oz * lx) / L;
+        if (across > o.r + 0.5) continue;
+        // Height of the sight line at his distance, if the camera were at this height.
+        const y0 = this.wantPos.y, yAt = y0 + (this.wantLook.y - y0) * (along / L);
+        if (yAt < o.h + 0.4) this.wantPos.y += Math.min(4, (o.h + 0.4 - yAt) / Math.max(0.2, 1 - along / L));
+      }
+    }
+    // Critically damped springs on the lens and the aim point: smooth starts and stops, no
+    // velocity jump when the shot changes. Tighter while the ball is live.
+    const w = f.pre ? 4 : f.shot === 'pass' ? 3.6 : 4.5;
+    if (snap) { this.pos.copy(this.wantPos); this.look.copy(this.wantLook); this.vPos.set(0, 0, 0); this.vLook.set(0, 0, 0); }
+    else { spring(this.pos, this.vPos, this.wantPos, w, dt); spring(this.look, this.vLook, this.wantLook, w * 1.35, dt); }
     this.camera.position.copy(this.pos);
     if (this.shake > 0.004) {
       this.camera.position.x += (Math.random() - 0.5) * this.shake;

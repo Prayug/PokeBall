@@ -161,7 +161,8 @@ function typeMod(attId, defId) {
 // A contested rep: each side's value scaled by its type matchup against the other.
 export function rep(aId, aVal, dId, dVal) {
   const am = typeMod(aId, dId), dm = typeMod(dId, aId);
-  return { diff: aVal * am.mod - dVal * dm.mod, aSE: am.mult > 1, dSE: dm.mult > 1 };
+  // base: the same rep with no type matchup, so a caller can tell when the types decided it.
+  return { diff: aVal * am.mod - dVal * dm.mod, base: aVal - dVal, aSE: am.mult > 1, dSE: dm.mult > 1, aMod: am.mod, dMod: dm.mod };
 }
 
 export const has = (id, special) => id != null && ABILITIES[PLAYERS[id].ability]?.special === special;

@@ -103,6 +103,16 @@ export class Animator {
     p[bi.legL] = -0.3 - 0.22 * sn; p[bi.legR] = -0.3 + 0.22 * sn;
     p[bi.head] = -0.2;
     p[ROLL] = (s.pushSide ?? 0) * 0.12;
+    // Getting off a block: a rip swings the near arm up through the blocker's armpit, a swim
+    // clubs and reaches the far arm over his shoulder, a bull rush drops the hips and drives
+    // both hands through his chest. The blocker being beaten is turned and pushed back.
+    if (s.shed && s.shedMove) {
+      const u = Math.sin(clamp(s.shedU ?? 0, 0, 1) * Math.PI);
+      if (!s.shedder) { p[PITCH] -= 0.25 * u; p[bi.chest + 1] += 0.35 * u * (s.pushSide || 1); }
+      else if (s.shedMove === 'rip') { p[bi.armR] = -1.35 - 1.3 * u; p[bi.chest + 1] += 0.45 * u; p[PITCH] += 0.1 * u; }
+      else if (s.shedMove === 'swim') { p[bi.armL] = -1.35 - 1.7 * u; p[bi.armL + 2] -= 0.4 * u; p[bi.chest + 1] -= 0.4 * u; }
+      else { p[PITCH] += 0.22 * u; p[bi.armL] = -1.55; p[bi.armR] = -1.55; p[bi.legL] -= 0.2 * u; p[bi.legR] -= 0.2 * u; }
+    }
 
     const o = this.out; o.fill(0);
     for (const k of BASE) { const wk = this.w[k] / (sum || 1); if (wk < 1e-3) continue; const q = L[k]; for (let i = 0; i < N; i++) o[i] += q[i] * wk; }

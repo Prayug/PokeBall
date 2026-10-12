@@ -22,7 +22,8 @@ Games are played on a 3D field, Madden style: pick a play from the playbook, sna
 | `Q` | On defense, switch to the player nearest the ball |
 | `1` to `8`, `0`, `-`, `P`, `F` | Between plays, call the play with that key on its card |
 | `←` `→` | Between plays, move between the call sheet's categories (Run, Short pass, Deep pass, Special teams) |
-| `` ` `` | Debug view: position labels over every player, the formation check, the game state and camera calibration sliders (also `?debug` in the URL or the menu) |
+| `` ` `` | Debug view: position labels, collision circles, velocity and facing, assignment lines, remaining routes and the ball's flight on the field, plus a panel with the game state, camera shot, ball and every player's action, contact state, role, speed and target, the last events, the formation check and camera calibration sliders (also `?debug` in the URL or the menu) |
+| `H` | Fold or unfold the call sheet |
 | `Esc` | Before the snap, take the call back and pick another; closes the menu |
 | `C` | Cycle the camera: Broadcast, Sideline, Behind the QB, Tactical |
 | `M` | Open the game menu (coach mode, sim controls, camera, graphics, weather, controls, box score) |
@@ -31,13 +32,27 @@ The stadium fills the screen under a broadcast scoreboard (teams, score, possess
 
 ### How a play runs
 
-Each snap goes through the same states, and each one drives the players, the camera, the animation, the clock and the scoreboard: `PRE_SNAP` (both teams walk into the formation, the formation check runs, players settle into their stances), `SNAP` (the exchange under center or the shotgun snap), `PLAY_ACTIVE`, `PLAY_DEAD` (the whistle: the ball is spotted where the carrier went down), `RESULT` (a beat to see the tackle, the touchdown or the turnover, with the camera held) and `NEXT_DOWN` (the next down, distance and possession, then the call sheet). The debug view shows the current state.
+The game runs through explicit states, and input only works in the one it belongs to: `PLAY_SELECTION` (the call sheet is up), `FORMATION_SETUP` and `PRE_SNAP` (both teams walk into the formation, the formation check runs, players settle into their stances), `SNAP` (the exchange under center or the shotgun snap), `LIVE_PLAY`, `PLAY_RESULT` (the whistle: a lower-third card with the result, the yards, who made the play and the next down, while the camera holds), `RESET_FORMATION` (players get up and walk back) and `NEXT_PLAY`.
+
+The simulation (`src/live.js`) owns everything that is drawn. It steps at a fixed 60 Hz and the renderer interpolates between steps, so motion is smooth at any frame rate. Each player carries a position, velocity, facing, an action state (`IDLE`, `READY`, `SNAP_REACT`, `ACCEL`, `RUN`, `SPRINT`, `DECEL`, `TURN`, `BACKPEDAL`, `BLOCK`, `BLOCKED`, `SHED`, `THROW`, `HANDOFF`, `CATCH`, `REACH`, `CARRY`, `TACKLE`, `TACKLED`, `STUMBLE`, `DOWN`, `RECOVER`, `CELEBRATE`), a block contact state and a target, and the animation reads them; it never guesses. Facing turns at a rate set by agility and weight.
+
+- **Line play.** Pass blockers slide into a cup around the quarterback's drop spot, each matched to a rusher left to right, and meet him on its edge. Every block runs `APPROACHING`, `ENGAGED`, `PUSHING`, `SHEDDING`, `DISENGAGED`: mass drives the pair, and the defender gets off with a move that fits his build (big and strong bull rush, light and quick swim, the rest rip). Run blockers drive defenders away from the hole, down linemen fill their gaps until the ball declares, edge rushers keep contain, and blitzers find a lane through the pile.
+- **Passing.** The quarterback drops, works through the play's reads in order (a wide-open man off the read is taken early, a checkdown under pressure), winds up and releases from his hand. The ball flies a real arc, lofted for deep balls, and is resolved where it comes down: the catch, a defender playing it, or a deflection that bounces loose. Each receiver's throw icon is ringed green, amber or red for open, contested or covered.
+- **Running.** The handoff is an exchange from hands to hands. Inside runs hit their gap, outside runs stretch to the edge and bounce back inside when it is set, and the carrier reads the open seams between bodies.
+- **Tackles.** Contact starts a half-second sequence: both bodies share momentum, a heavier carrier drags a smaller tackler, pursuers pull up around the pile, and the ball is spotted at forward progress. Sacks are the same sequence behind the line.
+- **Pursuit.** The man with outside leverage keeps it, the rest come inside-out, and deep help stays over the top.
+
+Three modes are in the menu: **Play** (you control the quarterback and then the ball carrier, or a defender), **Coach** (you call every play and watch the AI run it) and **Auto** (the AI calls and plays).
+
+### Abilities and types
+
+What a Pokémon's ability or type does during a snap lives in one table, `src/traits.js`, keyed by the moment it acts (throw accuracy, pressure, catch reach, interception chance, tackle odds, strip chance), so a new trait is one entry. When a trait, a type matchup or a size difference decides part of a play, the result card says so, tagged Type, Ability or Size. "Super effective" only shows when the type matchup actually changed the outcome: the contest is rolled with and without the type modifiers and noted only when they differ.
 
 ### The 3D field
 
 The game is a real three.js scene in yards, with one coordinate system for the field, the players, the ball and the camera: a sky dome, sun and fill lights with soft shadows, ACES tone mapping, a striped field with numbers, hashes, two-point lines, end zones painted with team names and a Poké Ball at midfield, pylons, goalposts, sidelines with benches, a banner wall, three-deck stands with an instanced crowd that bobs and cheers, light towers, and rain, hail, sun or sandstorm when the game has weather. The turf is a clean two-tone mow with bold yard lines and numbers, the midfield Poké Ball is a faded decal, and each half of the crowd wears its team's color. The renderer lowers its resolution when frames run long and raises it when there is room (or pick High or Fast in the menu).
 
-The camera works like a game broadcast: low behind the quarterback, with the stands and the horizon in the frame, and a separate setup for each moment of a play (pre-snap, passing, running and post-play), so it frames the backfield and the line before the snap, rises a little for routes, tightens on the ball carrier and closes in on the tackle, easing between them. Distance, height, pitch and field of view for each setup can be tuned live in the debug view. Sideline, Behind the QB and Tactical are the other views.
+The camera works like a game broadcast: low behind the quarterback, with the stands and the horizon in the frame, and a state machine of shots (pre-snap, dropback, pass flight, catch, run, tackle, post-play) that frames the backfield and the line before the snap, rises for routes, follows the ball in the air, leads the ball carrier and closes in on the tackle. It moves on critically damped springs, so changes of shot never jerk, and rises over any Pokémon that would block the view. Distance, height, pitch and field of view for each setup can be tuned live in the debug view. Sideline, Behind the QB and Tactical are the other views.
 
 ### The Pokémon models
 
@@ -47,7 +62,7 @@ The other 34 (mostly Gen 8 and 9, which the collection does not have yet) use a 
 
 Animation is a state machine (`src/anim3d.js`) that picks each player's clip on a model and poses the generated figures' skeletons: idle, pre-snap stance (three-point on the line), run and sprint with stride length from body size, turning leans, blocking, and layers for carrying the ball, the quarterback's ball by the ear, throwing, reaching for catches, jukes, spins, trucks, being stunned, diving tackles, falling the way the hit came from, getting back up and celebrating. Flying and levitating Pokémon hover above the turf. Players turn at a rate that depends on agility, so nobody snaps around or slides.
 
-On top of that, every model gets football posture from its own skeleton (`poseLimbs` in `src/model3d.js`), without stretching the mesh: linemen sink into a three-point stance with a hand down and fire out low, push with their arms out and lean back when they are losing the block; the quarterback crouches under center, drops back with the ball cocked by his ear, turns his shoulders to the receiver he is reading and whips the arm through, and the ball leaves from his hand; backs and receivers lean into acceleration, carry the ball tucked and turn to it as it arrives; defensive backs sit in a backpedal. Models with no skeleton lean and twist as one piece. Every player wears a small team marker over the head (a diamond for the offense, a chevron for the defense, in the team color, with the away team switching to white when the two colors are close); the player you control and the ball carrier get the ring instead, and an option in the menu adds the name and position over your player.
+On top of that, every model gets football posture from its own skeleton (`poseLimbs` in `src/model3d.js`), without stretching the mesh: linemen sink into a three-point stance with a hand down and fire out low, push with their arms out and lean back when they are losing the block; the quarterback crouches under center, drops back with the ball cocked by his ear, turns his shoulders to the receiver he is reading and whips the arm through, and the ball leaves from his hand; backs and receivers lean into acceleration, carry the ball tucked and turn to it as it arrives; defensive backs sit in a backpedal. Models with no skeleton lean and twist as one piece. After the snap the field only shows the ball carrier's ring, your player and, on a pass, the receivers' throw icons; team markers under every player are an option in the menu, as is the name and position over your player.
 
 ### Formations and contact
 
@@ -89,6 +104,9 @@ Ratings decide games: in the live game a strong lineup (about 80 overall) beats 
 | `test/balance.mjs` | Simulates games between AI-drafted teams and prints league averages |
 | `test/live.mjs` | Plays full games where every run and pass is a live play on autopilot, and prints the same averages |
 | `test/plays.mjs` | Plays the ten cases a game has to get right (inside and outside run, short and deep completion, incompletion, sack, tackle, touchdown, turnover, next down) through the live loop, then a sweep of every call against every defense, checking the formation, that nobody jumps or passes through anyone, that blockers are drawn blocking, the state sequence and the down, distance, possession, score and clock after |
+| `test/scenarios.mjs` | Fifteen scenarios from fixed seeds (pre-snap formation, dropback, pocket protection, short pass, deep completion, incompletion, interception, inside run, outside run, sack, open-field tackle, touchdown, first-down conversion, turnover on downs, transition to the next play) and a sweep, checking every frame for valid action and contact states, ball continuity, facing turn rate, tackle sequences and forward-progress spots, then the rules' downs, possession and score; `--report file.json` writes the results |
+| `test/browser.mjs` | Plays a few snaps of the built game in Chromium in Coach mode, recording a video and screenshots and checking the game-flow states, the camera staying on the ball, the result card and the scoreboard |
+| `src/traits.js` | Abilities and types that act during a live snap |
 | `test/top.mjs` | Lists the top Pokémon at each position |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
 
@@ -100,6 +118,8 @@ bash build/build.sh                 # uses npx esbuild@0.24.0, or set ESBUILD=/p
 node test/balance.mjs 10000         # balance check of the simulator
 node test/live.mjs 20               # balance check of live plays
 node test/plays.mjs                 # the ten complete plays plus a 160-play sweep (exits 1 on failure)
+node test/scenarios.mjs             # the fifteen fixed-seed scenarios plus a strict sweep (exits 1 on failure)
+node test/browser.mjs out 3         # three snaps in a real browser: video, screenshots, results.json
 node test/tiers.mjs 300             # how much ratings matter (add `live` for live plays)
 ```
 
@@ -116,6 +136,6 @@ Gen 1–5 use the animated Black/White GIFs; later Pokémon use the static pixel
 
 Last run over 4,000 simulated games: 23.4 points per team, 61.7% completions, 6.8 yards per pass attempt, 4.3 yards per carry, 4.6% sack rate and 3.4% interception rate.
 
-Live plays with every Pokémon on autopilot (24 games) come out at about 22 points per team, 62% completions, 7.5 yards per attempt, 2.7 yards per carry, 5% sacks and 3% interceptions with solid bodies and real blocking in place; running is the hardest it has been, since a back now has to find a real gap. Deep defenders keep their cushion, pursuers close on the ball and long runs tire the carrier, so only a truly faster player breaks away.
+Live plays with every Pokémon on autopilot (20 games) come out at about 23 points per team, 57% completions, 7.1 yards per attempt, 3.4 yards per carry, 4% interceptions and a low sack rate (about 1%): pass rushers now have to beat a real pocket and quarterbacks get the ball out on their reads and checkdowns. Deep defenders keep their cushion, pursuers keep leverage and long runs tire the carrier, so only a truly faster player breaks away.
 
 Pokémon data comes from [PokéAPI](https://pokeapi.co); the pixel sprites come from [PokeAPI/sprites](https://github.com/PokeAPI/sprites). The 3D field uses [three.js](https://threejs.org). Pokémon is © Nintendo, Creatures Inc. and GAME FREAK inc. This is an unofficial fan project.
