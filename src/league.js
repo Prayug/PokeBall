@@ -226,10 +226,10 @@ export function teamForGame(t, L = null) {
   return side;
 }
 
-export const OUT_BELOW = 12;
+export const OUT_BELOW = 12, MAX_OUT = 2;
 // Next week's starting energy from where a Pokémon finished the game.
-function nextCondition(energy) {
-  if (energy < OUT_BELOW) return { out: true, energy: 50 };
+function nextCondition(energy, canSit) {
+  if (energy < OUT_BELOW && canSit) return { out: true, energy: 50 };
   const next = Math.round(Math.min(100, 60 + energy * 0.5));
   return next < 95 ? { energy: next } : null;
 }
@@ -269,8 +269,11 @@ export function recordResult(L, g, meta) {
   L.condition ??= {};
   for (const [ti, t] of g.teams.entries()) {
     const played = new Set(t.roster);
+    // Only the most worn-out few sit; the rest come back sore.
+    const sit = new Set(t.roster.filter((id) => (t.energy[id] ?? 100) < OUT_BELOW)
+      .sort((a, b) => t.energy[a] - t.energy[b]).slice(0, MAX_OUT));
     for (const id of t.roster) {
-      const c = nextCondition(t.energy[id] ?? 100);
+      const c = nextCondition(t.energy[id] ?? 100, sit.has(id));
       if (c) L.condition[id] = c; else delete L.condition[id];
     }
     for (const id of L.teams[g.teams[ti].id].roster) {

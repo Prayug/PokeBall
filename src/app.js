@@ -3,7 +3,7 @@ import { PLAYERS, SLOTS, SLOT, SLOT_KEYS, OFF_SLOTS, DEF_SLOTS, ATTRS, BASELINE,
 import { SPRITES } from './sprites.js';
 import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER, effectLabel, bestMultiplier } from './types.js';
 import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
-  quarterText, fgDistance, fgChance, absSpot, createGame, manualSub } from './engine.js';
+  quarterText, fgDistance, fgChance, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights, manualSub } from './engine.js';
 import { createLivePlay, snap, step as stepLive, playSeconds, DT } from './live.js';
 import { Stage, webglAvailable } from './field3d.js';
 import * as LG from './league.js';
@@ -79,7 +79,7 @@ function sprite(id, cls = '') {
 function typeChips(types) {
   return types.map((t) => `<span class="type" style="--tc:${TYPE_COLORS[t]}">${t}</span>`).join('');
 }
-function ovrTone(v) { return v >= 88 ? 'elite' : v >= 80 ? 'good' : v >= 70 ? 'ok' : 'low'; }
+function ovrTone(v) { return v >= 90 ? 'elite' : v >= 78 ? 'good' : v >= 62 ? 'ok' : 'low'; }
 function ovr(v) { return `<span class="ovr ${ovrTone(v)}">${v}</span>`; }
 function teamBadge(t) { return `<span class="tbadge" style="--team:${t.color}">${esc(t.abbr)}</span>`; }
 function user() { return S.league?.teams.find((t) => t.user); }
@@ -122,7 +122,7 @@ function renderHome() {
   const showcase = [130, 248, 135, 65, 448, 445].filter((id) => PLAYERS[id]);
   return `<section class="home">
     <div class="hero">
-      <p class="eyebrow">Gen 1 to 4 · 22 positions · 8-team league</p>
+      <p class="eyebrow">Gen 1 to 9 · 22 positions · 8-team league</p>
       <h1>Draft Pokémon. Coach football.</h1>
       <p class="lede">Every rating comes from real base stats: Speed makes receivers, Defense and HP make linemen, Sp. Atk makes quarterbacks. Type matchups decide the trenches.</p>
       <div class="showcase">${showcase.map((id) => `<figure>${sprite(id)}<figcaption>${esc(P(id).name)}<b>${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</b></figcaption></figure>`).join('')}</div>
@@ -139,7 +139,7 @@ function renderHome() {
           <label class="pill"><input type="radio" name="rounds" value="26" ${st.rounds === 26 ? 'checked' : ''}> 26 rounds, with 4 bench</label>
         </fieldset>
         <label class="check"><input type="checkbox" id="f-typecap" ${st.typeCap ? 'checked' : ''}> At most 4 Pokémon of one primary type</label>
-        <label class="check"><input type="checkbox" id="f-legend" ${st.legendaries ? 'checked' : ''}> Include legendaries (one per team)</label>
+        <label class="check"><input type="checkbox" id="f-legend" ${st.legendaries ? 'checked' : ''}> Include legendaries, Ultra Beasts and Paradox Pokémon (one per team)</label>
         <label class="check"><input type="checkbox" id="f-clock" ${st.clock ? 'checked' : ''}> 60-second pick clock</label>
         <button class="btn primary" type="submit">Start the draft</button>
       </form>
@@ -174,7 +174,7 @@ function phaseLabel(L) {
 function boardIds() {
   const L = S.league, me = user(), d = S.draft;
   const q = d.search.trim().toLowerCase();
-  let ids = LG.available(L).filter((id) => (!q || P(id).name.toLowerCase().includes(q)) && (!d.type || P(id).types.includes(d.type)));
+  let ids = LG.available(L).filter((id) => (!q || P(id).name.toLowerCase().includes(q)) && (!d.type || P(id).types.includes(d.type)) && (!d.gen || P(id).gen === Number(d.gen)));
   const open = LG.openSlots(me);
   const fit = (id) => {
     if (d.rate !== 'fit') return { slot: d.rate, v: P(id).ovr[d.rate] };
@@ -193,7 +193,7 @@ function boardRowsHtml() {
   const L = S.league, me = user();
   const myTurn = LG.currentPick(L)?.team === me.id;
   const rows = boardIds();
-  if (!rows.length) return `<tr><td colspan="13" class="empty">No Pokémon match. Clear the search or type filter.</td></tr>`;
+  if (!rows.length) return `<tr><td colspan="13" class="empty">No Pokémon match. Clear the search, type or generation filter.</td></tr>`;
   return rows.map(({ id, fit }) => {
     const p = P(id);
     const block = LG.blockReason(L, me, id);
@@ -232,6 +232,7 @@ function renderDraft() {
         <div class="filters">
           <input id="d-search" type="search" placeholder="Search Pokémon" value="${esc(d.search)}" aria-label="Search Pokémon">
           <select id="d-type" aria-label="Type filter"><option value="">All types</option>${types.map((t) => `<option ${d.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+          <select id="d-gen" aria-label="Generation filter"><option value="">All gens</option>${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<option value="${n}" ${String(d.gen ?? '') === String(n) ? 'selected' : ''}>Gen ${n}</option>`).join('')}</select>
           <select id="d-rate" aria-label="Rate at position"><option value="fit" ${d.rate === 'fit' ? 'selected' : ''}>Best open slot</option>${SLOT_KEYS.map((k) => `<option value="${k}" ${d.rate === k ? 'selected' : ''}>Rate at ${k}</option>`).join('')}</select>
         </div>
         <div class="tablewrap">
@@ -702,21 +703,54 @@ function scoreboard(g) {
   </div>`;
 }
 
-function playCards(g) {
-  const us = userSide();
-  const onOff = g.poss === us;
+// Play families for the call sheet: a short label and a colored edge per group.
+const DEF_GROUPS = [['front', 'Front', ['base', 'goal_line']], ['blitz', 'Blitz', ['run_blitz', 'pass_blitz']],
+  ['cover', 'Coverage', ['cover2', 'cover3', 'man_press', 'prevent']]];
+// Number keys for the visible calls in order; kicks get letters.
+const CALL_KEYS = [['Digit1', '1'], ['Digit2', '2'], ['Digit3', '3'], ['Digit4', '4'], ['Digit5', '5'], ['Digit6', '6'],
+  ['Digit7', '7'], ['Digit8', '8'], ['Digit9', '9'], ['Digit0', '0'], ['Minus', '-']];
+const KICK_KEYS = { punt: ['KeyP', 'P'], fg: ['KeyF', 'F'] };
+
+// The calls on the sheet right now, grouped, each with its key. Also marks the one that fits
+// the down: the heaviest weight in the AI's own tables, read without rolling g.rng.
+function callSheet(g) {
+  const onOff = g.poss === userSide();
+  const heaviest = (w, keys) => keys.filter((k) => w[k] > 0).sort((x, y) => w[y] - w[x])[0];
+  let groups, fit;
   if (onOff) {
     const fg = fgDistance(g);
-    const keys = Object.keys(OFF_PLAYS).filter((k) => (k !== 'punt' && k !== 'fg') || g.down === 4 || (k === 'fg' && fg <= 60));
-    return `<div class="callhead"><h3>Call your offense</h3><span class="muted">${downText(g)} at ${spotText(g)}</span></div>
-      <div class="plays">${keys.map((k) => {
-        const p = OFF_PLAYS[k];
-        const extra = k === 'fg' ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
-        return `<button class="play ${p.kind}" data-act="call" data-call="${k}"><b>${p.name}</b><span>${extra}</span></button>`;
-      }).join('')}</div>`;
+    const shown = Object.keys(OFF_PLAYS).filter((k) => (k !== 'punt' && k !== 'fg') || g.down === 4 || (k === 'fg' && fg <= 60));
+    const kind = (k) => OFF_PLAYS[k].kind;
+    groups = [['run', 'Run', shown.filter((k) => kind(k) === 'run')], ['pass', 'Pass', shown.filter((k) => kind(k) === 'pass')],
+      ['kick', 'Kicking', shown.filter((k) => kind(k) === 'punt' || kind(k) === 'fg')]];
+    const lean = offenseLean(g);
+    if (typeof lean === 'string') fit = shown.includes(lean) ? lean : null;
+    else fit = lean >= 0.5 ? heaviest(passWeights(g), groups[1][2]) : heaviest(runWeights(g), groups[0][2]);
+  } else {
+    groups = DEF_GROUPS;
+    fit = heaviest(defenseWeights(g), Object.keys(DEF_PLAYS));
   }
-  return `<div class="callhead"><h3>Call your defense</h3><span class="muted">${esc(g.teams[g.poss].abbr)} ball, ${downText(g)} at ${spotText(g)}</span></div>
-    <div class="plays">${Object.entries(DEF_PLAYS).map(([k, p]) => `<button class="play def" data-act="call" data-call="${k}"><b>${p.name}</b><span>${p.blurb}</span></button>`).join('')}</div>`;
+  let n = 0;
+  const keyed = groups.filter(([, , ks]) => ks.length).map(([fam, label, ks]) => [fam, label, ks.map((k) => {
+    const key = KICK_KEYS[k] && onOff ? KICK_KEYS[k] : CALL_KEYS[n++];
+    return { call: k, code: key?.[0], label: key?.[1] };
+  })]);
+  return { onOff, groups: keyed, fit };
+}
+
+function playCards(g, { keys = false } = {}) {
+  const { onOff, groups, fit } = callSheet(g);
+  const fg = fgDistance(g);
+  const card = ({ call, label }, fam) => {
+    const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
+    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
+    return `<button class="play f-${fam} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}">
+      <b>${p.name}</b><span>${extra}</span>${call === fit ? '<em class="fittag">Fits this down</em>' : ''}${keys && label ? `<kbd>${label}</kbd>` : ''}</button>`;
+  };
+  const head = onOff ? `<div class="callhead"><h3>${downText(g)} at ${spotText(g)}</h3><span class="muted">Call your offense</span></div>`
+    : `<div class="callhead"><h3>${downText(g)} at ${spotText(g)}</h3><span class="muted">${esc(g.teams[g.poss].abbr)} ball · call your defense</span></div>`;
+  return `${head}<div class="playgroups">${groups.map(([fam, label, cs]) => `<div class="pgroup"><h4>${label}</h4>
+    <div class="plays">${cs.map((c) => card(c, fam)).join('')}</div></div>`).join('')}</div>`;
 }
 
 function lastPlayHtml(g) {
@@ -733,9 +767,18 @@ function renderGame() {
   const us = userSide();
   const live3d = !!stage;
   const decide = !g.final && needsUser(g) && !S.busy && !L3.lp;
-  let controls;
+  const simOff = L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : '';
+  const simBtns = `<button class="btn" data-act="sim" data-stop="drive" ${simOff}>Sim drive</button>
+        <button class="btn" data-act="sim" data-stop="quarter" ${simOff}>Sim quarter</button>
+        <button class="btn" data-act="sim" data-stop="game" ${simOff}>Sim to the end</button>`;
+  const coachBox = `<label class="check"><input type="checkbox" id="g-coach" ${S.coach ? 'checked' : ''}> Coach mode</label>`;
+  // On the 3D field the sims tuck into a Skip disclosure on the Coach mode row.
+  const simrow = live3d ? `<div class="simrow">${coachBox}${S.skipOpen ? simBtns : ''}<button class="btn skip" id="g-skip" data-act="skip" aria-expanded="${!!S.skipOpen}">${S.skipOpen ? 'Hide' : 'Skip'}</button></div>`
+    : `<div class="simrow">${coachBox}${simBtns}</div>`;
+  let controls, dock = 'call';
   if (g.final) {
-    controls = `<div class="card final"><h2>${g.winner == null ? 'Tie game' : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose'}, ${Math.max(...g.score)} to ${Math.min(...g.score)}</h2>
+    dock = 'final';
+    controls = `<div class="card final callcard"><h2>${g.winner == null ? 'Tie game' : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose'}, ${Math.max(...g.score)} to ${Math.min(...g.score)}</h2>
       <div class="actions">${S.gameMeta?.quick ? '<button class="btn primary" data-act="quick">Play another quick game</button><button class="btn" data-act="home">Home</button>'
         : '<button class="btn primary" data-act="finishgame">Back to the season</button>'}</div></div>`;
   } else {
@@ -743,23 +786,34 @@ function renderGame() {
     if (L3.lp) {
       const lp = L3.lp;
       const mine = lp.user === lp.o ? OFF_PLAYS[L3.off].name : DEF_PLAYS[L3.def].name;
+      dock = lp.phase === 'pre' ? 'lined' : 'live';
       head = `<div class="callhead"><h3>${lp.phase === 'pre' ? `Lined up: ${esc(mine)}` : 'Play in progress'}</h3><span class="muted">${downText(g)} at ${spotText(g)}</span></div>
         ${lp.phase === 'pre' ? `<div class="actions"><button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap the ball' : 'Start the play'} <kbd>Space</kbd></button>
         ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change play</button>'}</div>` : ''}`;
-    } else if (decide) head = playCards(g) + presnapHtml(g) + tendenciesHtml(g);
-    else head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">Coach mode hands you 3rd and 4th downs and the last two minutes</span></div>`;
-    controls = `<div class="card callcard">${head}
-      <div class="simrow">
-        <label class="check"><input type="checkbox" id="g-coach" ${S.coach ? 'checked' : ''}> Coach mode</label>
-        <button class="btn" data-act="sim" data-stop="drive" ${L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : ''}>Sim drive</button>
-        <button class="btn" data-act="sim" data-stop="quarter" ${L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : ''}>Sim quarter</button>
-        <button class="btn" data-act="sim" data-stop="game" ${L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : ''}>Sim to the end</button>
-      </div></div>`;
+    } else if (decide) head = playCards(g, { keys: live3d }) + (live3d ? '' : presnapHtml(g) + tendenciesHtml(g));
+    else {
+      dock = 'wait';
+      head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">Coach mode hands you 3rd and 4th downs and the last two minutes</span></div>`;
+    }
+    controls = `<div class="card callcard">${head}${simrow}</div>`;
   }
-  const field = live3d ? `<div class="stage-slot" id="stage-slot"></div>${keysHelp()}` : `<div class="fieldwrap">${renderField(g)}</div>`;
-  return `<section class="game ${live3d ? 'g3d' : ''}">
+  if (live3d) {
+    // Field first: the dock rides on the near turf, and is gone while the ball is live.
+    const dockHtml = dock === 'live' ? '' : controls.replace('class="card ', `class="card dock d-${dock} `);
+    return `<section class="game g3d">
     ${scoreboard(g)}
-    ${field}
+    <div class="stage-slot" id="stage-slot">${dockHtml}</div>
+    ${lastPlayHtml(g)}
+    ${decide ? `<div class="card scoutpanel">${presnapHtml(g)}${tendenciesHtml(g)}</div>` : ''}
+    <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
+    <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>
+    ${keysHelp()}
+    <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
+  </section>`;
+  }
+  return `<section class="game">
+    ${scoreboard(g)}
+    <div class="fieldwrap">${renderField(g)}</div>
     ${lastPlayHtml(g)}
     ${controls}
     <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
@@ -847,6 +901,7 @@ function keysHelp() {
     <span><kbd>1</kbd>-<kbd>5</kbd> throw to that receiver</span>
     <span><kbd>T</kbd> throw it away</span>
     <span><kbd>E</kbd> truck through a tackler</span>
+    <span><kbd>R</kbd> spin move</span>
     <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
   </div></details>`;
@@ -964,7 +1019,7 @@ function ensureStage() {
   stageWrap.className = 'stagewrap';
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
     <div class="touch" id="touch" aria-hidden="true"><div class="stick" id="stick"><span></span></div>
-      <div class="tbtns"><button data-key="Space">Snap / Juke / Dive</button><button data-key="KeyE">Truck</button><button data-key="KeyQ">Switch</button>
+      <div class="tbtns"><button data-key="Space">Snap / Juke / Dive</button><button data-key="KeyE">Truck</button><button data-key="KeyR">Spin</button><button data-key="KeyQ">Switch</button>
       <span class="trow">${[1, 2, 3, 4, 5].map((n) => `<button data-key="Digit${n}">${n}</button>`).join('')}</span></div></div>`;
   stageWrap.prepend(stage.el);
   bindTouch(stageWrap);
@@ -974,9 +1029,26 @@ function ensureStage() {
 function mountStage() {
   const slot = document.getElementById('stage-slot');
   if (!slot || !stageWrap) return;
-  slot.appendChild(stageWrap);
+  slot.prepend(stageWrap);
+  fitStage();
   stage.resize();
   if (!L3.lp) showPreview();
+}
+
+// The 3D game is one viewport column: the stage fills what the sticky top bar and scoreboard
+// leave of the screen.
+function fitStage() {
+  const top = document.querySelector('.top')?.offsetHeight ?? 0;
+  const sb = document.querySelector('.game.g3d .scoreboard')?.offsetHeight ?? 0;
+  const root = document.documentElement.style;
+  root.setProperty('--top-h', `${top}px`);
+  root.setProperty('--sb-h', `${sb}px`);
+  fitDock();
+}
+
+function fitDock() {
+  const dock = document.querySelector('.game.g3d .dock');
+  stage?.setInset(dock ? dock.offsetHeight + 10 : 0);
 }
 
 // Between plays, line both teams up at the new spot.
@@ -1003,8 +1075,10 @@ function startLive(off, def, opts) {
   L3.edges.clear();
   stage.setPlay(L3.lp);
   render();
+  // Bring the stage up under the sticky scoreboard.
   const top = stageWrap?.getBoundingClientRect().top;
-  if (top != null && (top < 60 || top > window.innerHeight * 0.4)) window.scrollTo({ top: Math.max(0, window.scrollY + top - 70), behavior: reduceMotion ? 'auto' : 'smooth' });
+  const want = (document.querySelector('.top')?.offsetHeight ?? 0) + (document.querySelector('.game.g3d .scoreboard')?.offsetHeight ?? 0) + 12;
+  if (top != null && Math.abs(top - want) > 40) window.scrollTo({ top: Math.max(0, window.scrollY + top - want), behavior: reduceMotion ? 'auto' : 'smooth' });
 }
 
 function doSnap() {
@@ -1039,7 +1113,7 @@ function flash(text, tone = '') {
 }
 
 const FLASH = { int: ['INTERCEPTED!', 'to'], sack: ['SACK!', 'to'], broken: ['Broken tackle!', ''], juke: ['Juke!', ''], ghost: ['Phased through!', 'big'],
-  catch: ['Caught!', ''], incomplete: ['Incomplete', 'muted'], scramble: ['Scramble!', ''], truck: ['Truck stick!', ''] };
+  catch: ['Caught!', ''], incomplete: ['Incomplete', 'muted'], scramble: ['Scramble!', ''], truck: ['Truck stick!', ''], spin: ['Spin move!', ''] };
 
 function readInput(lp) {
   const k = L3.keys, e = L3.edges;
@@ -1049,7 +1123,7 @@ function readInput(lp) {
   const throwKey = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].find((d) => e.has(d));
   const inp = {
     mx: m.mx, my: m.my, sprint: k.has('ShiftLeft') || k.has('ShiftRight'),
-    juke: e.has('Space'), dive: e.has('Space'), truck: e.has('KeyE'),
+    juke: e.has('Space'), dive: e.has('Space'), truck: e.has('KeyE'), spin: e.has('KeyR'),
     throwTo: throwKey ? ['WR1', 'WR2', 'WR3', 'TE', 'RB'][Number(throwKey.slice(5)) - 1] : null,
     throwAway: e.has('KeyT'), switchTo: e.has('KeyQ') || e.has('Tab') ? 'ball' : null,
   };
@@ -1058,13 +1132,13 @@ function readInput(lp) {
 }
 
 function hudTip(lp) {
-  if (!lp) return S.game && !S.game.final ? 'Call a play below' : '';
+  if (!lp) return '';
   const c = lp.control;
   if (lp.phase === 'pre') return lp.user === lp.o ? `Space to snap${lp.kind === 'pass' ? ' · then 1-5 to throw' : ''}` : 'Q to pick a defender · Space to start';
   if (lp.phase === 'dead') return '';
   if (!c) return 'Watching';
   if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run') return '1-5 throw · T throw away · Arrows move · Space spin';
-  if (c.carrier) return 'Arrows run · Shift sprint · Space juke · E truck';
+  if (c.carrier) return 'Arrows run · Shift sprint · Space juke · R spin · E truck';
   if (c.side !== lp.carrierTeam || c.side === 'def') return 'Arrows move · Space dive · Q switch to the ball';
   return 'Arrows move';
 }
@@ -1118,7 +1192,15 @@ function onKey(e, down) {
   if (S.screen !== 'game' || !stage || !S.game) return;
   if (e.target.closest?.('input, select, textarea')) return;
   const code = e.code;
-  const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyQ', 'KeyT', 'Tab',
+  // Call keys on the play sheet, only while no play is lined up or live.
+  if (!L3.lp && down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const g = S.game;
+    if (!g.final && needsUser(g) && !S.busy) {
+      const hit = callSheet(g).groups.flatMap(([, , cs]) => cs).find((c) => c.code === code);
+      if (hit) { e.preventDefault(); doCall(hit.call); return; }
+    }
+  }
+  const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'Tab',
     'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(code);
   if (!game) return;
   if (!L3.lp) { if (code === 'Space' && down && e.target === document.body) e.preventDefault(); return; }
@@ -1179,6 +1261,7 @@ function onClick(e) {
   const act = el.dataset.act;
   const L = S.league;
   switch (act) {
+    case 'skip': S.skipOpen = !S.skipOpen; render(); break;
     case 'home': S.game = S.gameMeta?.quick ? null : S.game; setScreen('home'); break;
     case 'go': setScreen(el.dataset.to); break;
     case 'continue': {
@@ -1316,6 +1399,7 @@ function onInput(e) {
 function onChange(e) {
   const t = e.target;
   if (t.id === 'd-type') { S.draft.type = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
+  if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
   if (t.id === 'import-file' && t.files?.[0]) t.files[0].text().then(importSave);
@@ -1380,6 +1464,7 @@ function start(data) {
   document.addEventListener('click', onClick);
   document.addEventListener('input', onInput);
   document.addEventListener('change', onChange);
+  window.addEventListener('resize', () => { if (S.screen === 'game' && stage) fitStage(); });
   document.addEventListener('submit', onSubmit);
   window.addEventListener('keydown', (e) => onKey(e, true));
   window.addEventListener('keyup', (e) => onKey(e, false));
