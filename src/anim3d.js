@@ -29,6 +29,7 @@ export class Animator {
     this.gait = seed * 10;
     this.t = seed * 30;
     this.fallK = 0;
+    this.diveK = 0;
     this.fallX = 0; this.fallZ = 1;
   }
 
@@ -138,6 +139,7 @@ export class Animator {
     // Stunned: wobbling.
     if (s.stun) { o[ROLL] += Math.sin(t * 15) * 0.14 * s.stun; o[bi.head + 2] += Math.sin(t * 11) * 0.2 * s.stun; }
     // Diving tackle: laid out, arms out front.
+    this.diveK = s.dive ?? 0;
     if (s.dive) {
       const k = s.dive;
       set(k, PITCH, 1.32); set(k, bi.armL, -2.7); set(k, bi.armR, -2.7); set(k, bi.legL, 0.45); set(k, bi.legR, 0.35); set(k, bi.head, -0.9);
@@ -169,6 +171,16 @@ export class Animator {
 
   apply(o) {
     const f = this.fig;
+    if (f?.model) {
+      // Real models animate their own skeleton from clips; the whole body still leans into
+      // runs and cuts, bobs, hops, dives and goes down the way it was hit. Lean from the base
+      // layers is softened so a full model does not tip over in a stance.
+      const hard = Math.max(clamp(this.fallK, 0, 1), this.diveK);
+      const k = 0.35 + 0.65 * hard;
+      f.pivot.rotation.set(o[PITCH] * k, 0, o[ROLL] * k, 'XZY');
+      f.pivot.position.y = Math.max(0, o[LIFT]);
+      return;
+    }
     if (!f?.bones) return;
     const bones = f.bones;
     for (const b of B) { const i = bi[b]; bones[b].rotation.set(o[i], o[i + 1], o[i + 2]); }

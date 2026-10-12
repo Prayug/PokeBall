@@ -6,7 +6,7 @@ Every football rating comes from real Pokémon data: base stats, types, height, 
 
 ## Play
 
-Open `dist/index.html` in a browser, keeping the `dist/sprites3d/` folder next to it: the back views of the Pokémon load from there on demand, a few Pokémon at a time. There is no server and no network calls besides Google Fonts. Leagues save to the browser's local storage.
+Open `dist/index.html` in a browser, keeping the `dist/models3d/` and `dist/sprites3d/` folders next to it: the 3D models load from there on demand, a few Pokémon at a time. There is no server and no network calls besides Google Fonts. Leagues save to the browser's local storage.
 
 Games are played on a 3D field, Madden style: pick a play from the playbook, snap the ball, and control one Pokémon while the AI runs the other 21 using the same ratings and type matchups as the simulator.
 
@@ -33,11 +33,13 @@ The game is a real three.js scene in yards, with one coordinate system for the f
 
 The camera works like a TV broadcast: behind the offense and above it, eased toward the ball, pulling back on deep passes and lifting itself over anyone in its way. Sideline, Behind the QB and Tactical are the other views.
 
-### The Pokémon figures
+### The Pokémon models
 
-No licensed 3D Pokémon models are available to this project, so every Pokémon is a **generated placeholder figure**, built in the browser from its official pixel sprite: the silhouette is inflated into a rounded 3D body (thicker in the middle, thinner at the edges), painted with the front sprite on the front and the back sprite on the back, auto-rigged with hips, chest, head, arms and legs, and scaled to the Pokémon's real height and weight. They are not Game Freak models and are not meant to look like them; they are a stand-in so every one of the 578 Pokémon has a 3D body with feet on the turf, shadows and a skeleton. `src/figure3d.js` has a `MODEL_INDEX` hook where licensed GLB/glTF models can be dropped in per species later, and the animation system drives the same named bones.
+544 of the 578 Pokémon are real 3D models of the official game models, from the [Pokémon 3D API](https://github.com/Pokemon-3D-api/assets) asset collection, which gathers fan-extracted models from Sketchfab. They are not licensed: like the pixel sprites, they belong to Nintendo, Creatures Inc. and GAME FREAK inc., and this game uses them as a non-commercial fan project. The collection's own code is MIT licensed, and it credits the individual Sketchfab uploaders in its [Sketchfab collection](https://sketchfab.com/SudhanshuAmbastha/collections). About 90 of the models come with their game animations (idle, run, walk, attack, hit, faint, cheer), which the game plays. The rest are rigged or static, and the game moves them as a whole: leaning, bobbing, hopping, diving and falling. Every model is scaled to the Pokémon's real height (shrunk if a long body would not fit its spot on the line), stands on the turf and casts a shadow.
 
-Animation is a state machine over that skeleton (`src/anim3d.js`): idle, pre-snap stance (three-point on the line), run and sprint with stride length from body size, turning leans, blocking, and layers for carrying the ball, the quarterback's ball by the ear, throwing, reaching for catches, jukes, spins, trucks, being stunned, diving tackles, falling the way the hit came from, getting back up and celebrating. Flying and levitating Pokémon hover above the turf. Players turn at a rate that depends on agility, so nobody snaps around or slides.
+The other 34 (mostly Gen 8 and 9, which the collection does not have yet) use a generated figure: the Pokémon's pixel sprite inflated into a rounded, auto-rigged 3D body, painted with its front and back sprites. `build/build_models3d.mjs` downloads, converts and packs the models into `dist/models3d/`, so a Pokémon that gets a model in the collection gets it here on the next run.
+
+Animation is a state machine (`src/anim3d.js`) that picks each player's clip on a model and poses the generated figures' skeletons: idle, pre-snap stance (three-point on the line), run and sprint with stride length from body size, turning leans, blocking, and layers for carrying the ball, the quarterback's ball by the ear, throwing, reaching for catches, jukes, spins, trucks, being stunned, diving tackles, falling the way the hit came from, getting back up and celebrating. Flying and levitating Pokémon hover above the turf. Players turn at a rate that depends on agility, so nobody snaps around or slides.
 
 ### Formations and contact
 
@@ -60,7 +62,8 @@ Ratings decide games: in the live game a strong lineup (about 80 overall) beats 
 | `src/field3d.js` | The 3D stage: players, ball, play art, markers and effects, driven by the live play |
 | `src/stadium3d.js` | Field, stands, crowd, lights and weather |
 | `src/camera3d.js` | Broadcast, sideline, behind-the-QB and tactical cameras |
-| `src/figure3d.js` | Generated placeholder figures from the pixel sprites, auto-rigged, and the GLB model hook |
+| `src/model3d.js`, `src/models3d.js` | Loading the real 3D models and their animation clips; the generated index of which Pokémon have one |
+| `src/figure3d.js` | Generated figures from the pixel sprites, for Pokémon without a model |
 | `src/anim3d.js` | The animation state machine |
 | `src/body.js` | Body size from height and weight |
 | `src/playbook.js` | Play art for the call sheet |
@@ -69,6 +72,8 @@ Ratings decide games: in the live game a strong lineup (about 80 overall) beats 
 | `src/types.js` | Type chart, type traits, weather and the curated abilities |
 | `src/app.js`, `src/index.html` | The screens and styles |
 | `src/data.js`, `src/sprites.js`, `src/sprites3d.js` | Generated Pokémon data, menu sprites and the index of the animated sprite strips (do not edit by hand) |
+| `dist/models3d/` | The 3D models, two Pokémon per file, loaded on demand |
+| `build/build_models3d.mjs` | Downloads, converts and packs the 3D models (see its header for the npm packages it needs) |
 | `dist/sprites3d/` | Front and back pixel sprites, three Pokémon per file, loaded on demand to paint the figures |
 | `build/build_data.py` | Regenerates `data.js` from PokéAPI CSVs |
 | `build/build_sprites3d.py` | Regenerates `sprites3d.js` and `sprites.js` from the PokeAPI pixel sprites |

@@ -1,25 +1,19 @@
-// 3D Pokémon figures.
+// Generated 3D figures, the fallback for the Pokémon that have no real model (model3d.js has
+// the models; see README).
 //
-// There are no licensed 3D Pokémon models this project can ship, so every figure is built in
-// the browser from the Pokémon's own Black/White pixel art: the front sprite's silhouette is
-// "inflated" into a closed, rounded volume (each point bulges out by a circular profile of
-// the local body thickness), the front of the body takes the front sprite's colors and the
-// back of the body takes the back sprite's colors. The result is a real lit mesh with volume
-// that casts shadows and turns in world space; it is NOT a billboard.
+// The figure is built in the browser from the Pokémon's own Black/White pixel art: the front
+// sprite's silhouette is "inflated" into a closed, rounded volume (each point bulges out by a
+// circular profile of the local body thickness), the front of the body takes the front
+// sprite's colors and the back takes the back sprite's colors. It is a lit mesh with volume
+// that casts shadows and turns in world space, not a billboard.
 //
 // Each figure is auto-rigged with a small skeleton (hips, chest, head, two arms or wings, two
 // legs) and skinned, so the animation layer in anim3d.js can drive it with blended poses.
-//
-// If a GLB/GLTF model is ever added for a species (models/<id>.glb next to the page, listed
-// in MODEL_INDEX), loadModel() uses it instead, with its own skeleton and animation clips.
 import * as THREE from 'three';
 import { SPRITES } from './sprites.js';
 import { SPRITE_INDEX } from './sprites3d.js';
 import { PLAYERS } from './ratings.js';
 import { bodyOf } from './body.js';
-
-// Species with an authored model file in dist/models/<id>.glb. Empty: none are licensed.
-export const MODEL_INDEX = {};
 
 const DEPTH = 0.78; // front-to-back thickness relative to a round cross-section
 export const BONES = ['root', 'hips', 'chest', 'head', 'armL', 'armR', 'legL', 'legR'];

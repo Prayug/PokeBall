@@ -12,6 +12,7 @@ import { PLAYERS } from './ratings.js';
 import { absSpot } from './engine.js';
 import { Stadium, HALF_W } from './stadium3d.js';
 import { template, upgradeTemplate, makeFigure, disposeFigure, placeholder, flies } from './figure3d.js';
+import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel } from './model3d.js';
 import { Animator } from './anim3d.js';
 import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
@@ -160,13 +161,28 @@ export class Stage {
   removeActor(key) {
     const a = this.actors.get(key);
     if (!a) return;
-    if (a.fig) { disposeFigure(a.fig); a.fig.mesh.material.dispose(); }
+    this.dropFigure(a);
     for (const o of [a.root, a.ring, a.blob]) { this.scene.remove(o); o.material?.dispose?.(); }
     this.actors.delete(key);
   }
 
   // Swap in the species' figure once it is built (or rebuilt with its back view).
   syncFigure(a) {
+    // A real model when the species has one; the generated figure only while it loads
+    // (if its sprite figure is ready first) or when there is no model.
+    if (hasModel(a.id)) {
+      const M = modelTemplate(a.id);
+      if (M.ready) {
+        if (a.fig?.model) return;
+        this.dropFigure(a);
+        a.fig = makeModelFigure(M);
+        a.root.add(a.fig.group);
+        a.anim.setFigure(a.fig);
+        a.version = -1;
+        return;
+      }
+      if (!M.failed) { if (!a.ph && !a.fig) { a.ph = placeholder(); a.root.add(a.ph); } return; }
+    }
     const T = template(a.id);
     const strip = bank.strips[a.id];
     if (strip && !T.hasBack) upgradeTemplate(a.id, strip);
@@ -175,13 +191,37 @@ export class Stage {
       return;
     }
     if (a.version === T.version) return;
-    if (a.ph) { a.root.remove(a.ph); a.ph = null; }
-    if (a.fig) { disposeFigure(a.fig); a.fig.mesh.material.dispose(); }
+    this.dropFigure(a);
     a.fig = makeFigure(T);
     a.fig.mesh.material = a.fig.mesh.material.clone();
     a.root.add(a.fig.group);
     a.anim.setFigure(a.fig);
     a.version = T.version;
+  }
+
+  dropFigure(a) {
+    if (a.ph) { a.root.remove(a.ph); a.ph = null; }
+    if (!a.fig) return;
+    if (a.fig.model) disposeModelFigure(a.fig);
+    else { disposeFigure(a.fig); a.fig.mesh.material.dispose(); }
+    a.fig = null;
+  }
+
+  // Which clip a model plays: from the same situation the procedural layers read.
+  modelClip(a, s, dt) {
+    const f = a.fig;
+    let role = 'idle', speed = 1;
+    if (s.fall > 0.5) role = 'down';
+    else if (s.celebrate > 0.3) role = 'glad';
+    else if (s.stun > 0.3) role = 'damage';
+    else if (s.engaged || s.truck > 0.3 || s.dive > 0.3 || (s.throwU != null && s.throwU < 1)) role = 'attack';
+    else if (s.speed > 0.7) {
+      role = f.actions.run ? 'run' : 'walk';
+      // Match the clip's stride to the ground speed, within reason.
+      speed = clampN(s.speed / (role === 'run' ? 6 : 3) * (2 / Math.max(0.8, s.height)), 0.6, 2.2);
+    }
+    playClip(f, role, 0.18, speed);
+    f.mixer.update(dt);
   }
 
   // ---------- pre-snap play art ----------
@@ -321,14 +361,15 @@ export class Stage {
       const s = this.situation(lp, p, a, t, td);
       const T = a.fig?.template;
       s.height = T?.height ?? a.body.height;
-      s.shortLegs = T ? T.rig.legTop / T.px < 0.22 : false;
+      s.shortLegs = T?.rig ? T.rig.legTop / T.px < 0.22 : false;
       if (a.fig) a.anim.update(dt, s);
+      if (a.fig?.model) this.modelClip(a, s, dt);
       a.root.position.copy(a.pos);
       a.root.rotation.y = a.yaw + (a.fig ? a.anim.yawOffset : 0);
       if (a.ph) { a.ph.position.y = s.hover ? 0.4 : 0; }
       // Flash on contact: a quick white glow.
       a.flash = Math.max(0, a.flash - dt * 2);
-      if (a.fig) { const m = a.fig.mesh.material; m.emissive.setScalar(a.flash * 0.6); }
+      if (a.fig && !a.fig.model) { const m = a.fig.mesh.material; m.emissive.setScalar(a.flash * 0.6); }
       // Team ring and contact shadow stay on the turf.
       const lift = a.fig ? a.anim.lift : 0;
       a.ring.position.set(a.pos.x, 0.03, a.pos.z);
@@ -436,6 +477,13 @@ export class Stage {
 
   handHeight(a) { return a.fig ? a.fig.template.height * 0.85 : 1.8; }
 
+  // A point on a model's body: fractions of its width (to its right), height and depth (forward).
+  modelPoint(a, fx, fy, fz, out) {
+    const T = a.fig.template;
+    a.fig.pivot.updateMatrixWorld(true);
+    return out.set(-fx * Math.max(0.3, T.width / 2), fy * T.height, fz * Math.max(0.3, T.depth / 2)).applyMatrix4(a.fig.pivot.matrixWorld);
+  }
+
   // A point in a figure's bone space, in world coordinates.
   bonePoint(a, bone, x, y, z, out) {
     const f = a.fig;
@@ -449,12 +497,18 @@ export class Stage {
     const b = lp.ball, ball = this.ball;
     const orient = (yaw, pitch, spin) => ball.rotation.set(spin, yaw, pitch, 'YZX');
     if (holder?.fig && b.state === 'held') {
-      const T = holder.fig.template, A = T.rig, dz = (T.depth / T.scale) * 0.5;
+      const T = holder.fig.template, A = T.rig, dz = (T.depth / T.scale) * 0.5, M = holder.fig.model;
       const qbSet = lp.phase !== 'pre' && lp.kind === 'pass' && holder === this.actorOf(lp.off.QB) && !lp.thrown && lp.qbState !== 'run';
       if (lp.phase === 'pre') {
         // On the turf at the center's hands.
         this.world(0.05, 0, 0.17, ball.position);
         orient(Math.PI / 2, 0, 0);
+      } else if (qbSet && M) {
+        this.modelPoint(holder, 0.42, 0.78, 0.15, ball.position);
+        orient(holder.yaw - Math.PI / 2, 0.6, 0);
+      } else if (M) {
+        this.modelPoint(holder, 0.38, 0.5, 0.42, ball.position);
+        orient(holder.yaw - Math.PI / 2, 0.35, 0);
       } else if (qbSet) {
         this.bonePoint(holder, 'armR', A.armX * 0.35, A.width * 0.08, dz * 0.4, ball.position);
         orient(holder.yaw - Math.PI / 2, 0.6, 0);
