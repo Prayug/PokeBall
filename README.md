@@ -24,7 +24,7 @@ Games are played on a 3D field, Madden style: pick a play from the playbook, sna
 
 The 3D game fills the screen under the scoreboard, with the play caller docked on the near turf: grouped play cards (one marked "Fits this down") between plays, a Snap button once you are lined up, and nothing while the ball is live. On a phone or tablet the field shows a joystick and buttons. Punts, field goals and kickoffs are resolved instantly. "Sim drive", "Sim quarter" and "Sim to the end" (under Skip) still use the fast simulator, and coach mode lets the AI call every down except 3rd and 4th downs and the last two minutes. Without WebGL the game falls back to the original 2D field.
 
-The Pokémon are the animated 3D-model sprites from Pokémon Showdown (front and back views), so a player shows its back while running away from the camera and its front while coming toward it. Sprites stand on upright planes that turn to the camera, idle slowly in place and cycle their strides with distance covered. On top of that, every player is posed from what it is doing: running strides that lean into cuts, the ball tucked by the carrier or up by the quarterback's ear, wind-up and release on throws, reaching and securing catches, jukes and spins with afterimages, lowered-shoulder trucks that bowl tacklers over, blocking shoves, diving and wrap-up tackles that leave the carrier lying on the turf, a crouch on the snap, a laced football that spirals in flight, dazed stars, and a touchdown celebration. Each sprite has a team-colored outline.
+The Pokémon are the animated Black/White pixel sprites (front and back views), drawn crisp at their native pixel size for a Mode 7 look, so a player shows its back while running away from the camera and its front while coming toward it. Pokémon from Gen 6 on have no Black/White animation and use their single-frame pixel sprite with a stronger bob. Sprites stand on upright planes that turn to the camera, stay hidden until their image has loaded, play their idle loop in place and step through it with distance covered when moving. On top of that, every player is posed from what it is doing: running strides that lean into cuts, the ball tucked by the carrier or up by the quarterback's ear, wind-up and release on throws, reaching and securing catches, jukes and spins with afterimages, lowered-shoulder trucks that bowl tacklers over, blocking shoves, diving and wrap-up tackles that leave the carrier lying on the turf, a crouch on the snap, a laced football that spirals in flight, dazed stars, and a touchdown celebration. Each sprite has a team-colored outline.
 
 Ball carriers have three moves, each better in a different spot: a juke beats a tackler coming from the side, a spin beats one coming head-on, and a truck works when the carrier is stronger and heavier. AI carriers pick between them the same way.
 
@@ -48,7 +48,7 @@ Ratings decide games: in the live game a strong lineup (about 80 overall) beats 
 | `src/data.js`, `src/sprites.js`, `src/sprites3d.js` | Generated Pokémon data, menu sprites and the index of the animated sprite strips (do not edit by hand) |
 | `dist/sprites3d/` | The animated sprite strips, three Pokémon per file, loaded on demand |
 | `build/build_data.py` | Regenerates `data.js` from PokéAPI CSVs |
-| `build/build_sprites3d.py` | Regenerates `sprites3d.js` and `sprites.js` from the Showdown 3D sprites |
+| `build/build_sprites3d.py` | Regenerates `sprites3d.js` and `sprites.js` from the PokeAPI pixel sprites |
 | `build/build.sh` | Bundles `src/` into `dist/index.html` with esbuild |
 | `test/balance.mjs` | Simulates games between AI-drafted teams and prints league averages |
 | `test/live.mjs` | Plays full games where every run and pass is a live play on autopilot, and prints the same averages |
@@ -72,7 +72,7 @@ python3 build/build_data.py <csv_dir> src
 python3 build/build_sprites3d.py <gif_cache_dir> src dist   # downloads the GIFs it does not have yet
 ```
 
-A few Gen 9 Pokémon have no Showdown animation; they use their Pokémon HOME render instead.
+Gen 1–5 use the animated Black/White GIFs; later Pokémon use the static pixel PNGs.
 
 ## Balance
 
@@ -80,4 +80,4 @@ Last run over 4,000 simulated games: 23.4 points per team, 61.7% completions, 6.
 
 Live plays with every Pokémon on autopilot now land in the same range (about 24 points per team, 61% completions, 6.9 yards per attempt, 3.7 yards per carry, 4.7% sacks). Deep defenders keep their cushion, pursuers close on the ball and long runs tire the carrier, so only a truly faster player breaks away.
 
-Pokémon data comes from [PokéAPI](https://pokeapi.co); the animated 3D sprites are Pokémon Showdown's, as mirrored in [PokeAPI/sprites](https://github.com/PokeAPI/sprites). The 3D field uses [three.js](https://threejs.org). Pokémon is © Nintendo, Creatures Inc. and GAME FREAK inc. This is an unofficial fan project.
+Pokémon data comes from [PokéAPI](https://pokeapi.co); the pixel sprites come from [PokeAPI/sprites](https://github.com/PokeAPI/sprites). The 3D field uses [three.js](https://threejs.org). Pokémon is © Nintendo, Creatures Inc. and GAME FREAK inc. This is an unofficial fan project.

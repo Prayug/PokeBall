@@ -6,12 +6,14 @@
 // every player is posed each frame from what it is doing in the play: running strides,
 // throwing, catching, jukes, spins, trucks, blocks, dives, tackles and celebrations.
 import * as THREE from 'three';
-import { SPRITE_INDEX, FRAMES } from './sprites3d.js';
+import { SPRITE_INDEX } from './sprites3d.js';
 import { SPRITES } from './sprites.js';
 import { PLAYERS } from './ratings.js';
 import { absSpot } from './engine.js';
 
 const PX = 16; // texture pixels per yard
+// Sprites keep one pixel density across the field, like a Mode 7 stadium: yards per sprite pixel.
+const SPRITE_PX = 0.034;
 const FIELD_W = 53.3;
 const reduceMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
@@ -188,27 +190,27 @@ export class Stage {
   }
 
   // ---------- sprites ----------
-  // A Pokémon's textures: its animated front and back strips once its chunk has loaded,
-  // and its menu still until then.
+  // A Pokémon's textures: its animated front and back pixel strips once its chunk has loaded,
+  // and its menu still until then. Sizes are in sprite pixels.
   textures(id) {
     let t = this.texCache.get(id);
     const strip = bank.strips[id];
     if (t && (t.full || !strip)) return t;
-    const idx = SPRITE_INDEX[id] ?? [0, 1, 1, 1, 1];
+    const idx = SPRITE_INDEX[id] ?? [0, 64, 64, 64, 64, 1, 1, 1];
     if (!t) {
       loadChunk(idx[0]);
       const still = makeTex(SPRITES[id]);
-      const tx = [1 / 96, 1 / 96];
-      t = { full: false, front: still, back: still, frames: 1, fAspect: idx[1] / idx[2], bAspect: idx[1] / idx[2], fTexel: tx, bTexel: tx, stillBack: true };
+      const px = [idx[1], idx[2]];
+      t = { full: false, front: still, back: still, frames: 1, fFrames: 1, bFrames: 1, secs: 1, fPx: px, bPx: px, stillBack: true };
       this.texCache.set(id, t);
     }
     if (strip) {
       // Swap the still for the animated strips once both have decoded, so nothing blinks.
       if (!t.pending) t.pending = { front: makeTex(strip[0]), back: makeTex(strip[1]) };
-      if (t.pending.front.image.complete && t.pending.back.image.complete && t.pending.front.image.width) {
+      if (texReady(t.pending.front) && texReady(t.pending.back)) {
         t.front.dispose();
-        t = { full: true, front: t.pending.front, back: t.pending.back, frames: FRAMES,
-          fAspect: idx[1] / idx[2], bAspect: idx[3] / idx[4], fTexel: [1 / idx[1], 1 / idx[2]], bTexel: [1 / idx[3], 1 / idx[4]] };
+        t = { full: true, front: t.pending.front, back: t.pending.back, fFrames: idx[5] ?? 1, bFrames: idx[6] ?? 1, secs: idx[7] || 1,
+          fPx: [idx[1], idx[2]], bPx: [idx[3], idx[4]] };
         this.texCache.set(id, t);
       }
     }
@@ -224,14 +226,13 @@ export class Stage {
     mat.uniforms.team.value.set(team.color);
     const mesh = new THREE.Mesh(SPRITE_GEO, mat);
     mesh.matrixAutoUpdate = false;
-    const hM = PLAYERS[p.id].height / 10;
-    const h = Math.max(1.3, Math.min(3.8, 1.05 + Math.sqrt(hM) * 0.9));
+    const h = 2;
     // A thin, faint team ring for everyone; the full ring marks who matters this frame.
     const ring = new THREE.Mesh(RING_THIN, new THREE.MeshBasicMaterial({ color: team.color, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }));
     ring.rotation.x = -Math.PI / 2;
     const shadow = shadowMesh(0.75);
     this.scene.add(mesh, ring, shadow);
-    a = { key, id: p.id, mesh, ring, shadow, h, h0: h, tex: null, useBack: false, flip: false, phase: Math.random() * FRAMES,
+    a = { key, id: p.id, mesh, ring, shadow, h, h0: h, tex: null, useBack: false, flip: false, phase: Math.random() * 12,
       gait: Math.random() * 2, color: team.color, seen: 0, fall: 0, fallDir: 1, act: null, lastStep: 0, ghostT: 0, flash: 0, stars: null };
     this.actors.set(key, a);
     return a;
@@ -372,10 +373,13 @@ export class Stage {
       if (away > 0.35) a.useBack = true; else if (away < -0.35) a.useBack = false;
       if (a.useBack) { if (side < -0.4) a.flip = true; else if (side > 0.4) a.flip = false; }
       else if (side > 0.4) a.flip = true; else if (side < -0.4) a.flip = false;
-      // Idle slowly in place; on the move, advance the 8-frame strip by distance covered so a
-      // faster Pokémon cycles faster. One cycle is a stride that grows with the sprite's size.
+      // Sprite size from its pixels at one density for everyone, within sane bounds.
+      a.h0 = clampN(tx.fPx[1] * SPRITE_PX, 1.0, 3.4);
+      a.oneFrame = Math.max(tx.fFrames ?? 1, tx.bFrames ?? 1) < 2;
+      // Idle at the sprite's own animation speed; on the move, advance the strip by distance
+      // covered so a faster Pokémon cycles faster. One cycle is a stride that grows with size.
       a.moving = a.speed > (a.moving ? 0.8 : 1.4);
-      a.phase += a.moving ? dt * a.speed * tx.frames / (1.6 + a.h0 * 1.1) : dt * 1.5;
+      a.phase += a.moving ? dt * a.speed / (1.6 + a.h0 * 1.1) : dt / (tx.secs || 1);
 
       const pose = this.pose(lp, p, a, t, dt, tdCarrier);
       let back = a.useBack;
@@ -383,19 +387,24 @@ export class Stage {
       if (pose.spin != null) { const c = Math.cos(pose.spin); sx *= Math.max(0.08, Math.abs(c)); if (c < 0) back = !back; }
       const tex = back ? tx.back : tx.front;
       const flip = back && tx.stillBack ? !a.flip : a.flip;
+      const nFrames = (back ? tx.bFrames : tx.fFrames) ?? 1;
+      const px = back ? tx.bPx : tx.fPx;
       const u = a.mesh.material.uniforms;
       if (u.map.value !== tex) u.map.value = tex;
-      u.frames.value = tx.frames;
-      u.frame.value = Math.floor(a.phase) % tx.frames;
+      u.frames.value = nFrames;
+      u.frame.value = Math.floor(a.phase * nFrames) % nFrames;
       u.flip.value = flip ? 1 : 0;
-      u.texel.value.set(...(back ? tx.bTexel : tx.fTexel));
+      u.texel.value.set(1 / px[0], 1 / px[1]);
       a.flash = Math.max(0, a.flash - dt * 2.2);
       u.flash.value = Math.min(0.85, a.flash * 1.6);
-      const aspect = back ? tx.bAspect : tx.fAspect;
+      const aspect = px[0] / px[1];
       // Long, flat Pokémon (Wailord, Steelix...) are capped in width so they fit on a line.
-      const fit = Math.min(1, 2.4 / (a.h0 * aspect));
-      a.h = a.h0 * fit;
+      const hh = clampN(px[1] * SPRITE_PX, 1.0, 3.4);
+      const fit = Math.min(1, 2.6 / (hh * aspect));
+      a.h = hh * fit;
       a.w = a.h * aspect;
+      // Nothing is drawn until the image has decoded; an empty texture would show as a box.
+      a.mesh.visible = texReady(tex);
       spriteMatrix(a.mesh.matrix, a.pos.x, pose.lift + pose.pitch * 0.03, a.pos.z, a.yaw, pose.pitch, pose.shear, pose.roll, a.w * sx, a.h * pose.sy);
       a.mesh.matrixWorldNeedsUpdate = true;
       // Draw far to near so the near line always lands on top.
@@ -411,7 +420,7 @@ export class Stage {
       a.shadow.scale.set((0.8 + aspect * 0.4) * sh * (1 + Math.abs(Math.sin(pose.roll)) * 0.8), (0.8 + aspect * 0.4) * sh, 1);
       a.shadow.material.opacity = sh;
       // Afterimages on spins, jukes and Ghost-type phasing.
-      if ((pose.ghost || t < a.ghostT) && t - (a.lastGhost ?? 0) > 0.05) { a.lastGhost = t; this.ghost(a, tex, flip, u.frame.value, tx.frames, t < a.ghostT ? '#b388ff' : null); }
+      if ((pose.ghost || t < a.ghostT) && t - (a.lastGhost ?? 0) > 0.05) { a.lastGhost = t; this.ghost(a, tex, flip, u.frame.value, nFrames, t < a.ghostT ? '#b388ff' : null); }
       // Dust kicked up at full speed.
       if (pose.step && a.speed > 0.8 * p.top) this.dust(a.pos, a.speed / 10);
       // Dazed stars over a stunned player.
@@ -575,6 +584,7 @@ export class Stage {
     a.fall = down ? (reduceMotion ? 1 : Math.min(1, a.fall + dt * 4)) : Math.max(0, a.fall - dt * 3);
     // Tackled: the plane pitches back until the Pokémon lies on the turf, tipped a little toward
     // the side it was hit from.
+    if (a.oneFrame && run > 0) { P.lift *= 1.7; P.roll *= 2.2; }
     if (a.fall > 0) { const k = Math.sin(a.fall * Math.PI / 2); P.pitch = 1.48 * k; P.roll = -a.fallDir * 0.3 * k; P.shear = 0; P.lift = 0; P.sy = 1; P.sx = 1; P.spin = null; }
     // Touchdown: the scorer leaps and spins, teammates nearby jump with him.
     if (tdCarrier && this.celebrate && !reduceMotion) {
@@ -796,11 +806,14 @@ function loadChunk(c) {
   document.head.appendChild(s);
 }
 
+const texReady = (tex) => !!(tex?.image?.complete && tex.image.naturalWidth && tex.version > 0);
+
+// Pixel art: nearest-neighbour up close, no mipmaps (they would bleed frames together).
 function makeTex(uri) {
   const img = new Image();
   const tex = new THREE.Texture(img);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   img.onload = () => { tex.needsUpdate = true; };
   if (uri) img.src = uri;
