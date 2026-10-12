@@ -13,7 +13,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { MODEL_INDEX } from './models3d.js';
-import { bodyOf } from './body.js';
+import { bodyOf, fitScale } from './body.js';
 
 export const hasModel = (id) => MODEL_INDEX[id] != null;
 
@@ -91,12 +91,8 @@ function finish(T, gltf) {
     box.union(b);
   });
   const size = box.getSize(new THREE.Vector3());
-  const B = bodyOf(T.id);
-  // Species height in yards, shrunk if the body would not fit its footprint (long Pokémon).
-  let s = B.height / Math.max(1e-6, size.y);
-  const maxLen = Math.max(B.r * 2 * 1.9, 1.5);
-  const len = Math.max(size.x, size.z);
-  if (len * s > maxLen) s = maxLen / len;
+  // Species height, but never wider or longer than the collision capsule (see body.js).
+  const s = fitScale(bodyOf(T.id), size.x, size.y, size.z);
   Object.assign(T, {
     ready: true, scene, clips, scale: s,
     offset: new THREE.Vector3(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2),
@@ -120,6 +116,7 @@ export function makeModelFigure(T) {
   for (const [k, c] of Object.entries(T.clips)) actions[k] = mixer.clipAction(c);
   const fig = { model: true, group, pivot, root: model, mixer, actions, cur: null, version: T.version, template: T, limbW: 0 };
   fig.rig = buildRig(model);
+  fig.hipH = fig.rig?.legs ? Math.max(0, (fig.rig.hipY + T.offset.y) * T.scale) : 0;
   playClip(fig, 'idle', 0);
   return fig;
 }
@@ -203,18 +200,81 @@ function buildRig(model) {
       if (len > 1e-6 && Math.abs(tmp2.x) / len > 0.8 && tmp2.x * side > 0) rest.premultiply(_q.setFromAxisAngle(axisIn(b.parent, Z), -side * 1.05));
     }
     out.push({
-      bone: b, n: I.n, part: I.part, depth, side, front: tmp.z > ctr.z,
+      bone: b, n: I.n, part: I.part, depth, side, front: tmp.z > ctr.z, y: tmp.y,
       rest, lat: axisIn(b.parent, X), up: axisIn(b.parent, Y), fwd: axisIn(b.parent, Z),
     });
   }
-  const legs = out.filter((e) => e.part === 'leg' && e.depth === 0).length;
-  return { bones: out, legs, arms: out.filter((e) => e.part === 'arm' && e.depth === 0).length, maxTail: Math.max(1, ...out.filter((e) => e.part === 'tail').map((e) => e.depth + 1)) };
+  // Hands: the end of each arm chain, where the football sits.
+  const hands = {};
+  for (const b of bones) {
+    if (info.get(b).part !== 'arm' || info.get(b.parent)?.part === 'arm') continue;
+    let end = b, depth = 0;
+    for (;;) {
+      const kid = end.children.find((c) => c.isBone && info.get(c)?.part === 'arm');
+      if (!kid || depth > 5) break;
+      end = kid; depth++;
+    }
+    tmp.setFromMatrixPosition(b.matrixWorld).applyMatrix4(rootInv);
+    let side = sideOf(b.name, info.get(b).n);
+    if (!side) side = tmp.x > ctr.x ? 1 : -1;
+    const k = side > 0 ? 'L' : 'R';
+    if (!hands[k] || depth > hands[k].depth) hands[k] = { bone: end, depth };
+  }
+  const legRoots = out.filter((e) => e.part === 'leg' && e.depth === 0), armRoots = out.filter((e) => e.part === 'arm' && e.depth === 0);
+  const top = Math.max(1e-6, ...bones.map((b) => tmp.setFromMatrixPosition(b.matrixWorld).applyMatrix4(rootInv).y));
+  const avgY = (l) => l.reduce((a, e) => a + e.y, 0) / (l.length || 1);
+  // Four-legged: the "arms" are front legs at about the height of the hind ones. Those get
+  // no raised blocking arms or overhead reach, the head and chest go down instead.
+  const quad = legRoots.length >= 2 && armRoots.length >= 2 && avgY(armRoots) - avgY(legRoots) < top * 0.15;
+  return { bones: out, legs: legRoots.length, arms: armRoots.length, quad, hipY: legRoots.length ? avgY(legRoots) : 0, hands: { R: hands.R?.bone ?? null, L: hands.L?.bone ?? null },
+    maxTail: Math.max(1, ...out.filter((e) => e.part === 'tail').map((e) => e.depth + 1)) };
 }
 
 // Reset the driven bones to rest before the mixer runs, so bones no clip animates do not drift.
 export function resetLimbs(fig) {
   if (!fig.rig) return;
   for (const e of fig.rig.bones) e.bone.quaternion.copy(e.rest);
+}
+
+// Football poses on the model's own skeleton, on top of the clip and the stride: a crouch
+// (thighs forward, knees bent), a lean from the spine, arms out front to block or down to the
+// turf in a three-point stance, reaching up for a catch, the ball tucked, and the throwing arm
+// (cocked by the ear, whipping through). Four-legged rigs lower the chest and head instead of
+// raising front legs. q: see Animator.football.
+export function poseLimbs(fig, q) {
+  const R = fig.rig;
+  if (!R || !q) return;
+  const rot = (e, axis, ang) => { if (Math.abs(ang) < 1e-4) return; _q.setFromAxisAngle(axis, ang); e.bone.quaternion.premultiply(_q); };
+  const quad = R.quad;
+  for (const e of R.bones) {
+    const right = e.side < 0;
+    switch (e.part) {
+      case 'spine':
+        rot(e, e.lat, q.lean * (quad ? 0.25 : 0.55));
+        rot(e, e.up, q.twist * 0.6);
+        break;
+      case 'neck': case 'head':
+        // Eyes stay up the field even when the body leans.
+        rot(e, e.lat, quad ? q.lean * 0.4 : -q.lean * 0.35);
+        break;
+      case 'leg':
+        if (e.depth === 0) rot(e, e.lat, -q.crouch * (quad && e.front ? 0.2 : 0.55));
+        else rot(e, e.lat, q.crouch * (quad && e.front ? 0.3 : 0.85));
+        break;
+      case 'arm': {
+        if (quad) { if (e.depth === 0) rot(e, e.lat, -q.crouch * 0.3 - q.armsFwd * 0.2); else rot(e, e.lat, q.crouch * 0.45); break; }
+        if (e.depth === 0) {
+          let a = -q.armsFwd * 1.25 - q.reach * 2.5;
+          if (right) a += -q.down * 0.9 - q.carry * 0.7 + q.throwArm;
+          rot(e, e.lat, a);
+          if (right && q.carry) rot(e, e.fwd, -q.carry * 0.5);
+        } else rot(e, e.lat, -(q.armsFwd * 0.35 + (right ? q.carry * 1.1 + Math.max(0, -q.throwArm) * 0.4 : 0)));
+        break;
+      }
+      case 'tail': rot(e, e.lat, -q.crouch * 0.15); break;
+      default: break;
+    }
+  }
 }
 
 // Add the procedural motion on top of whatever the clip set this frame.

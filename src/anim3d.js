@@ -31,6 +31,10 @@ export class Animator {
     this.fallK = 0;
     this.diveK = 0;
     this.fallX = 0; this.fallZ = 1;
+    // Football pose for real models (see model3d.poseLimbs), eased toward each frame's target.
+    this.fb = { crouch: 0, lean: 0, armsFwd: 0, down: 0, reach: 0, carry: 0, throwArm: 0, twist: 0 };
+    this.lastSpeed = 0;
+    this.accel = 0;
   }
 
   setFigure(fig) { this.fig = fig; }
@@ -65,13 +69,13 @@ export class Animator {
     // stance: down in a three-point stance on the line, set elsewhere
     p = L.stance; p.fill(0);
     const st = s.stance;
-    const lean = st === 'line' ? 0.5 : st === 'qb' ? 0.05 : st === 'back' ? 0.24 : 0.2;
+    const lean = st === 'line' ? 0.5 : st === 'qbUnder' ? 0.3 : st === 'qb' ? 0.05 : st === 'back' ? 0.24 : 0.2;
     p[PITCH] = lean;
     p[bi.legL] = -lean * 0.8; p[bi.legR] = -lean * 0.8;
     p[bi.legL + 2] = 0.12; p[bi.legR + 2] = -0.12;
     p[bi.head] = -lean * 0.7;
     if (st === 'line') { p[bi.armR] = -1.1; p[bi.armL] = -0.6; p[bi.armL + 2] = 0.2; }
-    else if (st === 'qb') { p[bi.armL] = -0.55; p[bi.armR] = -0.55; }
+    else if (st === 'qb' || st === 'qbUnder') { p[bi.armL] = st === 'qbUnder' ? -1.0 : -0.55; p[bi.armR] = st === 'qbUnder' ? -1.0 : -0.55; }
     else { p[bi.armL] = -0.35; p[bi.armR] = -0.35; p[bi.armL + 2] = 0.15; p[bi.armR + 2] = -0.15; }
     p[bi.chest] = Math.sin(t * 2.4) * 0.02;
     // run / sprint
@@ -165,8 +169,51 @@ export class Animator {
     }
     if (s.spin != null) o[YAW] = s.spin;
 
+    this.football(dt, s, t);
     this.apply(o);
     return o;
+  }
+
+  // The football pose a real model's skeleton is bent into this frame: stance by position
+  // before the snap, the lean of a runner (more while accelerating), a blocker's crouch with
+  // arms locked out (leaning back when he is losing), the ball tucked or cocked by the ear,
+  // the throw, reaching for the ball, laying out and celebrating.
+  football(dt, s, t) {
+    const sp = s.speed;
+    this.accel += ((sp - this.lastSpeed) / Math.max(dt, 1e-3) - this.accel) * (1 - Math.exp(-dt * 8));
+    this.lastSpeed = sp;
+    const sf = s.top > 0 ? clamp(sp / s.top, 0, 1.2) : 0;
+    const T = { crouch: 0, lean: 0, armsFwd: 0, down: 0, reach: 0, carry: 0, throwArm: 0, twist: 0 };
+    if (s.engaged) {
+      const push = Math.sin(t * 9 + this.gait) * 0.12;
+      T.crouch = 0.6; T.lean = (s.pushBack ? 0.15 : 0.55) + push * 0.3; T.armsFwd = 1 + push;
+    } else if (sp > 0.7) {
+      T.lean = (s.backpedal ? -0.05 : 0.1 + 0.25 * Math.min(1, sf)) + clamp(this.accel * 0.025, 0, 0.25);
+      T.crouch = s.backpedal ? 0.35 : 0.12;
+      T.armsFwd = s.backpedal ? 0.25 : 0;
+    } else if (s.mode === 'pre' && s.set) {
+      const P = {
+        line: [0.85, 0.6, 0.15, 1], qbUnder: [0.55, 0.35, 0.75, 0], qb: [0.22, 0.08, 0.4, 0],
+        back: [0.5, 0.35, 0.25, 0], skill: [0.35, 0.3, 0.15, 0], db: [0.42, 0.25, 0.2, 0],
+      }[s.stance] ?? [0.1, 0, 0, 0];
+      [T.crouch, T.lean, T.armsFwd, T.down] = P;
+    } else if (s.mode === 'live') { T.crouch = 0.2; T.lean = 0.1; T.armsFwd = 0.15; }
+    if (s.carrier && !s.qbHold) T.carry = 1;
+    if (s.qbHold) { T.throwArm = -3.3; T.armsFwd = Math.max(T.armsFwd, 0.3); T.twist = -0.25; T.carry = 0; }
+    if (s.throwU != null && s.throwU < 1) {
+      const u = s.throwU;
+      // Cocked, whipped through by a third of the way, then the follow-through.
+      T.throwArm = u < 0.3 ? -3.3 + (u / 0.3) * 2.2 : -1.1 + (u - 0.3) * 0.6;
+      T.twist = u < 0.3 ? -0.25 + (u / 0.3) * 0.65 : 0.4 - (u - 0.3) * 0.3;
+      T.lean = 0.15 + Math.sin(Math.min(1, u * 2) * Math.PI) * 0.15; T.carry = 0;
+    }
+    if (s.reach) { T.reach = s.reach; T.armsFwd = Math.max(T.armsFwd, s.reach * 0.5); }
+    if (s.dive) { T.lean = Math.max(T.lean, 0.7 * s.dive); T.armsFwd = Math.max(T.armsFwd, s.dive); }
+    if (s.truck) { T.lean = Math.max(T.lean, 0.55 * s.truck); T.crouch = Math.max(T.crouch, 0.4 * s.truck); }
+    if (s.celebrate) { T.reach = s.celebrate; T.lean = -0.1; }
+    if (this.fallK > 0.3) { T.armsFwd = 0.6; T.crouch = 0; }
+    const k = 1 - Math.exp(-dt * 10), kThrow = 1 - Math.exp(-dt * 30);
+    for (const key of Object.keys(T)) this.fb[key] += (T[key] - this.fb[key]) * (key === 'throwArm' || key === 'twist' ? kThrow : k);
   }
 
   apply(o) {
@@ -175,10 +222,16 @@ export class Animator {
       // Real models animate their own skeleton from clips; the whole body still leans into
       // runs and cuts, bobs, hops, dives and goes down the way it was hit. Lean from the base
       // layers is softened so a full model does not tip over in a stance.
+      // Rigs bend at the spine and knees (poseLimbs), so their whole body leans less;
+      // models without a skeleton can only lean as one piece, so they lean more.
       const hard = Math.max(clamp(this.fallK, 0, 1), this.diveK);
-      const k = 0.35 + 0.65 * hard;
-      f.pivot.rotation.set(o[PITCH] * k, 0, o[ROLL] * k, 'XZY');
-      f.pivot.position.y = Math.max(0, o[LIFT]);
+      const soft = f.rig ? 0.2 : 0.55;
+      const k = soft + (1 - soft) * hard;
+      const pitch = o[PITCH] * k + (f.rig ? 0 : clamp(this.fb.lean - o[PITCH] * 0.3, -0.2, 0.35) * (1 - hard));
+      f.pivot.rotation.set(pitch, f.rig ? 0 : this.fb.twist * 0.8, o[ROLL] * k, 'XZY');
+      // A crouch lowers the hips, so the feet stay on the turf.
+      const c = this.fb.crouch, drop = f.rig ? (f.hipH ?? 0) * (1 - 0.5 * (Math.cos(0.55 * c) + Math.cos(0.3 * c))) : 0;
+      f.pivot.position.y = Math.max(0, o[LIFT]) - drop;
       return;
     }
     if (!f?.bones) return;
