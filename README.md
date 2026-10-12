@@ -101,6 +101,6 @@ Gen 1–5 use the animated Black/White GIFs; later Pokémon use the static pixel
 
 Last run over 4,000 simulated games: 23.4 points per team, 61.7% completions, 6.8 yards per pass attempt, 4.3 yards per carry, 4.6% sack rate and 3.4% interception rate.
 
-Live plays with every Pokémon on autopilot now land in the same range (about 24 points per team, 61% completions, 6.9 yards per attempt, 3.7 yards per carry, 4.7% sacks). Deep defenders keep their cushion, pursuers close on the ball and long runs tire the carrier, so only a truly faster player breaks away.
+Live plays with every Pokémon on autopilot land in the same range (about 23 points per team, 60% completions, 7.2 yards per attempt, 3.6 yards per carry, 3.7% sacks, 3% interceptions) with the formations, body-size spacing and new attributes in place. Deep defenders keep their cushion, pursuers close on the ball and long runs tire the carrier, so only a truly faster player breaks away.
 
 Pokémon data comes from [PokéAPI](https://pokeapi.co); the pixel sprites come from [PokeAPI/sprites](https://github.com/PokeAPI/sprites). The 3D field uses [three.js](https://threejs.org). Pokémon is © Nintendo, Creatures Inc. and GAME FREAK inc. This is an unofficial fan project.
