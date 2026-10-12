@@ -124,7 +124,7 @@ function makePlayer(g, ti, side, slot, id, lp) {
     rush: eff(g, ti, id, 'rush'), cov: eff(g, ti, id, 'cov'), tkl: eff(g, ti, id, 'tkl'), hnd: eff(g, ti, id, 'hnd'),
     acc: eff(g, ti, id, 'acc', { deep: lp.depth === 'deep' }), arm: eff(g, ti, id, 'arm'),
     strBT: eff(g, ti, id, 'str', { breakTackle: true }), hndC: eff(g, ti, id, 'hnd', { contested: true }),
-    acl: eff(g, ti, id, 'acl'), agi: eff(g, ti, id, 'agi'), awr: eff(g, ti, id, 'awr'),
+    acl: eff(g, ti, id, 'acl'), agi: eff(g, ti, id, 'agi'), awr: eff(g, ti, id, 'awr'), sta: eff(g, ti, id, 'sta'),
   };
   const P = PLAYERS[id];
   const B = bodyOf(id);
@@ -580,7 +580,7 @@ function actionOf(lp, p, sp) {
   if (Math.abs(p.turnRate) > 3.2 && sp > 1.5) return 'TURN';
   if (p.acl < -4) return 'DECEL';
   if (p.acl > 3 && sp < p.top * 0.8) return 'ACCEL';
-  return sp > p.top * 0.86 ? 'SPRINT' : 'RUN';
+  return p.sprinting || sp > p.top * 0.92 ? 'SPRINT' : 'RUN';
 }
 
 // Events drive the HUD and the 3D animations: `who` is the player doing it, `other` the one
@@ -693,8 +693,8 @@ function think(lp, p) {
 
 function manualWant(lp, p) {
   const i = p.input ?? { mx: 0, my: 0 };
-  const sprint = i.sprint ? 1 : 0.88;
-  p.want = { vx: i.mx * p.top * sprint, vy: i.my * p.top * sprint };
+  // Full stick; move() decides the pace (a jog, or the sprint burst while Shift is down).
+  p.want = { vx: i.mx * p.top * 1.2, vy: i.my * p.top * 1.2 };
 }
 
 function seek(p, pt, frac = 1, arrive = 1.2) {
@@ -1203,11 +1203,22 @@ function move(lp, p, dt) {
   // A spin keeps the line but bleeds a little speed; a truck drives straight ahead.
   if (p.spin > 0) { top *= 0.86; const l = len(vx, vy) || 1; vx += (-vy / l) * p.spinDir * 1.2; vy += (vx / l) * p.spinDir * 1.2; }
   if (p.truck > 0) top *= 0.94;
+  // The player you control jogs at 86% of top speed; Shift is a sprint burst to 110% with a
+  // harder first step, for about three seconds (longer with Stamina) before it needs to
+  // recover. The burst refills while jogging or standing.
+  let boost = p.juke > 0 ? 2.2 : p.truck > 0 ? 1.6 : 1;
+  p.sprinting = false;
+  if (p === lp.control && lp.manual) {
+    const i = p.input ?? {};
+    p.sprinting = !!i.sprint && p.burst > 0.02 && len(i.mx ?? 0, i.my ?? 0) > 0.1;
+    if (p.sprinting) { top *= 1.1; boost = Math.max(boost, 1.4); p.burst = Math.max(0, p.burst - dt / (2.4 + (p.a.sta ?? 70) / 100)); }
+    else { top *= 0.86; p.burst = Math.min(1, p.burst + dt / 5); }
+  }
   p.slow = Math.max(0, p.slow - dt);
   if (!(p === lp.control && lp.manual) && !p.carrier) [vx, vy] = steer(lp, p, vx, vy);
   // Routes and pursuit bend along the sideline instead of running out over it.
   if (!p.carrier && Math.abs(p.y) > SIDE - 1.5 && vy * p.y > 0) vy *= clamp((SIDE + 0.5 - Math.abs(p.y)) / 2, 0, 1);
-  kin(p, vx, vy, top, dt, p.juke > 0 ? 2.2 : p.truck > 0 ? 1.6 : 1);
+  kin(p, vx, vy, top, dt, boost);
 }
 
 // Steering around bodies in the way: anyone (but the player this one is going after) a little
@@ -1517,10 +1528,10 @@ function windup(lp) {
 // Where the ball leaves the passer's hand: in front of his throwing shoulder, near the top of
 // his body (lower for a short Pokémon).
 export function releasePoint(qb) {
-  return { x: qb.x + qb.fx * (qb.r + 0.1) + qb.fy * 0.22, y: qb.y + qb.fy * (qb.r + 0.1) - qb.fx * 0.22, z: clamp(qb.h * 0.82, 1.1, 2.6) };
+  return { x: qb.x + qb.fx * (qb.r + 0.1) + qb.fy * 0.22, y: qb.y + qb.fy * (qb.r + 0.1) - qb.fx * 0.22, z: clamp(qb.h * 0.82, 1.1, 3.4) };
 }
 // The height a receiver catches the ball at.
-export function catchHeight(p) { return clamp(p.h * 0.6, 0.9, 2.0); }
+export function catchHeight(p) { return clamp(p.h * 0.6, 0.9, 2.6); }
 
 function release(lp, r, away) {
   const g = lp.g, qb = lp.off.QB;

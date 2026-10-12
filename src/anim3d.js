@@ -35,6 +35,8 @@ export class Animator {
     this.fb = { crouch: 0, lean: 0, armsFwd: 0, down: 0, reach: 0, carry: 0, throwArm: 0, twist: 0 };
     this.lastSpeed = 0;
     this.accel = 0;
+    this.sprK = 0; // eased 0..1 while sprinting
+    this.moving = false;
   }
 
   setFigure(fig) { this.fig = fig; }
@@ -45,8 +47,13 @@ export class Animator {
     const t = this.t;
     const H = s.height;
     const sf = s.top > 0 ? clamp(s.speed / s.top, 0, 1.2) : 0;
+    this.sprK += ((s.sprint ? 1 : 0) - this.sprK) * (1 - Math.exp(-dt * 6));
+    const spr = this.sprK;
+    this.H = H; this.sf = sf;
     // ----- locomotion targets -----
-    const moving = s.speed > 0.7;
+    // Start running above 0.9 yd/s, stop below 0.5, so a player easing around 0.7 does not
+    // flicker between the run and the stand.
+    const moving = this.moving = s.speed > (this.moving ? 0.5 : 0.9);
     const target = { idle: 0, stance: 0, run: 0, block: 0 };
     if (s.engaged) target.block = 1;
     else if (moving) target.run = 1;
@@ -54,8 +61,9 @@ export class Animator {
     else target.idle = 1;
     let sum = 0;
     for (const k of BASE) { this.w[k] += (target[k] - this.w[k]) * (1 - Math.exp(-dt * FADE)); sum += this.w[k]; }
-    // Stride: one full cycle every two steps, a step about half the body height.
-    const stride = Math.max(0.45, H * 0.55);
+    // Stride: one full cycle every two steps, a step about half the body height (longer in a
+    // sprint, so the legs reach out instead of only spinning faster).
+    const stride = Math.max(0.45, H * (0.55 + 0.15 * spr));
     this.gait += dt * (moving ? s.speed / stride : s.engaged ? 3.2 : 0) * Math.PI * 0.5;
     const ph = this.gait;
 
@@ -80,18 +88,19 @@ export class Animator {
     p[bi.chest] = Math.sin(t * 2.4) * 0.02;
     // run / sprint
     p = L.run; p.fill(0);
-    const A = 0.3 + 0.5 * Math.min(1, sf);
+    const A = 0.3 + 0.5 * Math.min(1, sf) + 0.3 * spr;
     const sn = Math.sin(ph), cs = Math.cos(ph);
     p[bi.legL] = -A * sn; p[bi.legR] = A * sn;
-    p[bi.armL] = A * 0.85 * sn; p[bi.armR] = -A * 0.85 * sn;
+    // Sprinting: arms pump hard, elbows driving back.
+    p[bi.armL] = A * (0.85 + 0.4 * spr) * sn; p[bi.armR] = -A * (0.85 + 0.4 * spr) * sn;
     p[bi.armL + 2] = 0.12; p[bi.armR + 2] = -0.12;
     p[bi.chest + 1] = 0.14 * sn * Math.min(1, sf);
     p[bi.head + 1] = -0.08 * sn;
-    const runLean = 0.08 + 0.24 * Math.min(1, sf) + (s.backpedal ? -0.32 : 0);
+    const runLean = 0.08 + 0.24 * Math.min(1, sf) + 0.2 * spr + (s.backpedal ? -0.32 : 0);
     p[PITCH] = runLean;
     p[bi.legL] -= runLean * 0.6; p[bi.legR] -= runLean * 0.6;
     p[bi.head] = -runLean * 0.6;
-    p[LIFT] = Math.abs(cs) * H * (0.025 + 0.035 * Math.min(1, sf));
+    p[LIFT] = Math.abs(cs) * H * (0.025 + 0.035 * Math.min(1, sf) + 0.03 * spr);
     // Short-legged Pokémon waddle.
     p[ROLL] = sn * (s.shortLegs ? 0.1 : 0.035) * Math.min(1, sf + 0.3);
     // block: leaning in, arms locked out, feet churning
@@ -198,8 +207,8 @@ export class Animator {
       const push = Math.sin(t * 9 + this.gait) * 0.12;
       T.crouch = 0.6; T.lean = (s.pushBack ? 0.15 : 0.55) + push * 0.3; T.armsFwd = 1 + push;
     } else if (sp > 0.7) {
-      T.lean = (s.backpedal ? -0.05 : 0.1 + 0.25 * Math.min(1, sf)) + clamp(this.accel * 0.025, 0, 0.25);
-      T.crouch = s.backpedal ? 0.35 : 0.12;
+      T.lean = (s.backpedal ? -0.05 : 0.1 + 0.25 * Math.min(1, sf) + 0.25 * this.sprK) + clamp(this.accel * 0.025, 0, 0.25);
+      T.crouch = s.backpedal ? 0.35 : 0.12 + 0.12 * this.sprK;
       T.armsFwd = s.backpedal ? 0.25 : 0;
     } else if (s.mode === 'pre' && s.set) {
       const P = {
@@ -237,11 +246,22 @@ export class Animator {
       const hard = Math.max(clamp(this.fallK, 0, 1), this.diveK);
       const soft = f.rig ? 0.2 : 0.55;
       const k = soft + (1 - soft) * hard;
-      const pitch = o[PITCH] * k + (f.rig ? 0 : clamp(this.fb.lean - o[PITCH] * 0.3, -0.2, 0.35) * (1 - hard));
-      f.pivot.rotation.set(pitch, f.rig ? 0 : this.fb.twist * 0.8, o[ROLL] * k, 'XZY');
+      // Models with no legs to stride (no skeleton, or none the rig could find) and no run
+      // clip would glide: they bound instead, one hop a step with a forward rock and a
+      // side-to-side waddle, squashing as they land and stretching as they push off.
+      const clipRun = f.cur && (f.cur === f.actions.run || f.cur === f.actions.walk);
+      const m = (!f.rig?.legs && !clipRun ? this.w.run : 0) * (1 - hard);
+      const H = this.H ?? 2, sf = Math.min(1, this.sf ?? 0), ph = this.gait, hs = Math.abs(Math.sin(ph));
+      const hop = m * hs * H * (0.05 + 0.06 * sf + 0.04 * this.sprK);
+      const pitch = o[PITCH] * k + (f.rig ? 0 : clamp(this.fb.lean - o[PITCH] * 0.3, -0.2, 0.35) * (1 - hard)) + m * Math.sin(ph * 2) * 0.08;
+      f.pivot.rotation.set(pitch, f.rig ? 0 : this.fb.twist * 0.8, o[ROLL] * k + m * Math.sin(ph) * 0.1, 'XZY');
       // A crouch lowers the hips, so the feet stay on the turf.
       const c = this.fb.crouch, drop = f.rig ? (f.hipH ?? 0) * (1 - 0.5 * (Math.cos(0.55 * c) + Math.cos(0.3 * c))) : 0;
-      f.pivot.position.y = Math.max(0, o[LIFT]) - drop;
+      f.pivot.position.y = Math.max(0, o[LIFT]) - drop + hop;
+      // Breathing while standing, squash and stretch while bounding.
+      const still = this.w.idle + this.w.stance;
+      const sy = 1 + Math.sin(this.t * 2.3) * 0.018 * still * (1 - hard) + m * (hs - 0.55) * 0.12;
+      f.pivot.scale.set(1 / Math.sqrt(sy), sy, 1 / Math.sqrt(sy));
       return;
     }
     if (!f?.bones) return;
