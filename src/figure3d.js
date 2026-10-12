@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { SPRITES } from './sprites.js';
 import { SPRITE_INDEX } from './sprites3d.js';
 import { PLAYERS } from './ratings.js';
-import { bodyOf } from './body.js';
+import { bodyOf, fitScale } from './body.js';
 
 const DEPTH = 0.78; // front-to-back thickness relative to a round cross-section
 export const BONES = ['root', 'hips', 'chest', 'head', 'armL', 'armR', 'legL', 'legR'];
@@ -296,9 +296,7 @@ async function build(T, strip) {
     const { geometry, maxZ } = buildGeometry(front, back, A);
     const B = bodyOf(id);
     // Species height in yards, then shrunk if needed so the body fits its footprint.
-    let s = B.height / front.h;
-    const maxW = Math.max(B.r * 2 * 1.3, 1.15);
-    if (A.width * s > maxW) s = maxW / A.width;
+    const s = fitScale(B, A.width, front.h, maxZ * 2);
     const old = T.geometry;
     Object.assign(T, {
       ready: true, geometry, rig: A, px: front.h, scale: s, height: front.h * s, width: A.width * s, depth: maxZ * 2 * s,

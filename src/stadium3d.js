@@ -45,11 +45,11 @@ export class Stadium {
   }
 
   buildLights() {
-    this.hemi = new THREE.HemisphereLight('#e6f0ff', '#4d6b3a', 1.15);
+    this.hemi = new THREE.HemisphereLight('#eef4ff', '#55714a', 1.35);
     this.scene.add(this.hemi);
     // The main stadium light: high, off to one side, casting soft shadows. Its shadow box
     // follows the play (see follow()).
-    const sun = new THREE.DirectionalLight('#fff4e0', 2.4);
+    const sun = new THREE.DirectionalLight('#fff6e8', 2.1);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     const c = sun.shadow.camera;
@@ -61,7 +61,7 @@ export class Stadium {
     this.sunOffset = new THREE.Vector3(-26, 58, 34);
     this.scene.add(sun, sun.target);
     // Cool fill from the opposite stands so the shadow side never goes black.
-    const fill = new THREE.DirectionalLight('#cfe0ff', 0.55);
+    const fill = new THREE.DirectionalLight('#dbe7ff', 0.75);
     fill.position.set(80, 40, -60);
     this.scene.add(fill);
     this.fill = fill;
@@ -79,7 +79,7 @@ export class Stadium {
     ground.rotation.x = -Math.PI / 2; ground.position.set(50, -0.6, 0);
     this.root.add(ground);
     // Sideline apron out to the wall: slightly darker turf.
-    const apronTex = noiseTexture('#2f6f3c', 18, 256);
+    const apronTex = noiseTexture('#2f6f3c', 5, 256);
     apronTex.repeat.set(30, 16);
     const apron = new THREE.Mesh(new THREE.PlaneGeometry(WALL_X1 - WALL_X0, WALL_Z * 2), new THREE.MeshStandardMaterial({ map: apronTex, roughness: 0.95 }));
     apron.rotation.x = -Math.PI / 2; apron.position.set((WALL_X0 + WALL_X1) / 2, -0.01, 0);
@@ -148,9 +148,10 @@ export class Stadium {
     const c = this.fieldCanvas, x = c.getContext('2d');
     const W = c.width, H = c.height;
     const X = (yd) => (yd + 10) * PX, Y = (z) => (z + HALF_W) * PX;
-    // Mowing stripes every five yards, then grain.
-    for (let i = 0; i < 24; i++) { x.fillStyle = i % 2 ? '#3d8c47' : '#347f3f'; x.fillRect(i * 5 * PX, 0, 5 * PX, H); }
-    grain(x, W, H, 14);
+    // Clean turf: soft mowing stripes every five yards and only a whisper of grain, so the
+    // lines and the players read first.
+    for (let i = 0; i < 24; i++) { x.fillStyle = i % 2 ? '#3b8a46' : '#357f40'; x.fillRect(i * 5 * PX, 0, 5 * PX, H); }
+    grain(x, W, H, 4, false);
     // End zones
     const ez = (left, team) => {
       const x0 = left ? 0 : X(100);
@@ -171,26 +172,26 @@ export class Stadium {
     };
     ez(true, teams[0]); ez(false, teams[1]);
     // Lines
-    x.fillStyle = 'rgba(250,252,248,0.95)';
+    x.fillStyle = 'rgba(252,253,250,0.97)';
     const vline = (yd, w) => x.fillRect(X(yd) - (w * PX) / 2, PX * 0.15, w * PX, H - PX * 0.3);
-    vline(0, 0.24); vline(100, 0.24);
-    for (let yd = 5; yd < 100; yd += 5) vline(yd, 0.13);
+    vline(0, 0.3); vline(100, 0.3);
+    for (let yd = 5; yd < 100; yd += 5) vline(yd, yd % 10 ? 0.15 : 0.2);
     // Hash marks: inbound lines and along the sidelines, every yard.
     for (let yd = 1; yd < 100; yd++) {
       if (yd % 5 === 0) continue;
-      for (const [a, b] of [[-HALF_W + 0.15, -HALF_W + 0.85], [-3.75, -3.08], [3.08, 3.75], [HALF_W - 0.85, HALF_W - 0.15]]) x.fillRect(X(yd) - 0.06 * PX, Y(a), 0.12 * PX, (b - a) * PX);
+      for (const [a, b] of [[-HALF_W + 0.15, -HALF_W + 0.85], [-3.75, -3.08], [3.08, 3.75], [HALF_W - 0.85, HALF_W - 0.15]]) x.fillRect(X(yd) - 0.07 * PX, Y(a), 0.14 * PX, (b - a) * PX);
     }
     // Two-point lines
     for (const yd of [2, 98]) x.fillRect(X(yd) - 0.06 * PX, Y(-0.5), 0.12 * PX, PX);
     // Yard numbers with direction arrows, readable from each sideline.
-    x.font = `700 ${PX * 2.3}px "Barlow Condensed", "Arial Narrow", Arial, sans-serif`;
+    x.font = `700 ${PX * 2.6}px "Barlow Condensed", "Arial Narrow", Arial, sans-serif`;
     x.textAlign = 'center'; x.textBaseline = 'middle';
     for (let yd = 10; yd <= 90; yd += 10) {
       const n = String(yd <= 50 ? yd : 100 - yd);
       for (const [z, rot] of [[-HALF_W + 8, Math.PI], [HALF_W - 8, 0]]) {
         x.save(); x.translate(X(yd), Y(z)); x.rotate(rot);
-        x.fillStyle = 'rgba(250,252,248,0.92)';
-        x.fillText(n[0], -PX * 0.95, 0); x.fillText(n[1], PX * 0.95, 0);
+        x.fillStyle = 'rgba(252,253,250,0.95)';
+        x.fillText(n[0], -PX * 1.0, 0); x.fillText(n[1], PX * 1.0, 0);
         if (yd !== 50) {
           // Arrow toward the nearer goal line.
           const toLeft = yd < 50, s = (toLeft ? -1 : 1) * (rot ? -1 : 1);
@@ -199,11 +200,11 @@ export class Stadium {
         x.restore();
       }
     }
-    // Midfield logo: a Poké Ball.
-    x.save(); x.translate(X(50), H / 2); x.globalAlpha = 0.88;
-    const R = PX * 4.2;
+    // Midfield logo: a small, faint Poké Ball, a mark on the turf rather than a billboard.
+    x.save(); x.translate(X(50), H / 2); x.globalAlpha = 0.32;
+    const R = PX * 2.6;
     x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.fillStyle = '#f2f4ee'; x.fill();
-    x.beginPath(); x.arc(0, 0, R, Math.PI, Math.PI * 2); x.fillStyle = '#e5402b'; x.fill();
+    x.beginPath(); x.arc(0, 0, R, Math.PI, Math.PI * 2); x.fillStyle = '#c9543f'; x.fill();
     x.fillStyle = '#16221b'; x.fillRect(-R, -PX * 0.35, R * 2, PX * 0.7);
     x.beginPath(); x.arc(0, 0, PX * 1.35, 0, Math.PI * 2); x.fill();
     x.beginPath(); x.arc(0, 0, PX * 0.85, 0, Math.PI * 2); x.fillStyle = '#f2f4ee'; x.fill();
@@ -292,17 +293,16 @@ export class Stadium {
   buildCrowd(ext) {
     // One instance per fan: a body and a head, bobbing in a vertex shader so the crowd costs
     // nothing on the CPU. Fans leave a few empty seats.
-    const body = new THREE.BoxGeometry(0.46, 0.62, 0.34).translate(0, 0.31, 0);
-    const head = new THREE.BoxGeometry(0.28, 0.28, 0.28).translate(0, 0.78, 0);
-    const geo = mergeGeometries([body, head]);
+    // One simple block per fan (the stands are background), spaced a little wider.
+    const geo = new THREE.BoxGeometry(0.5, 0.85, 0.36).translate(0, 0.42, 0);
     const spots = [];
     let seed = 7;
     const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
     const row = (x0, x1, z0, outward, alongX) => {
       for (let r = 0; r < ROWS; r++) {
         const y = DECK_Y + r * ROW_H, d = (r + 0.5) * ROW_D + 0.6;
-        for (let s = x0 + 0.4; s < x1; s += 0.72) {
-          if (rnd() < 0.1) continue;
+        for (let s = x0 + 0.4; s < x1; s += 0.9) {
+          if (rnd() < 0.12) continue;
           const jitter = (rnd() - 0.5) * 0.18;
           if (alongX) spots.push([s + jitter, y, z0 + outward * d, outward > 0 ? Math.PI : 0]);
           else spots.push([z0 + outward * d, y, s + jitter, outward > 0 ? -Math.PI / 2 : Math.PI / 2]);
@@ -320,9 +320,8 @@ export class Stadium {
       sh.vertexShader = 'uniform float time; uniform float excite;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
         float ph = fract(sin(float(gl_InstanceID) * 12.9898) * 43758.5453);
         float sp = 2.0 + ph * 3.0;
-        float bob = max(0.0, sin(time * sp + ph * 40.0)) * (0.03 + excite * 0.35);
-        transformed.y += bob;
-        if (transformed.y > 0.5 && excite > 0.2) transformed.y += excite * 0.12 * (0.5 + 0.5 * sin(time * 9.0 + ph * 20.0));`);
+        float bob = max(0.0, sin(time * sp + ph * 40.0)) * excite * 0.35;
+        transformed.y += bob;`);
     };
     const mesh = new THREE.InstancedMesh(geo, mat, spots.length);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
@@ -345,10 +344,11 @@ export class Stadium {
     const n = this.crowd.count;
     for (let i = 0; i < n; i++) {
       const r = this.crowdSeed[i];
-      // Home fans fill most of the bowl, the visitors a block of it.
+      // Clear team sections: the home fans hold the near sideline and their end zone, the
+      // visitors half of the far sideline and the other end.
       const p = this.crowd.instanceMatrix.array[i * 16 + 12], z = this.crowd.instanceMatrix.array[i * 16 + 14];
-      const awayBlock = z > 0 && p > 70;
-      if (r < 0.72) c.copy(cols[awayBlock ? 1 : 0]); else c.copy(neutral[Math.floor(r * 100) % neutral.length]);
+      const away = p > 100 || (p >= 0 && z > 0 && p > 50);
+      if (r < 0.82) c.copy(cols[away ? 1 : 0]); else c.copy(neutral[Math.floor(r * 100) % neutral.length]);
       c.offsetHSL(0, -0.05, (this.crowdSeed[(i * 7) % n] - 0.5) * 0.18);
       this.crowd.setColorAt(i, c);
     }
@@ -427,18 +427,20 @@ export class Stadium {
     if (this.weather?.obj) { this.scene.remove(this.weather.obj); this.weather.obj.geometry.dispose(); this.weather.obj.material.dispose(); }
     this.weather = { kind: want };
     const look = {
-      clear: ['#3f7fc8', '#cfe5f5', 1.15, 2.4, '#fff4e0', 120, 420],
-      sun: ['#2f78d0', '#ffe9c2', 1.25, 2.9, '#ffe2b0', 140, 460],
-      rain: ['#5b6675', '#9aa6b3', 0.95, 1.2, '#dfe6f0', 50, 230],
-      hail: ['#7e8fa3', '#d6e0ea', 1.05, 1.4, '#eef4ff', 60, 260],
-      sand: ['#b39468', '#e3c99a', 1.0, 1.7, '#ffe0b0', 40, 210],
+      clear: ['#3f7fc8', '#cfe5f5', 1.35, 2.1, '#fff6e8', 120, 420],
+      sun: ['#2f78d0', '#ffe9c2', 1.4, 2.5, '#ffe2b0', 140, 460],
+      rain: ['#5b6675', '#9aa6b3', 1.15, 1.2, '#dfe6f0', 70, 260],
+      hail: ['#7e8fa3', '#d6e0ea', 1.25, 1.4, '#eef4ff', 80, 300],
+      sand: ['#b39468', '#e3c99a', 1.2, 1.6, '#ffe0b0', 70, 260],
     }[want] ?? null;
-    const [top, hor, hemi, sun, sunCol, f0, f1] = look ?? ['#3f7fc8', '#cfe5f5', 1.15, 2.4, '#fff4e0', 120, 420];
+    const [top, hor, hemi, sun, sunCol, f0, f1] = look ?? ['#3f7fc8', '#cfe5f5', 1.35, 2.1, '#fff6e8', 120, 420];
     this.skyUni.top.value.set(top); this.skyUni.horizon.value.set(hor);
     this.scene.fog.color.set(hor); this.scene.fog.near = f0; this.scene.fog.far = f1;
     this.hemi.intensity = hemi; this.sun.intensity = sun; this.sun.color.set(sunCol);
     if (want === 'rain' || want === 'hail' || want === 'sand') {
-      const N = want === 'rain' ? 5000 : want === 'hail' ? 2600 : 3400;
+      // Only weather draws particles, and they are soft round flecks, not squares: thin rain
+      // streaks, small hailstones, a light drift of sand low over the turf.
+      const N = want === 'rain' ? 3000 : want === 'hail' ? 1200 : 900;
       const rain = want === 'rain';
       const pos = new Float32Array(N * (rain ? 6 : 3));
       const seeds = new Float32Array(N * 3);
@@ -446,8 +448,8 @@ export class Stadium {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       const obj = rain
-        ? new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#c7d3e0', transparent: true, opacity: 0.45, depthWrite: false }))
-        : new THREE.Points(g, new THREE.PointsMaterial({ color: want === 'sand' ? '#d9b77d' : '#f2f7ff', size: want === 'sand' ? 0.16 : 0.22, transparent: true, opacity: want === 'sand' ? 0.55 : 0.9, depthWrite: false }));
+        ? new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#c7d3e0', transparent: true, opacity: 0.3, depthWrite: false }))
+        : new THREE.Points(g, new THREE.PointsMaterial({ map: dotTexture(), color: want === 'sand' ? '#d9b77d' : '#f2f7ff', size: want === 'sand' ? 0.12 : 0.16, transparent: true, opacity: want === 'sand' ? 0.35 : 0.75, depthWrite: false }));
       obj.frustumCulled = false;
       this.scene.add(obj);
       Object.assign(this.weather, { obj, seeds, N, rain });
@@ -486,7 +488,7 @@ export class Stadium {
 }
 
 // ---------- textures ----------
-function grain(x, W, H, amt) {
+function grain(x, W, H, amt, blades = true) {
   const img = x.getImageData(0, 0, W, H), d = img.data;
   let s = 1234567;
   for (let i = 0; i < d.length; i += 4) {
@@ -496,9 +498,21 @@ function grain(x, W, H, amt) {
   }
   // Blades: short darker streaks along the field.
   x.putImageData(img, 0, 0);
+  if (!blades) return;
   x.globalAlpha = 0.06; x.fillStyle = '#0d2412';
   for (let k = 0; k < 9000; k++) { s = (s * 1103515245 + 12345) & 0x7fffffff; const px = s % W; s = (s * 1103515245 + 12345) & 0x7fffffff; const py = s % H; x.fillRect(px, py, 6, 1); }
   x.globalAlpha = 1;
+}
+
+let dotTex = null;
+function dotTexture() {
+  if (dotTex) return dotTex;
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const x = c.getContext('2d'); const g = x.createRadialGradient(16, 16, 1, 16, 16, 15);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.6, 'rgba(255,255,255,0.6)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 32, 32);
+  dotTex = new THREE.CanvasTexture(c);
+  return dotTex;
 }
 
 function fitText(x, text, maxW) {

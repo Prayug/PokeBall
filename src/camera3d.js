@@ -16,6 +16,13 @@ export const CAMERA_MODES = [
 
 const v = new THREE.Vector3();
 
+// The broadcast camera's calibration: how far back and how high it sits over the action,
+// how steeply it looks down, and its lens. Tuned so a full formation and the backfield fit
+// with the line in the middle third, and big linemen do not wall off the play. The debug
+// calibration panel edits these live.
+export const CAMERA_DEFAULTS = { distance: 21, height: 19, pitch: 39, fov: 40 };
+export const CAMERA_LIMITS = { distance: [12, 45], height: [6, 40], pitch: [15, 70], fov: [25, 70] };
+
 export class CameraRig {
   constructor(camera) {
     this.camera = camera;
@@ -27,6 +34,14 @@ export class CameraRig {
     this.zoom = 1; // extra pull-back for deep passes, eased
     this.shake = 0;
     this.fov = 42;
+    this.cal = { ...CAMERA_DEFAULTS };
+  }
+
+  setCalibration(c) {
+    for (const k of Object.keys(CAMERA_DEFAULTS)) {
+      const v = Number(c?.[k]);
+      if (Number.isFinite(v)) this.cal[k] = Math.min(CAMERA_LIMITS[k][1], Math.max(CAMERA_LIMITS[k][0], v));
+    }
   }
 
   setMode(m) { if (CAMERA_MODES.some(([k]) => k === m)) this.mode = m; }
@@ -60,11 +75,15 @@ export class CameraRig {
         break;
       }
       default: {
-        // Behind the offense, up high; pull back and up as the play spreads out.
-        const back = ((f.pre ? 17 : 15) + f.spread * 0.34) * z * (f.tight ? 0.86 : 1);
-        const high = ((f.pre ? 12.5 : 11) + f.spread * 0.22) * z * (f.tight ? 0.88 : 1);
+        // Behind the offense and above it, from the calibration; pulled back as the play
+        // spreads out and eased in a little on a dead ball.
+        const C = this.cal;
+        const k = z * (1 + Math.max(0, f.spread - 14) * 0.018) * (f.tight ? 0.88 : 1);
+        const back = C.distance * k, high = C.height * k;
+        // Where the view's center lands, ahead of the camera, from the pitch.
+        const ahead = high / Math.tan((C.pitch * Math.PI) / 180) - back;
         this.wantPos.set(fx - s * back, high, fz * 0.75);
-        this.wantLook.set(fx + s * (f.pre ? 1.5 : 4), 0, fz * 0.92);
+        this.wantLook.set(fx + s * ahead, 0, fz * 0.92);
       }
     }
   }
@@ -91,7 +110,7 @@ export class CameraRig {
       this.shake *= Math.exp(-dt * 9);
     }
     this.camera.lookAt(this.look);
-    const fov = this.mode === 'qb' ? 52 : this.mode === 'tactical' ? 38 : 42;
+    const fov = this.mode === 'qb' ? 52 : this.mode === 'tactical' ? 38 : this.mode === 'broadcast' ? this.cal.fov : 42;
     if (Math.abs(this.camera.fov - fov) > 0.01) { this.camera.fov += (fov - this.camera.fov) * (snap ? 1 : 1 - Math.exp(-dt * 3)); this.camera.updateProjectionMatrix(); }
   }
 

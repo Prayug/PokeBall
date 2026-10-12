@@ -6,7 +6,7 @@
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
 import { OFF_PLAYS, rand, randn, chance, clamp, sigmoid, eff, rep, has, nm, st, fumbleCheck } from './engine.js';
 import { WEATHER } from './types.js';
-import { bodyOf } from './body.js';
+import { bodyOf, FOOT_DEPTH, FOOT_SIDE } from './body.js';
 
 export const SIDE = 26.65;
 export const DT = 1 / 60;
@@ -90,11 +90,12 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
     }
   }
   alignOffense(lp);
-  alignLines(lp);
+  alignDefense(lp);
   setupDefense(lp);
-  setupOffense(lp);
   alignLines(lp);
+  setupOffense(lp);
   for (const p of lp.players) p.home = { x: p.x, y: p.y };
+  lp.formationIssues = validateFormation(lp);
   if (opts.from) walkIn(lp, opts.from);
   lp.ball.holder = lp.off.C ?? lp.off.QB;
   syncBall(lp);
@@ -138,7 +139,7 @@ function setupDefense(lp) {
   if (call === 'cover2') { if (D.FS) { D.FS.x = 14; D.FS.y = -12; } if (D.SS) { D.SS.x = 14; D.SS.y = 12; } }
   if (call === 'cover3') { if (D.FS) { D.FS.x = 15; D.FS.y = 0; } for (const k of ['CB1', 'CB2']) if (D[k]) D[k].x = 8; }
   if (call === 'prevent') for (const p of Object.values(D)) if (!['LE', 'DE', 'DT1', 'DT2'].includes(p.slot)) p.x += 6;
-  for (const p of Object.values(D)) p.x = Math.max(0.9, cap(p.x));
+  for (const p of Object.values(D)) p.x = Math.max(frontX(p), cap(p.x));
 
   const O = lp.off;
   const covR = (r, c) => {
@@ -174,8 +175,12 @@ function setupOffense(lp) {
   if (lp.kind === 'run') {
     const dir = play.dir;
     lp.carrier = dir === 'sneak' ? O.QB : O.RB;
-    lp.holeY = dir === 'outside' ? (chance(lp.g, 0.5) ? -9 : 9) : dir === 'sneak' ? 0 : (chance(lp.g, 0.5) ? -1.6 : 1.6);
-    if (dir === 'draw') lp.holeY = chance(lp.g, 0.5) ? -2.5 : 2.5;
+    // Inside runs hit the A or B gap between the actual linemen, outside runs the edge.
+    const gap = (a, b) => (O[a] && O[b] ? (O[a].y + O[b].y) / 2 : null);
+    const side = chance(lp.g, 0.5) ? -1 : 1;
+    const inside = (k) => (side < 0 ? gap(...[['LG', 'C'], ['LT', 'LG']][k]) : gap(...[['C', 'RG'], ['RG', 'RT']][k])) ?? side * (k ? 2.7 : 0.9);
+    lp.holeY = dir === 'outside' ? side * 9 : dir === 'sneak' ? 0 : inside(chance(lp.g, 0.55) ? 0 : 1);
+    if (dir === 'draw') lp.holeY = inside(1);
     // Each blocker takes the nearest defender in front of him.
     const bl = ['LT', 'LG', 'C', 'RG', 'RT', 'TE'].map((k) => O[k]).filter(Boolean);
     const df = ['LE', 'DE', 'DT1', 'DT2', 'OLB', 'MLB'].map((k) => lp.def[k]).filter(Boolean);
@@ -211,47 +216,74 @@ function setupOffense(lp) {
   lp.eligible = RECEIVERS.filter((k) => O[k] && O[k].role === 'route');
 }
 
-// Quarterback and back for the formation, and the offensive line spread so big bodies fit:
-// the center over the ball, guards and tackles outside him with a small split, the tight end
-// outside the tackle, everyone just behind the neutral zone.
+// ---------- formations ----------
+// Real football alignments, measured from the ball in yards. The neutral zone is the length of
+// the ball; each lineman sets his drawn body just behind his side of it, so the two lines face
+// each other across a visible gap. Linemen are spaced by their collision capsules plus a
+// split, so a Snorlax takes more of the line than a Pikachu but five linemen still span about
+// eight yards, not twenty. Seven offensive players are on the line (five linemen, the tight
+// end and the split end); the flanker and slot are a yard off it.
+export const NEUTRAL = 0.15;     // half the neutral zone
+const SPLIT = 0.4;               // gap between linemen's capsules
+const lineX = (p) => -(p.r * FOOT_DEPTH + NEUTRAL);   // offense, on the line
+const offX = (p) => lineX(p) - 1.1;                   // offense, a yard off the line
+const frontX = (p) => p.r * FOOT_DEPTH + NEUTRAL;      // defensive front
+
 function alignOffense(lp) {
   const O = lp.off, F = FORMATIONS[lp.formation];
   const C = O.C;
-  const off = (p) => -(p.r + 0.12);
-  if (C) { C.x = off(C); C.y = 0; }
+  if (C) { C.x = lineX(C); C.y = 0; }
   let yL = C ? -C.r : 0, yR = C ? C.r : 0;
   for (const [l, r] of [['LG', 'RG'], ['LT', 'RT']]) {
-    if (O[l]) { O[l].y = yL - 0.3 - O[l].r; O[l].x = off(O[l]); yL = O[l].y - O[l].r; }
-    if (O[r]) { O[r].y = yR + 0.3 + O[r].r; O[r].x = off(O[r]); yR = O[r].y + O[r].r; }
+    if (O[l]) { O[l].y = yL - SPLIT - O[l].r; O[l].x = lineX(O[l]); yL = O[l].y - O[l].r; }
+    if (O[r]) { O[r].y = yR + SPLIT + O[r].r; O[r].x = lineX(O[r]); yR = O[r].y + O[r].r; }
   }
-  if (O.TE) { O.TE.y = Math.max(SLOT.TE.y, yR + 0.7 + O.TE.r); O.TE.x = -(O.TE.r + 0.2); }
+  // Tight end attached outside the right tackle.
+  if (O.TE) { O.TE.y = yR + SPLIT + 0.25 + O.TE.r; O.TE.x = lineX(O.TE); yR = O.TE.y + O.TE.r; }
   if (O.QB) {
     if (F.QB) { O.QB.x = F.QB[0]; O.QB.y = F.QB[1]; }
-    else { O.QB.x = (C ? C.x - C.r : -1) - O.QB.r - 0.05; O.QB.y = 0; } // under center
+    else { O.QB.x = (C ? C.x - C.r * FOOT_DEPTH : -1) - O.QB.r * FOOT_DEPTH - 0.1; O.QB.y = 0; } // under center
   }
-  if (O.RB && F.RB) { O.RB.x = Math.min(F.RB[0], (O.QB?.x ?? -5) - (O.QB?.r ?? 0.6) - O.RB.r - 0.6); O.RB.y = F.RB[1]; }
-  if (lp.formation === 'shotgun' && O.RB) O.RB.x = O.QB.x;
-  for (const k of ['WR1', 'WR2', 'WR3']) if (O[k]) O[k].x = Math.min(O[k].x, -(O[k].r + 0.2));
-  // The defensive front lines up across from it: tackles shading the guards, ends outside the
-  // tackles, all just across the neutral zone.
-  const D = lp.def;
-  const front = (p, y) => { if (!p) return; p.x = Math.max(p.x, p.r + 0.12); p.y = y; };
-  front(D.DT1, O.RG ? O.RG.y * 0.72 : 1.4);
-  front(D.DT2, O.LG ? O.LG.y * 0.72 : -1.4);
-  front(D.LE, O.RT ? O.RT.y + O.RT.r + (D.LE?.r ?? 0.6) * 0.6 : 5.5);
-  front(D.DE, O.LT ? O.LT.y - O.LT.r - (D.DE?.r ?? 0.6) * 0.6 : -5.5);
+  if (O.RB && F.RB) {
+    if (lp.formation === 'shotgun' && O.QB) { O.RB.x = O.QB.x; O.RB.y = O.QB.y + O.QB.r + O.RB.r + 1.0; }
+    else { O.RB.x = Math.min(F.RB[0], (O.QB?.x ?? -5) - ((O.QB?.r ?? 0.6) + O.RB.r) * FOOT_DEPTH - 2.2); O.RB.y = F.RB[1]; }
+  }
+  // Receivers: the split end on the line, the flanker and the slot off it, all outside the
+  // formation with room to release.
+  if (O.WR1) { O.WR1.x = lineX(O.WR1); O.WR1.y = Math.min(SLOT.WR1.y, yL - 6); }
+  if (O.WR3) { O.WR3.x = offX(O.WR3); O.WR3.y = Math.min(SLOT.WR3.y, yL - 3.5); }
+  if (O.WR2) { O.WR2.x = offX(O.WR2); O.WR2.y = Math.max(SLOT.WR2.y, yR + 6); }
 }
 
-// Nobody starts inside anybody else: teammates are pushed apart across the field (linemen
-// keep their depth), and anyone crowding the line from the other side backs off it.
+// The 4-3 front lines up across from the offense: tackles shading the guards, ends outside
+// the tackles, linebackers over the box, corners over the wideouts, safeties deep.
+function alignDefense(lp) {
+  const O = lp.off, D = lp.def;
+  const front = (p, y) => { if (!p) return; p.x = frontX(p); p.y = y; };
+  front(D.DT1, O.RG ? O.RG.y - O.RG.r * 0.35 : 1.4);
+  front(D.DT2, O.LG ? O.LG.y + O.LG.r * 0.35 : -1.4);
+  const te = O.TE && O.TE.y > (O.RT?.y ?? 0) ? O.TE : O.RT;
+  front(D.LE, te ? te.y + te.r * 0.6 + (D.LE?.r ?? 0.6) * 0.6 : 5.5);
+  front(D.DE, O.LT ? O.LT.y - O.LT.r * 0.6 - (D.DE?.r ?? 0.6) * 0.6 : -5.5);
+  const over = (d, o, depth, inside = 0.6) => { if (!d || !o) return; d.y = o.y - Math.sign(o.y || 1) * inside; d.x = depth; };
+  over(D.CB1, O.WR1, SLOT.CB1.x);
+  over(D.CB2, O.WR2, SLOT.CB2.x);
+  over(D.CB3, O.WR3, SLOT.CB3.x);
+  if (D.OLB) { D.OLB.x = SLOT.OLB.x; D.OLB.y = (te?.y ?? 4) - 0.5; }
+  if (D.MLB) { D.MLB.x = SLOT.MLB.x; D.MLB.y = SLOT.MLB.y; }
+}
+
+// Nobody starts inside anybody else. Teammates are pushed apart across the field (linemen
+// keep their depth), and anyone crowding the line from the other side backs off it. Spacing
+// is by the drawn bodies (capsule plus spill) with a little air between them.
 function alignLines(lp) {
   const ps = lp.players;
   const lineman = (p) => ['LT', 'LG', 'C', 'RG', 'RT', 'LE', 'DE', 'DT1', 'DT2', 'TE'].includes(p.slot);
-  for (let it = 0; it < 40; it++) {
+  for (let it = 0; it < 60; it++) {
     let moved = false;
     for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
       const a = ps[i], b = ps[j];
-      const need = a.r + b.r + (a.side === b.side ? 0.25 : 0.15);
+      const need = a.side === b.side ? (a.r + b.r) * FOOT_SIDE + 0.2 : (a.r + b.r) * FOOT_DEPTH + 0.25;
       const dx = b.x - a.x, dy = b.y - a.y, d = len(dx, dy);
       if (d >= need) continue;
       moved = true;
@@ -270,10 +302,52 @@ function alignLines(lp) {
         a.x -= ux * push; a.y -= uy * push; b.x += ux * push; b.y += uy * push;
       }
     }
-    for (const p of ps) p.y = clamp(p.y, -SIDE + p.r + 0.3, SIDE - p.r - 0.3);
+    for (const p of ps) p.y = clamp(p.y, -SIDE + p.r + 0.4, SIDE - p.r - 0.4);
     if (!moved) break;
   }
-  for (const p of ps) if (p.side === 'def') p.x = Math.max(p.x, p.r + 0.12);
+  for (const p of ps) if (p.side === 'def') p.x = Math.max(p.x, frontX(p));
+}
+
+// The formation check run before every snap. Returns the list of problems (empty when the
+// alignment is legal and clean): eleven a side, seven on the line with the quarterback, back
+// and receivers where they belong, both lines clearly set, no two bodies overlapping, everyone
+// facing the right way and inside the field.
+export function validateFormation(lp) {
+  const issues = [];
+  const off = lp.players.filter((p) => p.side === 'off'), def = lp.players.filter((p) => p.side === 'def');
+  if (off.length !== 11) issues.push(`offense has ${off.length} players`);
+  if (def.length !== 11) issues.push(`defense has ${def.length} players`);
+  const O = lp.off, D = lp.def;
+  const onLine = (p) => p.x + p.r * FOOT_DEPTH > -NEUTRAL - 0.6;
+  const line = off.filter(onLine);
+  if (line.length !== 7) issues.push(`${line.length} offensive players on the line (need 7: ${line.map((p) => p.slot).join(' ')})`);
+  for (const k of ['LT', 'LG', 'C', 'RG', 'RT']) if (O[k] && !onLine(O[k])) issues.push(`${k} is off the line`);
+  const ol = ['LT', 'LG', 'C', 'RG', 'RT'].map((k) => O[k]).filter(Boolean);
+  for (let i = 1; i < ol.length; i++) if (!(ol[i].y > ol[i - 1].y)) issues.push(`line order broken at ${ol[i].slot}`);
+  if (O.C && Math.abs(O.C.y) > 0.05) issues.push('center is not over the ball');
+  if (O.QB) {
+    const depth = -O.QB.x;
+    if (lp.formation === 'shotgun' ? Math.abs(depth - 5) > 0.6 : depth > 3.5 || Math.abs(O.QB.y) > 0.3) issues.push(`quarterback at ${depth.toFixed(1)} yards`);
+  }
+  if (O.RB && O.QB && O.RB.x > O.QB.x + 0.05) issues.push('running back is in front of the quarterback');
+  if (O.RB && -O.RB.x < 4) issues.push('running back is not in the backfield');
+  const wrs = ['WR1', 'WR2', 'WR3'].map((k) => O[k]).filter(Boolean);
+  for (const w of wrs) if (Math.abs(w.y) < 9) issues.push(`${w.slot} is not split out`);
+  for (let i = 0; i < wrs.length; i++) for (let j = i + 1; j < wrs.length; j++) if (Math.abs(wrs[i].y - wrs[j].y) < 4) issues.push(`${wrs[i].slot} and ${wrs[j].slot} are stacked`);
+  for (const k of ['LE', 'DE', 'DT1', 'DT2']) if (D[k] && D[k].x - D[k].r * FOOT_DEPTH > NEUTRAL + 1.2) issues.push(`${k} is off the line`);
+  for (const p of lp.players) {
+    if (p.side === 'off' && p.x + p.r > -NEUTRAL + 0.01) issues.push(`${p.slot} is offside`);
+    if (p.side === 'def' && p.x + 0.01 < frontX(p)) issues.push(`${p.slot} is in the neutral zone`);
+    if (Math.abs(p.y) > SIDE - p.r) issues.push(`${p.slot} is out of bounds`);
+    if (p.x > lp.goalX + 10 || p.x < lp.ownGoalX - 10) issues.push(`${p.slot} is behind the end line`);
+    if (Math.sign(p.fx) !== (p.side === 'off' ? 1 : -1)) issues.push(`${p.slot} faces the wrong way`);
+  }
+  const ps = lp.players;
+  for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
+    const a = ps[i], b = ps[j];
+    if (dist(a, b) < a.r + b.r - 1e-3) issues.push(`${a.side} ${a.slot} overlaps ${b.side} ${b.slot}`);
+  }
+  return issues;
 }
 
 // Between plays: everyone starts where they finished the last play (or in a huddle when the
@@ -303,11 +377,17 @@ function lineUp(lp) {
   let done = true;
   for (const p of lp.players) {
     const d = dist(p, p.home);
-    if (d > 0.12) { done = false; seek(p, p.home, d > 6 ? 0.85 : 0.6, 1.4); kin(p, p.want.vx, p.want.vy, p.top, DT); }
-    else { p.vx *= 0.6; p.vy *= 0.6; p.x += (p.home.x - p.x) * 0.2; p.y += (p.home.y - p.y) * 0.2; }
+    if (d > 0.12) {
+      done = false;
+      // Jog, then hurry if the play clock is getting on; walk around anyone in the way.
+      seek(p, p.home, lp.setT > 6 ? 1 : d > 6 ? 0.85 : 0.6, 1.4);
+      p.aim = null;
+      const [vx, vy] = d > 1.5 ? steer(lp, p, p.want.vx, p.want.vy) : [p.want.vx, p.want.vy];
+      kin(p, vx, vy, p.top, DT);
+    } else { p.vx *= 0.6; p.vy *= 0.6; p.x += (p.home.x - p.x) * 0.2; p.y += (p.home.y - p.y) * 0.2; }
   }
   separate(lp);
-  if (done || lp.setT > 7) {
+  if (done || lp.setT > 12) {
     for (const p of lp.players) { p.x = p.home.x; p.y = p.home.y; p.vx = 0; p.vy = 0; p.fx = p.side === 'off' ? 1 : -1; p.fy = 0; }
     lp.set = true;
   }
@@ -350,6 +430,15 @@ export function snap(lp) {
   event(lp, 'snap', '', c ?? qb, qb);
 }
 
+// The play's state for the game loop: PRE_SNAP, SNAP (the ball on its way from the center
+// to the quarterback, or the exchange under center), PLAY_ACTIVE, PLAY_DEAD. The app adds
+// RESULT and NEXT_DOWN between plays.
+export function playState(lp) {
+  if (lp.phase === 'pre') return 'PRE_SNAP';
+  if (lp.phase === 'dead') return 'PLAY_DEAD';
+  return lp.ball.state === 'snap' || lp.t < 0.2 ? 'SNAP' : 'PLAY_ACTIVE';
+}
+
 // Is the ball in the quarterback's hands yet?
 function qbHas(lp) { return lp.ball.state === 'held' && lp.ball.holder === lp.off.QB; }
 
@@ -378,6 +467,7 @@ export function step(lp, input = null) {
   for (const p of lp.players) move(lp, p, DT);
   separate(lp);
   blocks(lp);
+  separate(lp, 1);
   snapFlight(lp);
   ballFlight(lp);
   if (lp.phase === 'live') contacts(lp);
@@ -454,6 +544,7 @@ function startMove(lp, c, kind) {
 // ---------- decisions ----------
 function think(lp, p) {
   p.want = null;
+  p.aim = null;
   if (p.stun > 0) return;
   if (p === lp.control && lp.manual) { manualWant(lp, p); return; }
   const c = lp.carrierSet ? lp.carrier : null;
@@ -516,7 +607,22 @@ function qbBrain(lp) {
   if (lp.qbState === 'drop' && lp.t >= lp.readAt) lp.qbState = 'read';
   // Crossing the line makes the quarterback a runner.
   if (qb.x > 0.3) { lp.qbState = 'run'; lp.scramble = true; setCarrier(lp, qb); event(lp, 'scramble', '', qb); return; }
-  if (lp.user === lp.o && !lp.autoQB) return; // the user throws
+  if (lp.user === lp.o && !lp.autoQB) {
+    // The user throws; the quarterback's eyes still go to the most open receiver.
+    if (lp.qbState === 'read' && (lp.readTick -= DT) <= 0) {
+      lp.readTick = 0.3;
+      let best = null, bo = -1;
+      for (const k of lp.eligible) {
+        const r = lp.off[k];
+        if (!r || r.role !== 'route') continue;
+        let open = 99;
+        for (const q of lp.players) if (q.side === 'def') open = Math.min(open, dist(q, r));
+        if (open > bo) { bo = open; best = r; }
+      }
+      lp.qbLook = best;
+    }
+    return;
+  }
   if (lp.qbState !== 'read') return;
   lp.readTick -= DT;
   if (lp.readTick > 0) return;
@@ -540,6 +646,8 @@ function qbBrain(lp) {
     const score = open + gain + (lp.play.targets[k] ?? 0) * 2.2 + noise * randn(g);
     if (!best || score > best.score) best = { r, score, open };
   }
+  // Where his eyes are: the read he likes best right now.
+  if (best) lp.qbLook = best.r;
   const need = 4.3 - elapsed * 1.4;
   if (best && (best.score > need || (lp.pressure && best.score > 2.4))) { throwTo(lp, best.r); return; }
   if (nearRush < 1.8 || elapsed > 2.6) {
@@ -586,6 +694,7 @@ function passBlockWant(lp, p) {
     if (dd < bd) { bd = dd; best = q; }
   }
   p.pick = best;
+  p.aim = best;
   if (!best || bd > 9) { seek(p, { x: lp.dropX + 3, y: p.y * 0.8 }, 0.4); return; }
   // Stay between the rusher and the quarterback.
   const ax = qb.x - best.x, ay = qb.y - best.y, l = len(ax, ay) || 1;
@@ -600,6 +709,7 @@ function runBlockWant(lp, p) {
     for (const q of lp.players) if (q.side === 'def' && !q.eng && dist(q, p) < bd) { bd = dist(q, p); tgt = q; }
   }
   if (!tgt) { seek(p, { x: p.x + 3, y: p.y }, 0.5); return; }
+  p.aim = tgt;
   const c = lp.carrier ?? lp.off.RB;
   const ax = (c?.x ?? -4) - tgt.x, ay = (c?.y ?? 0) - tgt.y, l = len(ax, ay) || 1;
   seek(p, { x: tgt.x + (ax / l) * 0.8, y: tgt.y + (ay / l) * 0.8 }, 0.85, 0.4);
@@ -609,6 +719,7 @@ function stalkWant(lp, p) {
   if (p.eng) return;
   const t = p.assign;
   if (!t || t.eng) { seek(p, { x: p.x + 2, y: p.y }, 0.4); return; }
+  p.aim = t;
   const c = lp.carrier;
   const ax = (c?.x ?? 0) - t.x, ay = (c?.y ?? 0) - t.y, l = len(ax, ay) || 1;
   seek(p, { x: t.x + (ax / l) * 0.9, y: t.y + (ay / l) * 0.9 }, 0.8, 0.4);
@@ -625,6 +736,7 @@ function escortWant(lp, p, c) {
     if (ahead && dd < bd && dist(q, p) < 10) { bd = dd; tgt = q; }
   }
   if (!tgt) { seek(p, { x: c.x + (c.side === 'off' ? 4 : -4), y: c.y + (p.y > c.y ? 3 : -3) }, 0.7); return; }
+  p.aim = tgt;
   const ax = c.x - tgt.x, ay = c.y - tgt.y, l = len(ax, ay) || 1;
   seek(p, { x: tgt.x + (ax / l) * 0.8, y: tgt.y + (ay / l) * 0.8 }, 0.95, 0.3);
 }
@@ -661,6 +773,7 @@ function coverWant(lp, p) {
     }
     // A worse cover man reacts later to the receiver's cuts (lag), and a slower one simply
     // falls behind; on straight lines downfield he only gives up a little ground.
+    p.aim = r;
     const lag = p.lag ?? 0.2;
     const px = r.x - r.vx * lag * 0.45, py = r.y - r.vy * lag;
     // Keep a cushion over the top that closes as the route develops.
@@ -710,6 +823,7 @@ function pursueWant(lp, p, c) {
 
 // Aim at where the target will be, not where it is.
 function intercept(p, c, frac) {
+  p.aim = c;
   // Solve |c + v t - p| = speed * t for the earliest t.
   const sp = Math.max(3, p.top * frac);
   const rx = c.x - p.x, ry = c.y - p.y;
@@ -745,8 +859,13 @@ function carrierWant(lp, p) {
     for (let k = 1; k <= 3; k++) {
       const px = p.x + dx * 2.2 * k, py = p.y + dy * 2.2 * k;
       for (const q of lp.players) {
-        if (q.side === p.side || q.stun > 0.2) continue;
+        if (q === p || q.stun > 0.2) continue;
         const dd = Math.hypot(q.x - px, q.y - py);
+        if (q.side === p.side) {
+          // Own blockers are walls too: aim for the seams between bodies, not through them.
+          if (k < 3 && dd < q.r + p.r + 0.3) danger += (q.eng ? 0.9 : 0.5) / k;
+          continue;
+        }
         const w = q.eng ? 0.35 : 1;
         danger += (w * 2.4) / (0.6 + dd * dd) / k;
       }
@@ -787,7 +906,7 @@ function move(lp, p, dt) {
   // Carrying the ball costs a step and long runs wear the carrier down, while pursuers find
   // a little extra, so only a carrier who is truly faster than the defense breaks away.
   const tired = p.carrier ? clamp((Math.abs(p.x - (p.runFrom ?? p.x)) - 12) * 0.004, 0, 0.1) : 0;
-  const chase = p.role === 'pursue' ? (lp.carrier && dist(p, lp.carrier) < 8 ? 1.08 : 1.05) : 1;
+  const chase = p.role === 'pursue' ? (lp.carrier && dist(p, lp.carrier) < 8 ? 1.06 : 1.03) : 1;
   let top = p.top * (p.slow > 0 ? 0.6 : 1) * (p.carrier ? 0.96 - tired : chase);
   vx *= chase; vy *= chase;
   if (p.juke > 0.15) {
@@ -802,7 +921,33 @@ function move(lp, p, dt) {
   if (p.spin > 0) { top *= 0.86; const l = len(vx, vy) || 1; vx += (-vy / l) * p.spinDir * 1.2; vy += (vx / l) * p.spinDir * 1.2; }
   if (p.truck > 0) top *= 0.94;
   p.slow = Math.max(0, p.slow - dt);
+  if (!(p === lp.control && lp.manual) && !p.carrier) [vx, vy] = steer(lp, p, vx, vy);
   kin(p, vx, vy, top, dt, p.juke > 0 ? 2.2 : p.truck > 0 ? 1.6 : 1);
+}
+
+// Steering around bodies in the way: anyone (but the player this one is going after) a little
+// ahead and inside the path bends the path to the open side, so runners hit gaps, rushers
+// loop around blockers and pursuers take an angle instead of pushing through a pile.
+function steer(lp, p, vx, vy) {
+  const sp = len(vx, vy);
+  if (sp < 0.5) return [vx, vy];
+  const ux = vx / sp, uy = vy / sp, look = 1.2 + sp * 0.3;
+  let ax = 0, ay = 0;
+  for (const q of lp.players) {
+    if (q === p || q === p.aim || q === p.eng) continue;
+    const rx = q.x - p.x, ry = q.y - p.y;
+    const along = rx * ux + ry * uy;
+    if (along <= 0 || along > look) continue;
+    const lat = -rx * uy + ry * ux; // + when q is to the left of the path
+    const need = p.r + q.r + 0.15;
+    if (Math.abs(lat) >= need) continue;
+    const k = ((need - Math.abs(lat)) / need) * (1 - along / look) * (q.side === p.side ? 0.5 : 1.2);
+    const side = lat === 0 ? (p.y > q.y ? 1 : -1) : -sgn(lat);
+    ax += -uy * side * k; ay += ux * side * k;
+  }
+  if (!ax && !ay) return [vx, vy];
+  const nx = ux + ax * 1.6, ny = uy + ay * 1.6, l = len(nx, ny) || 1;
+  return [(nx / l) * sp, (ny / l) * sp];
 }
 
 // Accelerate toward a wanted velocity; braking and cutting are quicker than speeding up.
@@ -831,21 +976,30 @@ function slowDown(p, dt, k = 6) {
 
 function animIdle(lp, dt) { for (const p of lp.players) p.anim += dt * 2; }
 
-// Bodies don't pass through each other: overlapping players are pushed apart by their
-// radii (ball carriers and engaged blockers hold their ground; the other one gives).
-function separate(lp) {
+// Bodies don't pass through each other: overlapping capsules are pushed apart until they
+// just touch. Ball carriers and engaged blockers hold their ground and the other one gives;
+// when both hold, both give. Contact itself (blocks, tackles) happens at the capsule edge.
+const SEP_MAX = 0.08;
+function separate(lp, passes = 2) {
   const ps = lp.players;
-  for (let i = 0; i < ps.length; i++) {
-    for (let j = i + 1; j < ps.length; j++) {
-      const a = ps[i], b = ps[j];
-      if (a.eng === b) continue;
-      const need = (a.r + b.r) * 0.75;
-      const dx = b.x - a.x, dy = b.y - a.y, d = len(dx, dy);
-      if (d > need || d === 0) continue;
-      const push = (need - d) * ((a.eng || a.carrier) || (b.eng || b.carrier) ? 1 : 0.5);
-      const ux = dx / d, uy = dy / d;
-      if (!a.eng && !a.carrier) { a.x -= ux * push; a.y -= uy * push; }
-      if (!b.eng && !b.carrier) { b.x += ux * push; b.y += uy * push; }
+  const holds = (p) => !!(p.eng || p.carrier);
+  for (let it = 0; it < passes; it++) {
+    for (let i = 0; i < ps.length; i++) {
+      for (let j = i + 1; j < ps.length; j++) {
+        const a = ps[i], b = ps[j];
+        if (a.eng === b) continue;
+        const need = a.r + b.r;
+        let dx = b.x - a.x, dy = b.y - a.y, d = len(dx, dy);
+        if (d >= need) continue;
+        if (d < 1e-6) { dx = a.side === 'off' ? 1 : -1; dy = 0; d = 1; }
+        // Deep overlaps (a block coming apart, a pile) resolve over a few frames, not in one jump.
+        const ux = dx / d, uy = dy / d, over = Math.min(need - Math.min(d, need), SEP_MAX);
+        // A ball carrier squeezing past his own blockers moves them, not himself.
+        const ha = holds(a) && !(b.carrier && a.side === b.side), hb = holds(b) && !(a.carrier && a.side === b.side);
+        const ka = ha && !hb ? 0 : !ha && hb ? 1 : 0.5;
+        a.x -= ux * over * ka; a.y -= uy * over * ka;
+        b.x += ux * over * (1 - ka); b.y += uy * over * (1 - ka);
+      }
     }
   }
 }
@@ -861,7 +1015,7 @@ function blocks(lp) {
     if (!blocker) continue;
     for (const d of lp.players) {
       if (d.side === b.side || d.eng || d.carrier || d.stun > 0 || d.shedT > 0) continue;
-      if (dist(b, d) > Math.max(ENGAGE, (b.r + d.r) * 0.95)) continue;
+      if (dist(b, d) > Math.max(ENGAGE, b.r + d.r + 0.08)) continue;
       engage(lp, b, d);
       break;
     }
@@ -876,7 +1030,7 @@ function blocks(lp) {
     const dv = passPro ? d.a.rush : d.a.str * 0.6 + d.a.tkl * 0.4;
     const R = rep(d.id, dv, b.id, bv);
     // Rate of getting off the block, per second.
-    const base = passPro ? 0.3 : lp.carrierSet ? 0.3 : 0.16;
+    const base = passPro ? 0.66 : lp.carrierSet ? 0.16 : 0.1;
     let rate = base * Math.exp(R.diff / 9) * (b.engT < 0.4 ? 0.4 : 1);
     if (!passPro) rate = Math.max(rate, 0.1);
     // Blocks far from the ball break up on their own.
@@ -890,16 +1044,29 @@ function blocks(lp) {
     // The pair drifts toward whoever is winning.
     const target = lp.carrierSet ? lp.carrier : lp.off.QB;
     let ux = target.x - d.x, uy = target.y - d.y; const l = len(ux, uy) || 1; ux /= l; uy /= l;
-    const push = clamp((passPro ? 0.4 : -0.3) + R.diff * 0.065, -2, 2.2);
+    const push = clamp((passPro ? 0.4 : -0.1) + R.diff * 0.065, -2, 2.2);
     const vx = ux * push, vy = uy * push * 0.6;
     for (const q of [b, d]) { q.vx = vx; q.vy = vy; q.x += vx * DT; q.y += vy * DT; }
-    // keep the blocker in front
+    // Keep the blocker in front, squaring up over a few frames (never a jump on contact).
     const mx = (b.x + d.x) / 2, my = (b.y + d.y) / 2;
-    const half = (b.r + d.r) * 0.48;
-    b.x = mx + ux * half; b.y = my + uy * half; d.x = mx - ux * half; d.y = my - uy * half;
+    const half = (b.r + d.r) * 0.5;
+    // Turn the pair gradually toward the target side; when the target swings behind them
+    // (a catch downfield) they wheel around each other rather than swap through.
+    let fx = b.x - d.x, fy = b.y - d.y; const fl = len(fx, fy) || 1;
+    fx = fx / fl + ux * 0.12; fy = fy / fl + uy * 0.12; const fl2 = len(fx, fy) || 1; fx /= fl2; fy /= fl2;
+    ease(b, mx + fx * half, my + fy * half); ease(d, mx - fx * half, my - fy * half);
   }
   for (const p of lp.players) if (p.shedT > 0) { p.shedT -= DT; if (p.shedT <= 0) p.shedFrom = null; }
 }
+
+// Slide a body toward a spot at no more than 6 yards a second.
+function ease(p, x, y) {
+  let dx = (x - p.x) * SQUARE_K, dy = (y - p.y) * SQUARE_K;
+  const l = len(dx, dy), max = 6 * DT;
+  if (l > max) { dx *= max / l; dy *= max / l; }
+  p.x += dx; p.y += dy;
+}
+const SQUARE_K = 1 - Math.exp(-DT * 10);
 
 function engage(lp, b, d) { b.eng = d; d.eng = b; b.engT = 0; d.engT = 0; }
 function unengage(p) { const q = p.eng; if (q) q.eng = null; p.eng = null; }
@@ -1028,11 +1195,11 @@ function arrival(lp) {
     pc -= (1.8 - dd) * 0.2 - R.diff * 0.006;
   }
   if (chance(g, clamp(pc, 0.15, 0.98))) {
-    r.x = spot.x; r.y = spot.y;
+    // The ball comes to his hands where he is; nobody jumps to the spot.
     const deepCatch = thrown > 18;
     r.vx *= deepCatch ? 0.3 : 0.45; r.vy *= deepCatch ? 0.3 : 0.45; r.slow = deepCatch ? 0.5 : 0.3;
     lp.caught = true;
-    lp.catchX = spot.x;
+    lp.catchX = r.x;
     setCarrier(lp, r);
     event(lp, 'catch', `${nm(r.id)} makes the catch`, r, lp.off.QB);
     return;
@@ -1042,10 +1209,10 @@ function arrival(lp) {
 }
 
 function interception(lp, d, spot) {
-  d.x = spot.x; d.y = spot.y;
   lp.intercepted = true;
   lp.picker = d;
-  lp.catchX = spot.x;
+  lp.catchX = d.x;
+  void spot;
   for (const p of lp.players) if (p.eng) unengage(p);
   setCarrier(lp, d);
   event(lp, 'int', `INTERCEPTED by ${nm(d.id)}!`, d, lp.thrown?.target);
@@ -1068,7 +1235,7 @@ function contacts(lp) {
     // AI defenders lay out for a diving tackle when they are just out of reach.
     // Reach grows with body size so big Pokémon can still get their arms on a carrier they
     // are touching, but the base reach is the same for everyone.
-    const near = Math.max(CONTACT, q.r + c.r + 0.15);
+    const near = Math.max(CONTACT, q.r + c.r + 0.3);
     const aiDive = q !== lp.control && dd > near && dd < near + 1 && chance(g, 0.05);
     const reach = near + (q.dive != null && q.dive > 0 ? 0.8 : 0);
     if (dd > reach && !aiDive) continue;
@@ -1080,7 +1247,7 @@ function contacts(lp) {
     let p = sigmoid(R.diff / 11 + 2.6) - (aiDive ? 0.12 : 0);
     const sack = lp.kind === 'pass' && !lp.carrierSet && c.slot === 'QB';
     if (sack) p = sigmoid(R.diff / 10 + 2.3);
-    if (lp.players.some((o) => o !== q && o.side === q.side && !o.eng && dist(o, c) < 2.2)) p += 0.08;
+    if (lp.players.some((o) => o !== q && o.side === q.side && !o.eng && dist(o, c) < 2.6)) p += 0.08;
     const user = c === lp.control && lp.manual;
     // Is the tackler coming from in front (spins beat those) or from the side (jukes do)?
     const cs = len(c.vx, c.vy) || 1;
@@ -1117,9 +1284,10 @@ function contacts(lp) {
 
 function tackled(lp, c, q, sack) {
   lp.stats.tackler = q;
-  // Falling forward
+  // Falling forward: the spot gets the extra yard he falls for (the body slides there after
+  // the whistle instead of jumping).
   const fwd = c.side === 'off' ? 1 : -1;
-  if (c.vx * fwd > 1 && !sack) c.x += fwd * 0.6;
+  lp.fallFwd = c.vx * fwd > 1 && !sack ? fwd * 0.6 : 0;
   event(lp, sack ? 'sack' : 'tackle', `${nm(q.id)} ${sack ? 'sacks' : 'tackles'} ${nm(c.id)}`, q, c);
   finish(lp, { how: sack ? 'sack' : 'tackle', tackler: q });
 }
@@ -1131,7 +1299,7 @@ function boundaries(lp) {
     if (qb && lp.ball.holder === qb && (Math.abs(qb.y) > SIDE || qb.x < lp.ownGoalX - 10)) finish(lp, { how: 'out' });
     return;
   }
-  if (c.side === 'off' && c.x >= lp.goalX) { c.x = lp.goalX; finish(lp, { how: 'td' }); return; }
+  if (c.side === 'off' && c.x >= lp.goalX) { finish(lp, { how: 'td' }); return; }
   if (c.side === 'def' && c.x <= lp.ownGoalX) { c.x = lp.ownGoalX; finish(lp, { how: 'td' }); return; }
   if (Math.abs(c.y) > SIDE) { finish(lp, { how: 'out' }); return; }
   if (c.side === 'off' && c.x < lp.ownGoalX - 9.5) finish(lp, { how: 'out' });
@@ -1182,7 +1350,7 @@ function buildResult(lp, end) {
     return { kind: 'pass', yards: 0, carrier: c.id, qb: qb.id, returner: c.id, highlight: 'turnover', clockStop: true, turnover: 'int', returnSpot,
       text: `${nm(qb.id)} throws for ${nm(stats.target.id)}... INTERCEPTED by ${nm(c.id)}${returnSpot >= 100 ? ' and he takes it all the way back' : ''}!` };
   }
-  let yards = Math.round(c.x);
+  let yards = Math.round(c.x + (lp.fallFwd ?? 0));
   if (end.how === 'td') yards = lp.goalX;
   yards = Math.max(yards, -lp.spot);
   const tackler = end.tackler ?? null;

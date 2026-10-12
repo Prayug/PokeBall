@@ -12,7 +12,7 @@ import { PLAYERS } from './ratings.js';
 import { absSpot } from './engine.js';
 import { Stadium, HALF_W } from './stadium3d.js';
 import { template, upgradeTemplate, makeFigure, disposeFigure, placeholder, flies } from './figure3d.js';
-import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs } from './model3d.js';
+import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs, poseLimbs } from './model3d.js';
 import { Animator } from './anim3d.js';
 import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
@@ -21,7 +21,10 @@ const reduceMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(pr
 const RECEIVER_KEYS = ['WR1', 'WR2', 'WR3', 'TE', 'RB'];
 export const ART_COLORS = ['#ffd23f', '#4fc3f7', '#ff7a59', '#c792ff', '#7fdc93'];
 const LINE_SLOTS = new Set(['LT', 'LG', 'C', 'RG', 'RT', 'LE', 'DE', 'DT1', 'DT2']);
-const BACK_SLOTS = new Set(['CB1', 'CB2', 'CB3', 'FS', 'SS', 'MLB', 'OLB']);
+// Pre-snap stance by position: three-point on the lines, a crouch for backs and linebackers,
+// a two-point for receivers, a backpedal-ready stance for the secondary.
+const STANCE = { LT: 'line', LG: 'line', C: 'line', RG: 'line', RT: 'line', LE: 'line', DE: 'line', DT1: 'line', DT2: 'line',
+  TE: 'line', QB: 'qb', RB: 'back', MLB: 'back', OLB: 'back', WR1: 'skill', WR2: 'skill', WR3: 'skill', CB1: 'db', CB2: 'db', CB3: 'db', FS: 'db', SS: 'db' };
 
 export function webglAvailable() {
   try {
@@ -60,6 +63,9 @@ export class Stage {
     this.inset = 0; this.insetWant = 0;
     this.quality = 'auto';
     this.weatherFx = true;
+    this.debug = false;      // position tags over everyone and the formation check
+    this.showPips = true;    // team pips over heads
+    this.showNames = false;  // name and position over your player all the time
     this.frameMs = 16; this.lastScale = 0;
     this.buildOverlays();
     this.ro = new ResizeObserver(() => this.resize());
@@ -111,7 +117,7 @@ export class Stage {
 
   // ---------- play ----------
   setPlay(lp) {
-    if (lp !== this.lp) { this.evSeen = 0; this.celebrate = 0; }
+    if (lp !== this.lp) { this.evSeen = 0; this.celebrate = 0; this.releasePos = null; this.airOff = null; }
     this.lp = lp;
     if (!lp) return;
     const g = lp.g;
@@ -125,9 +131,10 @@ export class Stage {
     this.firstLine.visible = toGo != null;
     if (toGo != null) this.firstLine.position.x = toGo;
     const stamp = performance.now();
-    for (const p of lp.players) this.actorFor(p, g.teams[p.ti]).seen = stamp;
+    this.kit = teamKit(g.teams);
+    for (const p of lp.players) this.actorFor(p, { ...g.teams[p.ti], color: this.kit[p.ti] }).seen = stamp;
     for (const [k, a] of this.actors) if (a.seen !== stamp) this.removeActor(k);
-    for (const a of this.actors.values()) { a.act = null; a.fallWant = 0; a.flash = 0; }
+    for (const a of this.actors.values()) { a.act = null; if (this.gameState !== 'RESULT') a.fallWant = 0; a.flash = 0; }
     this.prevPhase = lp.phase;
     this.drawArt();
   }
@@ -142,13 +149,17 @@ export class Stage {
     if (old) this.removeActor(key);
     const body = bodyOf(p.id);
     const root = new THREE.Group();
-    const ring = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({ color: team.color, transparent: true, opacity: 0.55, depthWrite: false, fog: false }));
-    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.03; ring.renderOrder = 1;
-    ring.scale.setScalar(body.r * 1.25);
-    const blob = new THREE.Mesh(BLOB_GEO, new THREE.MeshBasicMaterial({ map: blobTexture(), transparent: true, depthWrite: false, opacity: 0.7 }));
+    // Team marks, kept small: a team-colored pip over the head (a diamond for the offense, a
+    // chevron for the defense) and a contact shadow tinted with the team color. No rings
+    // under everyone; only your player and the ball carrier get one.
+    const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map: pipTexture(p.side === 'off'), color: team.color, depthTest: false, transparent: true, fog: false }));
+    ring.renderOrder = 9; ring.scale.set(0.42, 0.42, 1);
+    const blob = new THREE.Mesh(BLOB_GEO, new THREE.MeshBasicMaterial({ map: blobTexture(), color: new THREE.Color(team.color).lerp(_c.set('#000000'), 0.35), transparent: true, depthWrite: false, opacity: 0.7 }));
     blob.rotation.x = -Math.PI / 2; blob.position.y = 0.02; blob.scale.setScalar(body.r * 1.5);
-    this.scene.add(root, ring, blob);
-    const a = { key, id: p.id, root, ring, blob, body, color: team.color, fig: null, ph: null, version: -1,
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: slotTexture(p.slot, team.color), depthTest: false, transparent: true, fog: false }));
+    tag.renderOrder = 12; tag.visible = false; tag.scale.set(1.3, 0.55, 1);
+    this.scene.add(root, ring, blob, tag);
+    const a = { key, id: p.id, root, ring, blob, tag, body, color: team.color, fig: null, ph: null, version: -1,
       anim: null, yaw: p.side === 'off' ? Math.PI / 2 * this.dirOr(1) : -Math.PI / 2 * this.dirOr(1), yawInit: false, turn: 0,
       act: null, fallWant: 0, fallDir: null, flash: 0, flier: flies(p.id), seen: 0, pos: new THREE.Vector3() };
     a.anim = new Animator(null, (p.id * 0.618) % 1);
@@ -162,7 +173,7 @@ export class Stage {
     const a = this.actors.get(key);
     if (!a) return;
     this.dropFigure(a);
-    for (const o of [a.root, a.ring, a.blob]) { this.scene.remove(o); o.material?.dispose?.(); }
+    for (const o of [a.root, a.ring, a.blob, a.tag]) { this.scene.remove(o); o.material?.map?.dispose?.(); o.material?.dispose?.(); }
     this.actors.delete(key);
   }
 
@@ -214,7 +225,9 @@ export class Stage {
     if (s.fall > 0.5) role = 'down';
     else if (s.celebrate > 0.3) role = 'glad';
     else if (s.stun > 0.3) role = 'damage';
-    else if (s.engaged || s.truck > 0.3 || s.dive > 0.3 || (s.throwU != null && s.throwU < 1)) role = 'attack';
+    // Blocking and throwing are posed on the skeleton (poseLimbs); a rig-less model has
+    // only its clips, so it uses its attack clip for contact.
+    else if (s.truck > 0.3 || s.dive > 0.3 || ((s.engaged || (s.throwU != null && s.throwU < 1)) && !f.rig)) role = 'attack';
     else if (s.speed > 0.7) {
       role = f.actions.run ? 'run' : 'walk';
       // Match the clip's stride to the ground speed, within reason.
@@ -230,6 +243,7 @@ export class Stage {
     const runWant = s.speed > 0.7 ? 0.4 + 0.6 * Math.min(1, sf) : s.engaged ? 0.35 : 0;
     f.runK = (f.runK ?? 0) + (runWant - (f.runK ?? 0)) * (1 - Math.exp(-dt * 6));
     driveLimbs(f, { phase: a.anim.gait, run: f.runK, t: a.anim.t, flap: s.hover ? 1 : 0, weight: f.limbW });
+    poseLimbs(f, a.anim.fb);
   }
 
   // ---------- pre-snap play art ----------
@@ -290,7 +304,8 @@ export class Stage {
       const a = this.actorOf(e.who), b = this.actorOf(e.other);
       switch (e.kind) {
         case 'throw':
-          if (a) { a.act = { kind: 'throw', t0: t, dur: 0.38 }; a.releaseH = this.handHeight(a); }
+          // The ball leaves from where it is drawn right now: the passer's hand.
+          if (a) { a.act = { kind: 'throw', t0: t, dur: 0.45 }; a.releaseH = this.ball.position.y; this.releasePos = this.ball.position.clone(); this.airOff = null; }
           break;
         case 'catch': case 'int':
           if (a) { a.act = { kind: 'secure', t0: t, dur: 0.45 }; a.flash = 0.5; this.burst(a.pos, e.kind === 'int' ? '#ff7a59' : '#ffffff', 0.8); }
@@ -378,14 +393,19 @@ export class Stage {
       // Flash on contact: a quick white glow.
       a.flash = Math.max(0, a.flash - dt * 2);
       if (a.fig && !a.fig.model) { const m = a.fig.mesh.material; m.emissive.setScalar(a.flash * 0.6); }
-      // Team ring and contact shadow stay on the turf.
+      // Team pip over the head, contact shadow on the turf, position tag in debug view.
       const lift = a.fig ? a.anim.lift : 0;
-      a.ring.position.set(a.pos.x, 0.03, a.pos.z);
+      const top = (a.fig?.template.height ?? a.body.height) + Math.max(0, lift);
+      a.ring.position.set(a.pos.x, top + 0.45, a.pos.z);
+      const ps = clampN(this.camera.position.distanceTo(a.ring.position) * 0.012, 0.3, 0.75);
+      a.ring.scale.set(ps, ps, 1);
+      a.tag.visible = this.debug;
+      if (this.debug) { a.tag.position.set(a.pos.x, top + 0.75, a.pos.z); const ts = clampN(this.camera.position.distanceTo(a.tag.position) * 0.013, 0.32, 0.85); a.tag.scale.set(ts * 2.3, ts, 1); }
       a.blob.position.set(a.pos.x, 0.02, a.pos.z);
       const sh = 1 / (1 + lift * 0.9);
       a.blob.scale.setScalar(a.body.r * 1.6 * (0.7 + sh * 0.3));
       a.blob.material.opacity = 0.75 * sh;
-      a.ring.visible = !(lp.phase === 'dead' && a.fallWant);
+      a.ring.visible = !(lp.phase === 'dead' && a.fallWant) && this.showPips && lp.control !== p && !(lp.ball.state === 'held' && lp.ball.holder === p && lp.phase === 'live');
       if (lp.ball.state === 'held' && lp.ball.holder === p) held = a;
       obstacles.push({ x: a.pos.x, z: a.pos.z, r: a.body.r, h: s.height + lift });
     }
@@ -411,8 +431,17 @@ export class Stage {
       return yawOf(p.side === 'off' ? 1 : -1, 0);
     }
     if (p.eng) return toward(p.eng.x, p.eng.y);
-    // Dropping back and backpedaling in coverage: keep the eyes upfield.
+    // A pass in the air: the target and anyone playing the ball turn to find it.
+    const T = lp.thrown;
+    if (lp.phase === 'live' && T && lp.ball.state === 'air' && T.target) {
+      const left = T.t0 + T.T - lp.t;
+      const near = Math.hypot(T.tx - p.x, T.ty - p.y);
+      if ((T.target === p && left < 0.75) || (p.side === 'def' && near < 3 && left < 0.6)) return toward(lp.ball.x, lp.ball.y);
+    }
+    // Dropping back and backpedaling in coverage: keep the eyes upfield; set in the pocket,
+    // the quarterback turns to the receiver he is reading.
     if (lp.phase === 'live' && !lp.carrierSet && !lp.thrown) {
+      if (p.slot === 'QB' && p.side === 'off' && lp.qbLook && lp.ball.holder === p && lp.qbState === 'read') return toward(lp.qbLook.x, lp.qbLook.y);
       if (p.side === 'off' && (p.slot === 'QB' || p.role === 'passblock') && p.vx < 0) return yawOf(1, 0);
       if (p.side === 'def' && p.role === 'cover' && p.vx > 0 && sp < p.top * 0.8) return yawOf(-1, p.vy * 0.15);
     }
@@ -429,10 +458,16 @@ export class Stage {
     const s = { speed: Math.hypot(p.vx, p.vy), top: p.top, mode: lp.phase, turn: a.turn, set: true };
     if (lp.phase === 'pre') {
       s.set = s.speed < 0.35;
-      s.stance = LINE_SLOTS.has(p.slot) ? 'line' : p.slot === 'QB' ? 'qb' : BACK_SLOTS.has(p.slot) ? 'back' : 'skill';
+      s.stance = STANCE[p.slot] ?? 'skill';
+      if (p.slot === 'QB' && lp.formation !== 'shotgun') s.stance = 'qbUnder';
     }
     s.engaged = !!p.eng && lp.phase === 'live';
-    if (p.eng) { const o = this.actorOf(p.eng); s.pushSide = o ? Math.sign(this.lateralOf(a, o.pos)) : 0; }
+    if (p.eng) {
+      const o = this.actorOf(p.eng); s.pushSide = o ? Math.sign(this.lateralOf(a, o.pos)) : 0;
+      // Losing the block: the pair is drifting the way he faces from, so he leans back.
+      const fx = Math.sin(a.yaw), fz = Math.cos(a.yaw);
+      s.pushBack = (p.vx * this.dir * fx + p.vy * this.dir * fz) < -0.25;
+    }
     const holding = lp.ball.state === 'held' && lp.ball.holder === p && lp.phase !== 'pre';
     s.carrier = holding;
     s.qbHold = holding && p.slot === 'QB' && p.side === 'off' && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run' && lp.t > 0.25;
@@ -470,7 +505,7 @@ export class Stage {
     const downed = lp.phase === 'dead' && lp.end && (((lp.end.how === 'tackle' || lp.end.how === 'sack') && lp.carrier === p) || (lp.end.how === 'sack' && p.slot === 'QB' && p.side === 'off'));
     if (downed) { a.fallWant = 1; if (!a.fallDir) a.fallDir = [0, -1]; }
     if (a.fallWant) { s.fall = Math.max(s.fall ?? 0, a.fallWant); s.fallDir = a.fallDir; s.carrier = false; }
-    if (lp.phase === 'pre' && a.fallWant) a.fallWant = 0;
+    if (lp.phase === 'pre' && a.fallWant && this.gameState !== 'RESULT') a.fallWant = 0;
     // Touchdown: the scorer and nearby teammates celebrate.
     if (td && this.celebrate && lp.carrier) {
       const c = lp.carrier;
@@ -484,6 +519,19 @@ export class Stage {
   lateralOf(a, pt) { const c = Math.cos(a.yaw), s = Math.sin(a.yaw); return (pt.x - a.pos.x) * c - (pt.z - a.pos.z) * s; }
 
   handHeight(a) { return a.fig ? a.fig.template.height * 0.85 : 1.8; }
+
+  // The throwing hand of a rigged model, in world coordinates; false when there is none or it
+  // sits somewhere odd (a hand bone far from the body).
+  handPoint(a, out) {
+    const h = a.fig?.rig?.hands?.R ?? a.fig?.rig?.hands?.L;
+    if (!h) return false;
+    a.fig.pivot.updateMatrixWorld(true);
+    h.getWorldPosition(out);
+    const T = a.fig.template;
+    const off = Math.hypot(out.x - a.pos.x, out.z - a.pos.z);
+    if (off > Math.max(T.width, T.depth) * 0.9 + 0.3 || out.y < 0.2 || out.y > T.height * 1.6) return false;
+    return true;
+  }
 
   // A point on a model's body: fractions of its width (to its right), height and depth (forward).
   modelPoint(a, fx, fy, fz, out) {
@@ -512,7 +560,8 @@ export class Stage {
         this.world(0.05, 0, 0.17, ball.position);
         orient(Math.PI / 2, 0, 0);
       } else if (qbSet && M) {
-        this.modelPoint(holder, 0.42, 0.78, 0.15, ball.position);
+        // In the throwing hand when the rig has one, else up by the ear.
+        if (!this.handPoint(holder, ball.position)) this.modelPoint(holder, 0.42, 0.78, 0.15, ball.position);
         orient(holder.yaw - Math.PI / 2, 0.6, 0);
       } else if (M) {
         this.modelPoint(holder, 0.38, 0.5, 0.42, ball.position);
@@ -537,6 +586,12 @@ export class Stage {
         const qa = this.actorOf(lp.off.QB), ra = this.actorOf(T.target);
         const h0 = qa?.releaseH ?? 1.9, h1 = ra ? (ra.fig?.template.height ?? 1.8) * 0.62 : 1.2;
         ball.position.y += (h0 - 1.9) * Math.max(0, 1 - u) + (h1 - 1.9) * Math.min(1, u);
+        // Out of the passer's hand: start exactly where the hand released it and blend onto
+        // the flight path over the first part of the throw.
+        if (this.releasePos) {
+          if (!this.airOff) this.airOff = this.releasePos.clone().sub(ball.position);
+          ball.position.addScaledVector(this.airOff, Math.max(0, 1 - u / 0.3));
+        }
         this.ballSpin += dt * 26;
         const yaw = Math.atan2(-(T.ty - T.sy) * this.dir, (T.tx - T.sx) * this.dir);
         const rise = this.lastBall && dt > 0 ? (ball.position.y - this.lastBall.y) / dt : 0;
@@ -594,7 +649,7 @@ export class Stage {
     const holder = lp.ball.state === 'held' && lp.phase === 'live' ? this.actorOf(lp.ball.holder) : null;
     const showCarry = holder && !(lp.kind === 'pass' && lp.ball.holder === lp.off.QB && !lp.thrown && lp.qbState !== 'run');
     this.carryRing.visible = !!showCarry;
-    if (showCarry) { this.carryRing.position.set(holder.pos.x, 0.04, holder.pos.z); this.carryRing.scale.setScalar(holder.body.r * 1.35); this.carryRing.material.color.set(lp.g.teams[lp.ball.holder.ti].color).lerp(_c.set('#ffffff'), 0.55); }
+    if (showCarry) { this.carryRing.position.set(holder.pos.x, 0.04, holder.pos.z); this.carryRing.scale.setScalar(holder.body.r * 1.35); this.carryRing.material.color.set(this.kit?.[lp.ball.holder.ti] ?? lp.g.teams[lp.ball.holder.ti].color).lerp(_c.set('#ffffff'), 0.55); }
     const icons = !lp.preview && lp.user === lp.o && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run' && lp.phase !== 'dead';
     for (const [k, sp] of Object.entries(this.icons)) {
       const p = lp.off[k];
@@ -607,7 +662,7 @@ export class Stage {
       }
     }
     // Name and slot over your player before the snap, and over the ball carrier you control.
-    const showName = sel && (lp.phase === 'pre' || (c.carrier && lp.phase === 'live'));
+    const showName = sel && (lp.phase === 'pre' || this.showNames || (c.carrier && lp.phase === 'live'));
     this.label.visible = !!showName;
     if (showName) {
       const key = `${c.id}:${c.slot}`;
@@ -627,13 +682,20 @@ export class Stage {
   // What the camera should frame this frame.
   framing(lp) {
     const f = this.frm ?? (this.frm = { focus: new THREE.Vector3(), fwd: 1, spread: 10, pre: true, deep: 0, tight: false, qb: new THREE.Vector3() });
+    // RESULT: hold the shot where the play ended.
+    if (this.gameState === 'RESULT' && this.frmInit) { f.tight = true; f.pre = false; return f; }
+    this.frmInit = true;
     f.fwd = this.dir; f.pre = lp.phase === 'pre'; f.deep = 0; f.tight = false;
     const qb = this.actorOf(lp.off.QB);
     if (qb) f.qb.copy(qb.pos); else f.qb.copy(this.world(-5, 0));
     const b = lp.ball;
     if (f.pre) {
-      this.world(2, 0, 0, f.focus);
-      f.spread = 16;
+      // The whole formation: from the deepest back to a few yards past the line, wider for
+      // spread sets.
+      let back = 0, wide = 0;
+      for (const p of lp.players) if (p.side === 'off') { back = Math.min(back, p.home?.x ?? p.x); wide = Math.max(wide, Math.abs(p.home?.y ?? p.y)); }
+      this.world((back + 5) / 2, 0, 0, f.focus);
+      f.spread = clampN(10 + -back * 0.6 + Math.max(0, wide - 15) * 0.2, 14, 22);
     } else if (b.state === 'air' && lp.thrown) {
       const T = lp.thrown;
       const u = clampN((lp.t - T.t0) / T.T, 0, 1);
@@ -647,10 +709,11 @@ export class Stage {
       f.spread = lp.phase === 'dead' ? 8 : 10;
       f.tight = lp.phase === 'dead';
     } else {
-      // Pocket: stay on the line so the routes stay in view.
-      const x = Math.max(b.x, -3) * 0.4 + 1.5;
-      this.world(x, b.y * 0.4, 0, f.focus);
-      f.spread = lp.kind === 'pass' ? 14 : 11;
+      // Pocket: between the quarterback and the line, so the drop, the rush and the first
+      // yards of the routes all stay in view.
+      const q = lp.off.QB ?? b;
+      this.world((Math.max(q.x, -9) + 3) / 2, q.y * 0.4, 0, f.focus);
+      f.spread = lp.kind === 'pass' ? 15 : 12;
     }
     return f;
   }
@@ -695,6 +758,9 @@ export class Stage {
 
   // ---------- view ----------
   snapCamera() { this.snapNext = true; this.inset = this.insetWant; }
+  // The game loop's play state (see app.js setState): the camera holds on the spot during
+  // RESULT and the players stay down until NEXT_DOWN.
+  setState(st) { this.gameState = st; }
   setInset(px) { this.insetWant = Math.max(0, px || 0); }
   setCameraMode(m) { this.rig.setMode(m); }
   setWeatherFx(on) { this.weatherFx = on; if (this.lp) this.stadium.setWeather(this.lp.g.weather, on); }
@@ -761,7 +827,19 @@ function loadChunk(c) {
 }
 
 // ---------- shared geometry and textures ----------
-const RING_GEO = new THREE.RingGeometry(0.86, 1, 40);
+// The two teams' marker colors. When the clubs' colors are close (two reds, a magenta and a
+// red), the visitors switch to white, like an away jersey, so the sides never blur together.
+function teamKit(teams) {
+  const a = new THREE.Color(teams[0].color), b = new THREE.Color(teams[1].color);
+  const ha = {}, hb = {};
+  a.getHSL(ha); b.getHSL(hb);
+  const dh = Math.min(Math.abs(ha.h - hb.h), 1 - Math.abs(ha.h - hb.h)) * 360;
+  const dl = Math.abs(ha.l - hb.l);
+  const close = (dh < 28 && dl < 0.25) || (ha.s < 0.2 && hb.s < 0.2 && dl < 0.25);
+  return [teams[0].color, close ? '#f2f5f7' : teams[1].color];
+}
+
+const SLOT_LABEL = { LE: 'DE', DT1: 'DT', DT2: 'DT', OLB: 'LB', MLB: 'LB', FS: 'S', SS: 'S', CB1: 'CB', CB2: 'CB', CB3: 'CB', WR1: 'WR', WR2: 'WR', WR3: 'WR' };
 const BLOB_GEO = new THREE.PlaneGeometry(2, 2);
 const BURST_GEO = new THREE.RingGeometry(0.5, 0.7, 32);
 const CONFETTI_GEO = new THREE.PlaneGeometry(0.22, 0.12);
@@ -783,6 +861,28 @@ function haloTexture() {
   g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.55, 'rgba(255,255,255,0.9)'); g.addColorStop(1, 'rgba(255,255,255,0)');
   x.fillStyle = g; x.fillRect(0, 0, 128, 128);
   return new THREE.CanvasTexture(c);
+}
+
+function pipTexture(diamond) {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d');
+  x.beginPath();
+  if (diamond) { x.moveTo(32, 6); x.lineTo(56, 32); x.lineTo(32, 58); x.lineTo(8, 32); }
+  else { x.moveTo(8, 14); x.lineTo(56, 14); x.lineTo(32, 52); }
+  x.closePath();
+  x.lineWidth = 7; x.strokeStyle = 'rgba(8,16,12,0.85)'; x.stroke();
+  x.fillStyle = '#ffffff'; x.fill();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
+function slotTexture(slot, color) {
+  const c = document.createElement('canvas'); c.width = 128; c.height = 56;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgba(8,16,12,0.85)'; x.beginPath(); x.roundRect(4, 4, 120, 48, 8); x.fill();
+  x.fillStyle = color; x.fillRect(4, 44, 120, 8);
+  x.fillStyle = '#ffffff'; x.font = '700 32px "Barlow Condensed", Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(SLOT_LABEL[slot] ?? slot, 64, 26);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
 function badgeTexture(label, color) {

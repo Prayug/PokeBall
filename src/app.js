@@ -4,9 +4,9 @@ import { SPRITES } from './sprites.js';
 import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER, effectLabel, bestMultiplier } from './types.js';
 import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
   quarterText, fgDistance, fgChance, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights, manualSub } from './engine.js';
-import { createLivePlay, snap, step as stepLive, playSeconds, worldSpots, DT } from './live.js';
+import { createLivePlay, snap, step as stepLive, playSeconds, worldSpots, playState, DT } from './live.js';
 import { Stage, webglAvailable } from './field3d.js';
-import { CAMERA_MODES } from './camera3d.js';
+import { CAMERA_MODES, CAMERA_DEFAULTS, CAMERA_LIMITS } from './camera3d.js';
 import { diagram, formationName } from './playbook.js';
 import * as LG from './league.js';
 
@@ -21,6 +21,7 @@ const S = {
   depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 22, legendaries: false, typeCap: true, clock: true },
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
   menuOpen: false, cam: 'broadcast', weatherFx: true, quality: 'auto',
+  names: false, debug: false, csTab: null, cal: { ...CAMERA_DEFAULTS },
 };
 let timers = { draft: null, clock: null, auto: null };
 
@@ -77,11 +78,13 @@ function loadPrefs() {
       if (CAMERA_MODES.some(([k]) => k === p.cam)) S.cam = p.cam;
       if (p.weatherFx != null) S.weatherFx = !!p.weatherFx;
       if (['auto', 'high', 'low'].includes(p.quality)) S.quality = p.quality;
+      if (p.names != null) S.names = !!p.names;
+      if (p.cal) Object.assign(S.cal, p.cal);
     }
   } catch { /* ignore */ }
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, setup: S.setup, cam: S.cam, weatherFx: S.weatherFx, quality: S.quality })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, setup: S.setup, cam: S.cam, weatherFx: S.weatherFx, quality: S.quality, names: S.names, cal: S.cal })); } catch { /* ignore */ }
 }
 
 // ---------- small view helpers ----------
@@ -753,32 +756,63 @@ function callSheet(g) {
   return { onOff, groups: keyed, fit };
 }
 
-// The 3D game's call sheet: a compact overlay of play cards, grouped by formation and
-// family, each with its play art, its key and a mark on the one that fits the down.
-function callSheetHtml(g) {
+// The 3D game's play-call panel: a few big cards at a time. Plays sit in categories (runs,
+// short passes, deep passes, kicks; on defense fronts, blitzes and coverages) with tabs to
+// move between them, so each card has room for readable play art, the name, one line on
+// what it does, run or pass, and its key. Every call keeps its number key from any tab, and
+// the panel opens on the category of the call that fits the down.
+const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'draw', 'qb_sneak']], ['short', 'Short pass', ['screen', 'slant', 'out', 'curl']],
+  ['deep', 'Deep pass', ['te_seam', 'post', 'pa_deep']], ['kick', 'Special teams', ['punt', 'fg']]];
+const CS_PER_PAGE = 6;
+function csTabs(g) {
   const { onOff, groups, fit } = callSheet(g);
+  const byCall = new Map(groups.flatMap(([fam, , cs]) => cs.map((c) => [c.call, { ...c, fam }])));
+  const tabs = (onOff ? CS_TABS_OFF : DEF_GROUPS).map(([k, label, calls]) => [k, label, calls.filter((c) => byCall.has(c)).map((c) => byCall.get(c))])
+    .filter(([, , cs]) => cs.length);
+  // Anything not placed in a tab (new plays) lands in the last one.
+  const placed = new Set(tabs.flatMap(([, , cs]) => cs.map((c) => c.call)));
+  for (const c of byCall.values()) if (!placed.has(c.call)) tabs[tabs.length - 1][2].push(c);
+  const fitTab = tabs.find(([, , cs]) => cs.some((c) => c.call === fit))?.[0] ?? tabs[0][0];
+  const cur = tabs.some(([k]) => k === S.csTab) ? S.csTab : fitTab;
+  return { onOff, tabs, fit, cur };
+}
+function callSheetHtml(g) {
+  const { onOff, tabs, fit, cur } = csTabs(g);
   const fg = fgDistance(g);
   const side = onOff ? 'off' : 'def';
-  // Offense: split each family by formation, so the header reads "Shotgun · Pass".
-  const sections = [];
-  for (const [fam, label, cs] of groups) {
-    if (!onOff || fam === 'kick') { sections.push([fam, label, cs]); continue; }
-    const byForm = new Map();
-    for (const c of cs) { const f = formationName(c.call); if (!byForm.has(f)) byForm.set(f, []); byForm.get(f).push(c); }
-    for (const [f, list] of byForm) sections.push([fam, `${f} · ${label}`, list]);
-  }
-  const card = ({ call, label }, fam) => {
+  const tab = tabs.find(([k]) => k === cur);
+  const page = Math.min(S.csPage ?? 0, Math.max(0, Math.ceil(tab[2].length / CS_PER_PAGE) - 1));
+  const shown = tab[2].slice(page * CS_PER_PAGE, page * CS_PER_PAGE + CS_PER_PAGE);
+  const pages = Math.ceil(tab[2].length / CS_PER_PAGE);
+  const card = ({ call, label, fam }) => {
     const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
-    const extra = call === 'fg' && onOff ? `${fg} yd · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
-    return `<button class="pcard f-${fam} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" title="${esc(p.name)}: ${esc(extra)}">
-      ${diagram(g, call, side)}<span class="pname">${p.name}</span><span class="pblurb">${esc(extra)}</span>
-      ${call === fit ? '<em class="fittag">Fits</em>' : ''}${label ? `<kbd>${label}</kbd>` : ''}</button>`;
+    const kind = onOff ? p.kind : fam;
+    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
+    const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick' }[kind] : { front: 'Front', blitz: 'Blitz', cover: 'Coverage' }[kind];
+    const form = onOff ? formationName(call) : '';
+    return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
+      <span class="pc-art">${diagram(g, call, side)}</span>
+      <span class="pc-top"><em class="pc-kind">${tag}</em>${form ? `<span class="pc-form">${esc(form)}</span>` : ''}${label ? `<kbd>${label}</kbd>` : ''}</span>
+      <span class="pname">${p.name}</span><span class="pblurb">${esc(extra)}</span>
+      ${call === fit ? '<em class="fittag">Fits the down</em>' : ''}</button>`;
   };
   const who = onOff ? 'Call your offense' : `${esc(g.teams[g.poss].abbr)} ball · call your defense`;
   return `<div class="callsheet" role="dialog" aria-label="Play call">
-    <div class="cs-head"><b>${downText(g)}</b><span>${who}</span><span class="cs-keys">Number keys to call · <kbd>M</kbd> menu</span></div>
-    <div class="cs-groups">${sections.map(([fam, label, cs]) => `<div class="cs-group"><h4>${label}</h4><div class="cs-cards">${cs.map((c) => card(c, fam)).join('')}</div></div>`).join('')}</div>
+    <div class="cs-head"><b>${downText(g)}</b><span>${who}</span>
+      <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
+      <span class="cs-keys"><kbd>←</kbd><kbd>→</kbd> category · number keys call · <kbd>M</kbd> menu</span></div>
+    <div class="cs-cards">${shown.map(card).join('')}</div>
+    ${pages > 1 ? `<div class="cs-pages"><button class="btn tiny" data-act="cspage" data-d="-1" ${page ? '' : 'disabled'}>Previous</button><span>${page + 1} / ${pages}</span><button class="btn tiny" data-act="cspage" data-d="1" ${page < pages - 1 ? '' : 'disabled'}>Next</button></div>` : ''}
   </div>`;
+}
+function csMove(d) {
+  const g = S.game;
+  if (!g) return;
+  const { tabs, cur } = csTabs(g);
+  const i = tabs.findIndex(([k]) => k === cur);
+  S.csTab = tabs[(i + d + tabs.length) % tabs.length][0];
+  S.csPage = 0;
+  render();
 }
 
 function playCards(g, { keys = false } = {}) {
@@ -809,7 +843,7 @@ function renderGame() {
   if (!g) return `<section><p>No game in progress.</p></section>`;
   const us = userSide();
   const live3d = !!stage;
-  const decide = !g.final && needsUser(g) && !S.busy && !L3.lp;
+  const decide = !g.final && needsUser(g) && !S.busy && !L3.lp && !(L3.resultUntil > performance.now());
   const simOff = L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : '';
   const simBtns = `<button class="btn" data-act="sim" data-stop="drive" ${simOff}>Sim drive</button>
         <button class="btn" data-act="sim" data-stop="quarter" ${simOff}>Sim quarter</button>
@@ -852,6 +886,7 @@ function renderGame() {
         <button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap' : 'Start'} <kbd>Space</kbd></button>
         ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change <kbd>Esc</kbd></button>'}</div>`;
     } else if (decide) overlay = callSheetHtml(g);
+    else if (L3.resultUntil > performance.now()) overlay = '';
     else overlay = `<div class="pill wait"><span>${S.busy ? 'Play in progress' : 'AI calling this down'}</span></div>`;
     return `<section class="game g3d">
     <div class="stage-slot" id="stage-slot">
@@ -859,6 +894,7 @@ function renderGame() {
       <button class="menubtn" data-act="menu" aria-expanded="${!!S.menuOpen}" aria-label="Game menu"><span aria-hidden="true">☰</span> Menu <kbd>M</kbd></button>
       ${S.menuOpen ? menuHtml(g, simBtns, coachBox) : ''}
       ${!L3.lp || L3.lp.phase === 'pre' ? tickerHtml(g) : ''}
+      ${S.debug ? debugHtml() : ''}
       ${overlay}
     </div>
     <div class="below">
@@ -884,8 +920,9 @@ function renderGame() {
 // clock and the ball spot, in one strip.
 function broadcastBar(g) {
   const [H, A] = g.teams;
-  const team = (t, i) => `<div class="bc-team ${g.poss === i && !g.final ? 'has' : ''}" style="--team:${t.color}"><span class="bc-abbr">${esc(t.abbr)}</span><span class="bc-score">${g.score[i]}</span>${g.poss === i && !g.final ? '<span class="bc-poss" title="Has the ball"></span>' : ''}</div>`;
-  const info = g.final ? `<div class="bc-cell bc-down">FINAL</div>` : `<div class="bc-cell bc-q">${quarterText(g.quarter)}</div><div class="bc-cell bc-clock">${clockText(g.clock)}</div>
+  const scored = (i) => (L3.scoreFlash?.[i] ?? 0) > performance.now() ? 'scored' : '';
+  const team = (t, i) => `<div class="bc-team ${g.poss === i && !g.final ? 'has' : ''} ${scored(i)}" style="--team:${t.color}"><span class="bc-abbr">${esc(t.abbr)}</span><span class="bc-score">${g.score[i]}</span>${g.poss === i && !g.final ? '<span class="bc-poss" title="Has the ball" aria-label="Has the ball"></span>' : ''}</div>`;
+  const info = g.final ? `<div class="bc-cell bc-down">FINAL</div>` : `<div class="bc-cell bc-q">${quarterText(g.quarter)}</div><div class="bc-cell bc-clock" id="gclock">${clockText(g.clock)}</div>
     <div class="bc-cell bc-down">${downText(g)}</div><div class="bc-cell bc-pc" id="pclock" title="Play clock">:${String(Math.ceil(L3.pclock ?? 40)).padStart(2, '0')}</div>
     <div class="bc-cell bc-spot">${spotText(g)}</div>`;
   return `<div class="bcast" id="bcast">${team(A, 1)}${team(H, 0)}${info}</div>`;
@@ -895,7 +932,7 @@ function tickerHtml(g) {
   const e = [...g.log].reverse().find((x) => x.kind !== 'sub');
   if (!e) return '';
   const tone = e.highlight === 'td' || e.kind === 'score' ? 'td' : e.highlight === 'turnover' || e.kind === 'turnover' ? 'to' : e.highlight === 'sack' ? 'sack' : e.highlight === 'big' ? 'big' : '';
-  return `<div class="ticker ${tone}"><span class="tk-label">Last play</span><p>${esc(e.text).replace('It&#39;s super effective!', '<mark>It&#39;s super effective!</mark>')}</p></div>`;
+  return `<div class="ticker ${tone} ${(L3.tickerUntil ?? 0) > performance.now() ? '' : 'gone'}" id="ticker"><span class="tk-label">Last play</span><p>${esc(e.text).replace('It&#39;s super effective!', '<mark>It&#39;s super effective!</mark>')}</p></div>`;
 }
 
 function menuHtml(g, simBtns, coachBox) {
@@ -906,12 +943,32 @@ function menuHtml(g, simBtns, coachBox) {
     <h4>Camera <kbd>C</kbd></h4><div class="gm-row seg">${CAMERA_MODES.map(([k, l]) => `<button class="btn tiny ${S.cam === k ? 'on' : ''}" data-act="cam" data-cam="${k}" aria-pressed="${S.cam === k}">${l}</button>`).join('')}</div>
     <h4>Graphics</h4><div class="gm-row seg">${[['auto', 'Auto'], ['high', 'High'], ['low', 'Fast']].map(([k, l]) => `<button class="btn tiny ${S.quality === k ? 'on' : ''}" data-act="quality" data-q="${k}" aria-pressed="${S.quality === k}">${l}</button>`).join('')}</div>
     <label class="check"><input type="checkbox" id="g-wx" ${S.weatherFx ? 'checked' : ''}> Weather effects (${WEATHER[g.weather].name})</label>
+    <label class="check"><input type="checkbox" id="g-names" ${S.names ? 'checked' : ''}> Name and position over your player</label>
+    <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}> Debug view: position labels, formation check, camera calibration <kbd>\`</kbd></label>
     ${keysHelp()}
     <button class="btn tiny" data-act="details">Box score and play-by-play</button>
   </div>`;
 }
 
 // Type matchups for the down about to be played, from the lineups on the field now.
+// Debug view: the play state, the formation check for the play on the field, and the broadcast
+// camera's calibration sliders. Off in normal play (menu or the ` key turns it on).
+function debugHtml() {
+  const lp = L3.lp ?? L3.preview?.lp;
+  const issues = lp?.formationIssues ?? [];
+  const slider = (k, label, unit) => {
+    const [lo, hi] = CAMERA_LIMITS[k];
+    return `<label class="cal"><span>${label}</span><input type="range" id="cal-${k}" min="${lo}" max="${hi}" step="0.5" value="${S.cal[k]}"><output id="calv-${k}">${S.cal[k]}${unit}</output></label>`;
+  };
+  return `<div class="dbg card" aria-label="Debug view">
+    <h4>Debug <span class="muted" id="dbg-state">${L3.state ?? ''}</span></h4>
+    <p class="small ${issues.length ? 'bad' : 'good'}">${lp ? (issues.length ? `Formation: ${issues.length} problem${issues.length === 1 ? '' : 's'}: ${esc(issues.slice(0, 3).join('; '))}` : 'Formation check passed: 11 on 11, 7 on the line, no overlaps') : 'No formation on the field'}</p>
+    <h4>Broadcast camera</h4>
+    ${slider('distance', 'Distance', ' yd')}${slider('height', 'Height', ' yd')}${slider('pitch', 'Pitch', '°')}${slider('fov', 'Field of view', '°')}
+    <button class="btn tiny" data-act="calreset">Reset camera</button>
+  </div>`;
+}
+
 function presnapHtml(g) {
   const us = userSide(), them = 1 - us;
   const onOff = g.poss === us;
@@ -1067,6 +1124,7 @@ function doCall(call) {
   const off = g.poss === us ? call : aiOffenseCall(g);
   const def = g.poss === us ? aiDefenseCall(g) : call;
   S.coachDown = false;
+  S.csTab = null; S.csPage = 0;
   if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) { startLive(off, def, { userSide: us, autoSnap: g.poss === us ? null : 1.6 }); return; }
   S.busy = true;
   if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
@@ -1099,9 +1157,26 @@ function autoAdvance() {
 
 // ---------- the live 3D game ----------
 const L3 = { lp: null, off: null, def: null, acc: 0, last: 0, deadT: 0, autoSnap: null, keys: new Set(), edges: new Set(), ev: 0, raf: 0, flashT: 0,
-  preview: null, spots: null, pclock: 40, pcKey: null, before: null };
+  preview: null, spots: null, pclock: 40, pcKey: null, before: null, state: null, trace: [], resultUntil: 0, tickerUntil: 0, scoreFlash: [0, 0] };
+
+// The play's states, in order: PRE_SNAP (lined up) → SNAP (the exchange) → PLAY_ACTIVE →
+// PLAY_DEAD (whistle; bodies settle) → RESULT (the game takes the result: score, down,
+// possession, clock, the banner) → NEXT_DOWN (both teams walk to the new spot, play call).
+// Each change is recorded (tests read the trace) and handed to the stage for the camera.
+function setState(st) {
+  if (L3.state === st) return;
+  L3.state = st;
+  const g = S.game;
+  L3.trace.push({ state: st, at: Math.round(performance.now()), clock: g?.clock, poss: g?.poss, down: g?.down, score: g ? [...g.score] : null });
+  if (L3.trace.length > 400) L3.trace.shift();
+  stage?.setState?.(st);
+  const d = document.getElementById('dbg-state');
+  if (d) d.textContent = st;
+}
 let stage = null;
 let stageWrap = null;
+// Hooks for the browser tests (test/browser.mjs): read-only views of the game's state.
+if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap };
 
 function ensureStage() {
   if (stage || !webglAvailable()) return;
@@ -1110,6 +1185,8 @@ function ensureStage() {
   } catch { stage = null; return; }
   stage.setCameraMode(S.cam);
   stage.setWeatherFx(S.weatherFx);
+  stage.rig.setCalibration(S.cal);
+  stage.debug = S.debug; stage.showNames = S.names;
   if (S.quality !== 'auto') stage.setQuality(S.quality);
   stageWrap = document.createElement('div');
   stageWrap.className = 'stagewrap';
@@ -1199,6 +1276,12 @@ function afterLivePlay(entry) {
   const g = S.game, b = L3.before;
   L3.before = null;
   L3.pclock = 40;
+  const now = performance.now();
+  // RESULT: the field holds where the play ended while the game takes the result; the call
+  // sheet comes up after.
+  if (stage && entry) { L3.resultUntil = now + (entry.highlight === 'td' || entry.kind === 'score' || entry.kind === 'turnover' ? 1600 : 1000); setState('RESULT'); }
+  L3.tickerUntil = now + 6500;
+  if (b) for (const i of [0, 1]) if (g.score[i] !== b.score[i]) L3.scoreFlash[i] = now + 2200;
   save();
   render();
   if (!entry || !g) { autoAdvance(); return; }
@@ -1291,16 +1374,33 @@ function loop(now) {
       }
       if (lp.phase === 'dead') {
         L3.deadT += dt;
-        if (L3.deadT > (lp.end?.how === 'td' ? 2.6 : 1.7)) { finishLive(); return; }
+        if (L3.deadT > (lp.end?.how === 'td' ? 2.2 : 1.3)) { finishLive(); return; }
       }
     }
+  } else if (L3.resultUntil > now) {
+    // RESULT: hold the field for a beat while the banner and scoreboard update.
+    L3.acc = 0;
   } else if (L3.preview?.lp) {
+    if (L3.resultUntil) { L3.resultUntil = 0; render(); }
     // Between plays: the teams walk to the new spot while you pick a play.
     const pv = L3.preview.lp;
     L3.acc += dt;
     while (L3.acc >= DT) { stepLive(pv, null); L3.acc -= DT; }
     if (g && !g.final && needsUser(g) && !S.busy) L3.pclock = Math.max(0, L3.pclock - dt);
   }
+  // Play state for this frame.
+  if (L3.lp) setState(playState(L3.lp));
+  else if (L3.resultUntil > now) setState('RESULT');
+  else if (g && !g.final) setState('NEXT_DOWN');
+  // The game clock runs during the play and stops on the whistle.
+  const gc = document.getElementById('gclock');
+  if (gc && g && !g.final) {
+    const live = L3.lp && L3.lp.phase !== 'pre' ? Math.min(L3.lp.deadAt ?? L3.lp.t, L3.lp.t) : 0;
+    const txt = clockText(Math.max(0, Math.round(g.clock - live)));
+    if (gc.textContent !== txt) gc.textContent = txt;
+  }
+  const tk = document.getElementById('ticker');
+  if (tk && now > L3.tickerUntil && !tk.classList.contains('gone')) tk.classList.add('gone');
   const pc = document.getElementById('pclock');
   if (pc) {
     const txt = `:${String(Math.ceil(L3.pclock)).padStart(2, '0')}`;
@@ -1328,6 +1428,11 @@ function cycleCamera() {
   setCamera(CAMERA_MODES[(i + 1) % CAMERA_MODES.length][0]);
   flash(CAMERA_MODES.find(([k]) => k === S.cam)[1], 'muted');
 }
+function setDebug(on) {
+  S.debug = on;
+  if (stage) stage.debug = on;
+  render();
+}
 function setCamera(k) { S.cam = k; stage?.setCameraMode(k); savePrefs(); if (S.menuOpen) render(); }
 
 function onKey(e, down) {
@@ -1337,6 +1442,7 @@ function onKey(e, down) {
   if (down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
+    if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
     if (code === 'Escape') {
       if (S.menuOpen) { S.menuOpen = false; render(); return; }
       if (L3.lp?.phase === 'pre' && !S.coachDown) { recall(); return; }
@@ -1348,6 +1454,7 @@ function onKey(e, down) {
     if (!g.final && needsUser(g) && !S.busy) {
       const hit = callSheet(g).groups.flatMap(([, , cs]) => cs).find((c) => c.code === code);
       if (hit) { e.preventDefault(); doCall(hit.call); return; }
+      if (code === 'ArrowLeft' || code === 'ArrowRight') { e.preventDefault(); csMove(code === 'ArrowLeft' ? -1 : 1); return; }
     }
   }
   const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'Tab',
@@ -1497,6 +1604,9 @@ function onClick(e) {
     }
     case 'finishgame': finishLeagueGame(); break;
     case 'call': doCall(el.dataset.call); break;
+    case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; render(); break;
+    case 'cspage': S.csPage = Math.max(0, (S.csPage ?? 0) + Number(el.dataset.d)); render(); break;
+    case 'calreset': S.cal = { ...CAMERA_DEFAULTS }; stage?.rig.setCalibration(S.cal); savePrefs(); render(); break;
     case 'snap': doSnap(); break;
     case 'recall': recall(); break;
     case 'menu': S.menuOpen = !S.menuOpen; render(); break;
@@ -1549,6 +1659,14 @@ function depthClick(el) {
 function onInput(e) {
   const t = e.target;
   if (t.id === 'd-search') { S.draft.search = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
+  if (t.id?.startsWith('cal-')) {
+    const k = t.id.slice(4);
+    S.cal[k] = Number(t.value);
+    stage?.rig.setCalibration(S.cal);
+    const o = document.getElementById(`calv-${k}`);
+    if (o) o.textContent = `${S.cal[k]}${k === 'pitch' || k === 'fov' ? '°' : ' yd'}`;
+    savePrefs();
+  }
 }
 function onChange(e) {
   const t = e.target;
@@ -1557,6 +1675,8 @@ function onChange(e) {
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
+  if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }
+  if (t.id === 'g-debug') setDebug(t.checked);
   if (t.id === 'import-file' && t.files?.[0]) t.files[0].text().then(importSave);
   if (t.dataset?.cut) {
     const id = Number(t.dataset.cut);
@@ -1612,6 +1732,7 @@ function render() {
 
 function start(data) {
   loadPrefs();
+  try { if (/[?&#]debug\b/.test(location.search + location.hash)) S.debug = true; } catch { /* no location */ }
   const snap = data?.state;
   if (snap?.league || snap?.game) {
     S.league = LG.migrateLeague(snap.league); S.game = snap.game; S.gameMeta = snap.gameMeta; S.screen = snap.screen ?? 'home';
