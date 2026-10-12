@@ -384,7 +384,7 @@ textarea { background: var(--turf-deep); border: 1px solid var(--line); color: v
   .pbp li:not(:has(.sit)) .txt { grid-column: auto; }
   .dslot { width: 76px; }
   .dslot .spr.md { width: 36px; height: 36px; }
-  .board-table .a-arm, .board-table .a-sta, .board-table .a-blk, .board-table .a-tkl { display: none; }
+  .board-table .a-arm, .board-table .a-sta, .board-table .a-blk, .board-table .a-tkl, .board-table .a-acl, .board-table .a-agi, .board-table .a-awr { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .fp, .football { transition: none; }
@@ -416,36 +416,107 @@ textarea { background: var(--turf-deep); border: 1px solid var(--line); color: v
   .trow { display: flex; gap: 4px; }
   .trow button { padding: 10px 11px; }
 }
-/* Field-first 3D game: sticky scoreboard, a stage that fills the rest of the viewport, and the
-   play dock overlaid on the near turf. The no-WebGL field keeps the plain stack. */
-.game.g3d { gap: 12px; }
-.game.g3d .scoreboard { position: sticky; top: calc(env(safe-area-inset-top, 0px) + var(--top-h, 0px)); z-index: 15; padding: 6px 12px; gap: 2px 12px; }
-.game.g3d .sb-score { font-size: 36px; }
-.game.g3d .sb-clock { font-size: 24px; }
-.game.g3d .stage-slot { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); min-height: 0;
-  height: max(340px, calc(100vh - var(--top-h, 60px) - var(--sb-h, 90px) - 44px));
-  height: max(340px, calc(100dvh - var(--top-h, 60px) - var(--sb-h, 90px) - 44px)); }
-.game.g3d .stagewrap { grid-area: 1 / 1; height: 100%; }
-.game.g3d .dock { grid-area: 1 / 1; align-self: end; z-index: 2; margin: 0 10px 10px; max-height: 40%; overflow-y: auto; overscroll-behavior: contain;
-  background: rgba(13, 43, 32, 0.9); backdrop-filter: blur(6px); padding: 10px 12px; gap: 8px; }
-.game.g3d .dock .callhead h3 { color: var(--chalk); }
-.game.g3d .dock .plays { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
-.game.g3d .dock .play { padding: 6px 10px; gap: 1px; }
-.game.g3d .dock .play b { font-size: 15px; }
-.game.g3d .dock .simrow { padding-top: 6px; }
-.game.g3d .dock .simrow .btn { padding: 7px 12px; }
-.game.g3d .dock.d-lined, .game.g3d .dock.d-wait, .game.g3d .dock.d-final { justify-self: center; width: min(560px, calc(100% - 20px)); }
-.game.g3d .dock.d-lined .btn.primary { font-size: 17px; padding: 10px 18px; }
+/* The 3D game: the stadium fills the viewport under the top bar, with a broadcast scoreboard,
+   a corner menu, a compact call sheet between plays and the game details below the fold.
+   The no-WebGL field keeps the plain stack. */
+body.g3d-on { padding-inline: 0; }
+body.g3d-on .top { max-width: none; margin-bottom: 0; padding-inline: 16px; }
+body.g3d-on main { max-width: none; }
+.game.g3d { gap: 0; }
+.game.g3d .stage-slot { position: relative; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); min-height: 0;
+  height: max(360px, calc(100vh - var(--top-h, 60px)));
+  height: max(360px, calc(100dvh - var(--top-h, 60px))); }
+.game.g3d .stage-slot > * { grid-area: 1 / 1; }
+.game.g3d .stagewrap { height: 100%; border-radius: 0; border: 0; border-bottom: 1px solid var(--line); }
+.game.g3d .below { max-width: 1240px; width: 100%; margin: 0 auto; padding: 16px 16px 0; display: grid; gap: 12px; }
+.glass { background: rgba(9, 22, 17, 0.78); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(238, 242, 230, 0.16); }
+/* Broadcast scoreboard */
+.bcast { align-self: start; justify-self: center; z-index: 3; margin-top: 12px; display: flex; align-items: stretch; height: 42px; border-radius: 6px; overflow: hidden;
+  background: rgba(9, 22, 17, 0.86); backdrop-filter: blur(8px); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); font-family: var(--f-data); pointer-events: none; max-width: calc(100% - 200px); }
+.bc-team { display: flex; align-items: center; gap: 10px; padding: 0 12px 0 0; background: linear-gradient(90deg, var(--team) 0 52px, rgba(255,255,255,0.04) 52px); position: relative; }
+.bc-abbr { width: 52px; text-align: center; font: 400 18px/1 var(--f-display); color: #fff; text-shadow: 0 1px 0 rgba(0,0,0,0.4); }
+.bc-score { font: 700 26px/1 var(--f-data); color: var(--chalk); min-width: 1.3em; text-align: center; font-variant-numeric: tabular-nums; }
+.bc-poss { width: 10px; height: 7px; border-radius: 50%; background: #c46a2a; box-shadow: 0 0 0 1.5px #fff; position: absolute; right: 4px; top: 6px; }
+.bc-team.has .bc-score { color: var(--amber); }
+.bc-cell { display: grid; place-items: center; padding: 0 12px; font: 600 17px/1 var(--f-data); letter-spacing: 0.04em; color: var(--chalk); border-left: 1px solid rgba(238,242,230,0.12); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bc-q { color: var(--chalk-dim); }
+.bc-clock { font-size: 20px; color: var(--amber); }
+.bc-down { background: rgba(255, 210, 31, 0.12); color: #ffe27a; text-transform: uppercase; }
+.bc-pc { font-size: 15px; color: var(--chalk-dim); min-width: 46px; }
+.bc-pc.low { color: var(--bad); }
+.bc-spot { color: var(--chalk-dim); font-size: 15px; text-transform: uppercase; }
+/* Menu */
+.menubtn { align-self: start; justify-self: end; z-index: 4; margin: 12px 12px 0 0; display: flex; gap: 8px; align-items: center; cursor: pointer; border-radius: 6px; padding: 9px 12px;
+  background: rgba(9, 22, 17, 0.8); border: 1px solid rgba(238,242,230,0.18); font: 600 14px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.08em; }
+.menubtn kbd { font-size: 11px; }
+.gmenu { align-self: start; justify-self: end; z-index: 5; margin: 60px 12px 0 0; width: min(340px, calc(100% - 24px)); max-height: calc(100% - 80px); overflow-y: auto; display: grid; gap: 6px; padding: 12px 14px;
+  background: rgba(9, 22, 17, 0.94); backdrop-filter: blur(8px); }
+.gmenu h4 { margin-top: 6px; display: flex; gap: 8px; align-items: center; }
+.gm-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.gm-row .btn.on { background: var(--amber); color: #1b1408; border-color: var(--amber); }
+.gmenu .keys { margin-top: 6px; }
+.gmenu .keygrid { grid-template-columns: 1fr; font-size: 13px; }
+/* Last play */
+.ticker { align-self: start; justify-self: start; z-index: 3; margin: 12px 0 0 12px; max-width: min(340px, calc(50% - 260px)); padding: 7px 10px; border-radius: 6px;
+  background: rgba(9, 22, 17, 0.78); border-left: 3px solid var(--chalk-dim); font-size: 13px; line-height: 1.35; pointer-events: none; }
+.ticker .tk-label { display: block; font: 600 11px/1.2 var(--f-data); text-transform: uppercase; letter-spacing: 0.1em; color: var(--chalk-dim); }
+.ticker.td { border-color: var(--amber); } .ticker.to, .ticker.sack { border-color: var(--bad); } .ticker.big { border-color: var(--good); }
+.ticker mark { background: none; color: var(--amber); }
+/* Call sheet */
+.callsheet { align-self: end; justify-self: center; z-index: 3; margin: 0 12px 12px; width: min(1500px, calc(100% - 24px)); max-height: 46%; overflow-y: auto; overscroll-behavior: contain;
+  background: rgba(9, 22, 17, 0.88); backdrop-filter: blur(8px); border: 1px solid rgba(238,242,230,0.14); border-radius: 8px; padding: 8px 10px 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.35); }
+.cs-head { display: flex; gap: 12px; align-items: baseline; padding: 0 2px 6px; font-family: var(--f-data); }
+.cs-head b { font: 700 18px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; color: #ffe27a; }
+.cs-head span { color: var(--chalk-dim); font-size: 14px; }
+.cs-head .cs-keys { margin-left: auto; font-size: 12px; }
+.cs-groups { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.cs-group h4 { margin: 0 0 4px; font-size: 11px; }
+.cs-cards { display: flex; gap: 6px; }
+.pcard { position: relative; width: 110px; display: grid; grid-template-rows: auto auto auto; gap: 1px; text-align: left; cursor: pointer; padding: 4px 6px 6px; border-radius: 6px;
+  background: rgba(238, 242, 230, 0.05); border: 1px solid rgba(238, 242, 230, 0.12); border-top: 3px solid var(--fam, var(--chalk-dim)); transition: transform 0.08s, background 0.12s; }
+.pcard:hover, .pcard:focus-visible { background: rgba(238, 242, 230, 0.13); transform: translateY(-2px); }
+.pcard:active { transform: translateY(0); background: rgba(255, 181, 71, 0.25); }
+.pcard.f-run { --fam: #ffd23f; } .pcard.f-pass { --fam: #4fc3f7; } .pcard.f-kick { --fam: #a7bba9; }
+.pcard.f-front { --fam: #ffd23f; } .pcard.f-blitz { --fam: #ff5a4f; } .pcard.f-cover { --fam: #4fc3f7; }
+.pcard.fit { box-shadow: 0 0 0 2px var(--amber) inset; }
+.pcard .pname { font: 700 14px/1.1 var(--f-data); text-transform: uppercase; letter-spacing: 0.02em; }
+.pcard .pblurb { font-size: 11.5px; line-height: 1.2; color: var(--chalk-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcard kbd { position: absolute; top: 6px; right: 6px; font-size: 11px; padding: 1px 4px; }
+.pcard .fittag { position: absolute; top: 6px; left: 6px; font: 700 10px/1 var(--f-data); font-style: normal; text-transform: uppercase; letter-spacing: 0.06em; background: var(--amber); color: #1b1408; padding: 2px 4px; border-radius: 3px; }
+.pdiag { width: 100%; height: 58px; display: block; background: linear-gradient(#2f7a45, #2a6f3f); border-radius: 4px; }
+.pdiag .los { stroke: #2f7bff; stroke-width: 0.5; }
+.pdiag .o { fill: rgba(238,242,230,0.35); }
+.pdiag .o.on { fill: #ffffff; stroke: #0d2b20; stroke-width: 0.3; }
+.pdiag .x { stroke: rgba(238,242,230,0.35); stroke-width: 0.45; fill: none; }
+.pdiag .x.on { stroke: #ffffff; stroke-width: 0.6; }
+/* Lined up / waiting / final */
+.pill { align-self: end; justify-self: center; z-index: 3; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 16px; border-radius: 999px;
+  background: rgba(9, 22, 17, 0.86); backdrop-filter: blur(8px); border: 1px solid rgba(238,242,230,0.16); box-shadow: 0 8px 24px rgba(0,0,0,0.35); }
+.pill .pl-play { font: 700 16px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.05em; }
+.pill .btn { border-radius: 999px; }
+.pill.wait { padding: 10px 18px; font: 600 14px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.08em; color: var(--chalk-dim); }
+.ov-final { align-self: center; justify-self: center; z-index: 3; width: min(520px, calc(100% - 24px)); background: rgba(9, 22, 17, 0.92); }
+.ov-final .simrow { display: none; }
+/* HUD inside the stage */
+.game.g3d .hud { grid-template-rows: auto 1fr auto; grid-template-columns: 1fr; padding: 62px 12px 14px; }
+.game.g3d .hud-call { grid-row: 1; grid-column: 1; justify-self: center; font-size: 12px; padding: 5px 9px; background: rgba(9, 22, 17, 0.72); }
+.game.g3d .hud-flash { grid-row: 2; grid-column: 1; }
+.game.g3d .hud-tip { grid-row: 3; grid-column: 1; justify-self: center; font-size: 13px; background: rgba(9, 22, 17, 0.7); padding: 6px 12px; }
+.game.g3d .stage-slot:has(.callsheet) .hud-tip, .game.g3d .stage-slot:has(.pill) .hud-tip { display: none; }
 .simrow .btn.skip { color: var(--chalk-dim); background: none; }
-.simrow .btn.skip::after { content: ' \25BE'; }
-.simrow .btn.skip[aria-expanded="true"]::after { content: ' \25B4'; }
-@media (min-width: 700px) { .pgroup { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 8px; align-items: start; } .pgroup h4 { margin-top: 8px; } }
-@media (pointer: coarse) { .game.g3d .play kbd { display: none; } }
+@media (pointer: coarse) { .game.g3d .pcard kbd, .cs-keys, .menubtn kbd { display: none; } }
+@media (max-width: 900px) {
+  .bcast { max-width: calc(100% - 24px); margin-top: 56px; height: 36px; }
+  .bc-spot, .bc-q { display: none; }
+  .ticker { display: none; }
+  .callsheet { max-height: 52%; }
+  .pcard { width: 104px; }
+  .pdiag { height: 48px; }
+}
 @media (max-width: 560px) {
-  .game.g3d .dock { margin: 0 6px 6px; padding: 8px 10px; }
-  .game.g3d .dock .plays { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .game.g3d .dock .play span { display: none; }
-  .game.g3d .dock .callhead .muted { font-size: 12px; }
+  .bc-abbr { width: 40px; font-size: 15px; } .bc-team { background: linear-gradient(90deg, var(--team) 0 40px, rgba(255,255,255,0.04) 40px); }
+  .bc-score { font-size: 20px; } .bc-cell { padding: 0 8px; font-size: 14px; }
+  .pcard .pblurb { display: none; }
 }
 kbd { font: 600 12px/1 var(--f-data); background: var(--turf-deep); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 2px 5px; color: var(--chalk); }
 .keys summary { cursor: pointer; font: 600 13px/1.3 var(--f-data); text-transform: uppercase; letter-spacing: 0.08em; color: var(--chalk-dim); }

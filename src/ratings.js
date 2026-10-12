@@ -3,8 +3,8 @@ import { POKEMON } from './data.js';
 import { pickAbility, TYPE_TRAITS, ABILITIES } from './types.js';
 
 export const ATTRS = {
-  spd: 'Speed', str: 'Strength', blk: 'Blocking', rush: 'Pass rush', arm: 'Arm',
-  acc: 'Accuracy', hnd: 'Hands', cov: 'Coverage', tkl: 'Tackling', sta: 'Stamina',
+  spd: 'Speed', acl: 'Acceleration', agi: 'Agility', str: 'Strength', blk: 'Blocking', rush: 'Pass rush',
+  arm: 'Throwing', acc: 'Accuracy', hnd: 'Catching', cov: 'Coverage', tkl: 'Tackling', awr: 'Awareness', sta: 'Stamina',
 };
 
 // Formation spots: x = yards from the line of scrimmage (offense negative),
@@ -107,6 +107,11 @@ function buildPlayers() {
       cov: 0.5 * q.spe + 0.3 * q.spd + 0.2 * q.def + 0.1 * bst,
       tkl: 0.4 * q.atk + 0.35 * q.def + 0.25 * w + 0.1 * bst,
       sta: 0.75 * q.hp + 0.25 * q.def + 0.1 * bst,
+      // Live-play movement and reads: getting to top speed (light and quick), cutting and
+      // turning (quick, light and compact), and reading the play (Sp. Def and Sp. Atk).
+      acl: 0.6 * q.spe + 0.25 * (1 - w) + 0.15 * q.atk + 0.1 * bst,
+      agi: 0.55 * q.spe + 0.3 * (1 - w) + 0.15 * (1 - h) + 0.1 * bst,
+      awr: 0.45 * q.spd + 0.35 * q.spa + 0.2 * q.def + 0.1 * bst,
     });
   }
   const rawDist = Object.fromEntries(Object.keys(ATTRS).map((k) => [k, base.map((p) => raws.get(p.id)[k]).sort((a, b) => a - b)]));

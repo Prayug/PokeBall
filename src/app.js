@@ -4,8 +4,10 @@ import { SPRITES } from './sprites.js';
 import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER, effectLabel, bestMultiplier } from './types.js';
 import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
   quarterText, fgDistance, fgChance, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights, manualSub } from './engine.js';
-import { createLivePlay, snap, step as stepLive, playSeconds, DT } from './live.js';
+import { createLivePlay, snap, step as stepLive, playSeconds, worldSpots, DT } from './live.js';
 import { Stage, webglAvailable } from './field3d.js';
+import { CAMERA_MODES } from './camera3d.js';
+import { diagram, formationName } from './playbook.js';
 import * as LG from './league.js';
 
 const SAVE_KEY = 'pokeball.save.v1';
@@ -18,6 +20,7 @@ const S = {
   draft: { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false },
   depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 22, legendaries: false, typeCap: true, clock: true },
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
+  menuOpen: false, cam: 'broadcast', weatherFx: true, quality: 'auto',
 };
 let timers = { draft: null, clock: null, auto: null };
 
@@ -25,7 +28,7 @@ let timers = { draft: null, clock: null, auto: null };
 function save() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot()));
-    localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, setup: S.setup }));
+    savePrefs();
   } catch { /* storage unavailable: play continues unsaved */ }
 }
 function loadSaved() {
@@ -67,12 +70,24 @@ function importSave(text) {
   loadSnapshot(data);
 }
 function loadPrefs() {
-  try { const p = JSON.parse(localStorage.getItem(PREF_KEY) || 'null'); if (p) { S.coach = !!p.coach; Object.assign(S.setup, p.setup ?? {}); } } catch { /* ignore */ }
+  try {
+    const p = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
+    if (p) {
+      S.coach = !!p.coach; Object.assign(S.setup, p.setup ?? {});
+      if (CAMERA_MODES.some(([k]) => k === p.cam)) S.cam = p.cam;
+      if (p.weatherFx != null) S.weatherFx = !!p.weatherFx;
+      if (['auto', 'high', 'low'].includes(p.quality)) S.quality = p.quality;
+    }
+  } catch { /* ignore */ }
+}
+function savePrefs() {
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, setup: S.setup, cam: S.cam, weatherFx: S.weatherFx, quality: S.quality })); } catch { /* ignore */ }
 }
 
 // ---------- small view helpers ----------
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const P = (id) => PLAYERS[id];
+const ATTR_SHORT = { spd: 'SPD', acl: 'ACL', agi: 'AGI', str: 'STR', blk: 'BLK', rush: 'RSH', arm: 'THR', acc: 'ACC', hnd: 'CTH', cov: 'COV', tkl: 'TKL', awr: 'AWR', sta: 'STA' };
 function sprite(id, cls = '') {
   return `<img class="spr ${cls}" src="${SPRITES[id]}" alt="${esc(P(id).name)}" loading="lazy" draggable="false">`;
 }
@@ -193,7 +208,7 @@ function boardRowsHtml() {
   const L = S.league, me = user();
   const myTurn = LG.currentPick(L)?.team === me.id;
   const rows = boardIds();
-  if (!rows.length) return `<tr><td colspan="13" class="empty">No Pokémon match. Clear the search, type or generation filter.</td></tr>`;
+  if (!rows.length) return `<tr><td colspan="16" class="empty">No Pokémon match. Clear the search, type or generation filter.</td></tr>`;
   return rows.map(({ id, fit }) => {
     const p = P(id);
     const block = LG.blockReason(L, me, id);
@@ -239,7 +254,7 @@ function renderDraft() {
           <table class="board-table">
             <thead><tr><th><button class="sort ${d.sort === 'name' ? 'on' : ''}" data-act="sort" data-key="name">Pokémon</button></th>
             <th><button class="sort ${d.sort === 'fit' ? 'on' : ''}" data-act="sort" data-key="fit">Fit</button></th>
-            ${head('spd', 'SPD')}${head('str', 'STR')}${head('blk', 'BLK')}${head('rush', 'RSH')}${head('arm', 'ARM')}${head('acc', 'ACC')}${head('hnd', 'HND')}${head('cov', 'COV')}${head('tkl', 'TKL')}${head('sta', 'STA')}<th></th></tr></thead>
+            ${Object.keys(ATTRS).map((k) => head(k, ATTR_SHORT[k])).join('')}<th></th></tr></thead>
             <tbody id="board-body">${boardRowsHtml()}</tbody>
           </table>
         </div>
@@ -738,6 +753,34 @@ function callSheet(g) {
   return { onOff, groups: keyed, fit };
 }
 
+// The 3D game's call sheet: a compact overlay of play cards, grouped by formation and
+// family, each with its play art, its key and a mark on the one that fits the down.
+function callSheetHtml(g) {
+  const { onOff, groups, fit } = callSheet(g);
+  const fg = fgDistance(g);
+  const side = onOff ? 'off' : 'def';
+  // Offense: split each family by formation, so the header reads "Shotgun · Pass".
+  const sections = [];
+  for (const [fam, label, cs] of groups) {
+    if (!onOff || fam === 'kick') { sections.push([fam, label, cs]); continue; }
+    const byForm = new Map();
+    for (const c of cs) { const f = formationName(c.call); if (!byForm.has(f)) byForm.set(f, []); byForm.get(f).push(c); }
+    for (const [f, list] of byForm) sections.push([fam, `${f} · ${label}`, list]);
+  }
+  const card = ({ call, label }, fam) => {
+    const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
+    const extra = call === 'fg' && onOff ? `${fg} yd · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
+    return `<button class="pcard f-${fam} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" title="${esc(p.name)}: ${esc(extra)}">
+      ${diagram(g, call, side)}<span class="pname">${p.name}</span><span class="pblurb">${esc(extra)}</span>
+      ${call === fit ? '<em class="fittag">Fits</em>' : ''}${label ? `<kbd>${label}</kbd>` : ''}</button>`;
+  };
+  const who = onOff ? 'Call your offense' : `${esc(g.teams[g.poss].abbr)} ball · call your defense`;
+  return `<div class="callsheet" role="dialog" aria-label="Play call">
+    <div class="cs-head"><b>${downText(g)}</b><span>${who}</span><span class="cs-keys">Number keys to call · <kbd>M</kbd> menu</span></div>
+    <div class="cs-groups">${sections.map(([fam, label, cs]) => `<div class="cs-group"><h4>${label}</h4><div class="cs-cards">${cs.map((c) => card(c, fam)).join('')}</div></div>`).join('')}</div>
+  </div>`;
+}
+
 function playCards(g, { keys = false } = {}) {
   const { onOff, groups, fit } = callSheet(g);
   const fg = fgDistance(g);
@@ -798,17 +841,32 @@ function renderGame() {
     controls = `<div class="card callcard">${head}${simrow}</div>`;
   }
   if (live3d) {
-    // Field first: the dock rides on the near turf, and is gone while the ball is live.
-    const dockHtml = dock === 'live' ? '' : controls.replace('class="card ', `class="card dock d-${dock} `);
+    // The 3D game fills the screen: a broadcast scoreboard on top, a menu in the corner, the
+    // call sheet only between plays, and the game details below the fold.
+    let overlay = '';
+    if (g.final) overlay = controls.replace('class="card ', 'class="card ov-final ');
+    else if (L3.lp) {
+      const lp = L3.lp;
+      const mine = lp.user === lp.o ? `${formationName(L3.off)} · ${OFF_PLAYS[L3.off].name}` : DEF_PLAYS[L3.def].name;
+      if (lp.phase === 'pre') overlay = `<div class="pill lined"><span class="pl-play">${esc(mine)}</span>
+        <button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap' : 'Start'} <kbd>Space</kbd></button>
+        ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change <kbd>Esc</kbd></button>'}</div>`;
+    } else if (decide) overlay = callSheetHtml(g);
+    else overlay = `<div class="pill wait"><span>${S.busy ? 'Play in progress' : 'AI calling this down'}</span></div>`;
     return `<section class="game g3d">
-    ${scoreboard(g)}
-    <div class="stage-slot" id="stage-slot">${dockHtml}</div>
-    ${lastPlayHtml(g)}
-    ${decide ? `<div class="card scoutpanel">${presnapHtml(g)}${tendenciesHtml(g)}</div>` : ''}
-    <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
-    <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>
-    ${keysHelp()}
-    <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
+    <div class="stage-slot" id="stage-slot">
+      ${broadcastBar(g)}
+      <button class="menubtn" data-act="menu" aria-expanded="${!!S.menuOpen}" aria-label="Game menu"><span aria-hidden="true">☰</span> Menu <kbd>M</kbd></button>
+      ${S.menuOpen ? menuHtml(g, simBtns, coachBox) : ''}
+      ${!L3.lp || L3.lp.phase === 'pre' ? tickerHtml(g) : ''}
+      ${overlay}
+    </div>
+    <div class="below">
+      ${decide ? `<div class="card scoutpanel">${presnapHtml(g)}${tendenciesHtml(g)}</div>` : ''}
+      <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
+      <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>
+      <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
+    </div>
   </section>`;
   }
   return `<section class="game">
@@ -820,6 +878,37 @@ function renderGame() {
     <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>
     <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
   </section>`;
+}
+
+// Broadcast scoreboard: both teams, possession, quarter, clock, down and distance, the play
+// clock and the ball spot, in one strip.
+function broadcastBar(g) {
+  const [H, A] = g.teams;
+  const team = (t, i) => `<div class="bc-team ${g.poss === i && !g.final ? 'has' : ''}" style="--team:${t.color}"><span class="bc-abbr">${esc(t.abbr)}</span><span class="bc-score">${g.score[i]}</span>${g.poss === i && !g.final ? '<span class="bc-poss" title="Has the ball"></span>' : ''}</div>`;
+  const info = g.final ? `<div class="bc-cell bc-down">FINAL</div>` : `<div class="bc-cell bc-q">${quarterText(g.quarter)}</div><div class="bc-cell bc-clock">${clockText(g.clock)}</div>
+    <div class="bc-cell bc-down">${downText(g)}</div><div class="bc-cell bc-pc" id="pclock" title="Play clock">:${String(Math.ceil(L3.pclock ?? 40)).padStart(2, '0')}</div>
+    <div class="bc-cell bc-spot">${spotText(g)}</div>`;
+  return `<div class="bcast" id="bcast">${team(A, 1)}${team(H, 0)}${info}</div>`;
+}
+
+function tickerHtml(g) {
+  const e = [...g.log].reverse().find((x) => x.kind !== 'sub');
+  if (!e) return '';
+  const tone = e.highlight === 'td' || e.kind === 'score' ? 'td' : e.highlight === 'turnover' || e.kind === 'turnover' ? 'to' : e.highlight === 'sack' ? 'sack' : e.highlight === 'big' ? 'big' : '';
+  return `<div class="ticker ${tone}"><span class="tk-label">Last play</span><p>${esc(e.text).replace('It&#39;s super effective!', '<mark>It&#39;s super effective!</mark>')}</p></div>`;
+}
+
+function menuHtml(g, simBtns, coachBox) {
+  const simOff = L3.lp && L3.lp.phase !== 'pre';
+  return `<div class="gmenu card" role="menu">
+    <h4>Coach</h4>${coachBox}
+    <h4>Skip ahead</h4><div class="gm-row">${simOff ? simBtns.replaceAll('data-act="sim"', 'data-act="sim" disabled') : simBtns}</div>
+    <h4>Camera <kbd>C</kbd></h4><div class="gm-row seg">${CAMERA_MODES.map(([k, l]) => `<button class="btn tiny ${S.cam === k ? 'on' : ''}" data-act="cam" data-cam="${k}" aria-pressed="${S.cam === k}">${l}</button>`).join('')}</div>
+    <h4>Graphics</h4><div class="gm-row seg">${[['auto', 'Auto'], ['high', 'High'], ['low', 'Fast']].map(([k, l]) => `<button class="btn tiny ${S.quality === k ? 'on' : ''}" data-act="quality" data-q="${k}" aria-pressed="${S.quality === k}">${l}</button>`).join('')}</div>
+    <label class="check"><input type="checkbox" id="g-wx" ${S.weatherFx ? 'checked' : ''}> Weather effects (${WEATHER[g.weather].name})</label>
+    ${keysHelp()}
+    <button class="btn tiny" data-act="details">Box score and play-by-play</button>
+  </div>`;
 }
 
 // Type matchups for the down about to be played, from the lineups on the field now.
@@ -895,6 +984,8 @@ function lineupHtml(g) {
 
 function keysHelp() {
   return `<details class="keys"><summary>Controls</summary><div class="keygrid">
+    <span><kbd>1</kbd>-<kbd>9</kbd> <kbd>0</kbd> <kbd>-</kbd> between plays: call the play on that card</span>
+    <span><kbd>C</kbd> change camera · <kbd>M</kbd> menu · <kbd>Esc</kbd> change the play</span>
     <span><kbd>Space</kbd> snap, juke with the ball, dive to tackle</span>
     <span><kbd>W A S D</kbd> or arrows: move your player</span>
     <span><kbd>Shift</kbd> sprint</span>
@@ -978,6 +1069,7 @@ function doCall(call) {
   S.coachDown = false;
   if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) { startLive(off, def, { userSide: us, autoSnap: g.poss === us ? null : 1.6 }); return; }
   S.busy = true;
+  if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
   const entry = runPlay(g, off, def);
   if (stage) { S.busy = false; afterLivePlay(entry); return; }
   animatePlay(entry, () => { S.busy = false; save(); render(); autoAdvance(); });
@@ -1006,7 +1098,8 @@ function autoAdvance() {
 }
 
 // ---------- the live 3D game ----------
-const L3 = { lp: null, off: null, def: null, acc: 0, last: 0, deadT: 0, autoSnap: null, keys: new Set(), edges: new Set(), ev: 0, raf: 0, flashT: 0, preview: null };
+const L3 = { lp: null, off: null, def: null, acc: 0, last: 0, deadT: 0, autoSnap: null, keys: new Set(), edges: new Set(), ev: 0, raf: 0, flashT: 0,
+  preview: null, spots: null, pclock: 40, pcKey: null, before: null };
 let stage = null;
 let stageWrap = null;
 
@@ -1015,6 +1108,9 @@ function ensureStage() {
   try {
     stage = new Stage();
   } catch { stage = null; return; }
+  stage.setCameraMode(S.cam);
+  stage.setWeatherFx(S.weatherFx);
+  if (S.quality !== 'auto') stage.setQuality(S.quality);
   stageWrap = document.createElement('div');
   stageWrap.className = 'stagewrap';
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
@@ -1035,23 +1131,20 @@ function mountStage() {
   if (!L3.lp) showPreview();
 }
 
-// The 3D game is one viewport column: the stage fills what the sticky top bar and scoreboard
-// leave of the screen.
+// The 3D game fills the viewport under the sticky top bar.
 function fitStage() {
   const top = document.querySelector('.top')?.offsetHeight ?? 0;
-  const sb = document.querySelector('.game.g3d .scoreboard')?.offsetHeight ?? 0;
-  const root = document.documentElement.style;
-  root.setProperty('--top-h', `${top}px`);
-  root.setProperty('--sb-h', `${sb}px`);
+  document.documentElement.style.setProperty('--top-h', `${top}px`);
   fitDock();
 }
 
+// Keep the line of scrimmage clear of the call sheet: the view shifts up by part of it.
 function fitDock() {
-  const dock = document.querySelector('.game.g3d .dock');
-  stage?.setInset(dock ? dock.offsetHeight + 10 : 0);
+  const sheet = document.querySelector('.game.g3d .callsheet');
+  stage?.setInset(sheet ? sheet.offsetHeight * 0.7 : 0);
 }
 
-// Between plays, line both teams up at the new spot.
+// Between plays, both teams jog from where the last play ended to the new spot.
 function showPreview() {
   const g = S.game;
   if (!g || !stage) return;
@@ -1059,26 +1152,29 @@ function showPreview() {
   const key = `${g.playNo}:${g.poss}:${g.spot}:${g.final}`;
   if (L3.preview?.key === key && L3.preview.g === g) { stage.setPlay(L3.preview.lp); return; }
   const saved = g.rng;
-  const lp = createLivePlay(g, g.poss === us ? 'slant' : 'inside_run', 'base', { userSide: us });
+  const first = !L3.preview && !L3.spots;
+  const lp = createLivePlay(g, g.poss === us ? 'slant' : 'inside_run', 'base', { userSide: us, from: L3.spots ?? undefined });
   g.rng = saved;
   lp.control = null; lp.preview = true;
   L3.preview = { key, lp, g };
+  L3.spots = null;
   stage.setPlay(lp);
-  stage.snapCamera();
+  if (first) stage.snapCamera();
 }
 
 function startLive(off, def, opts) {
   const g = S.game;
-  L3.lp = createLivePlay(g, off, def, opts);
+  // Line up from wherever the players are standing in the preview.
+  const from = L3.preview?.lp ? worldSpots(L3.preview.lp) : L3.spots ?? undefined;
+  L3.before = { poss: g.poss, down: g.down, toGo: g.toGo, spot: g.spot, score: [...g.score] };
+  L3.lp = createLivePlay(g, off, def, { ...opts, from });
   L3.off = off; L3.def = def; L3.acc = 0; L3.deadT = 0; L3.ev = 0;
   L3.autoSnap = opts.autoSnap ?? null;
+  L3.pclock = Math.max(L3.pclock, 10);
   L3.edges.clear();
+  S.menuOpen = false;
   stage.setPlay(L3.lp);
   render();
-  // Bring the stage up under the sticky scoreboard.
-  const top = stageWrap?.getBoundingClientRect().top;
-  const want = (document.querySelector('.top')?.offsetHeight ?? 0) + (document.querySelector('.game.g3d .scoreboard')?.offsetHeight ?? 0) + 12;
-  if (top != null && Math.abs(top - want) > 40) window.scrollTo({ top: Math.max(0, window.scrollY + top - want), behavior: reduceMotion ? 'auto' : 'smooth' });
 }
 
 function doSnap() {
@@ -1092,15 +1188,30 @@ function doSnap() {
 function finishLive() {
   const lp = L3.lp, g = S.game;
   L3.lp = null;
+  L3.spots = worldSpots(lp);
+  L3.preview = null;
   const entry = runLivePlay(g, L3.off, L3.def, lp.result, playSeconds(lp));
   S.coachDown = false;
   afterLivePlay(entry);
 }
 
 function afterLivePlay(entry) {
+  const g = S.game, b = L3.before;
+  L3.before = null;
+  L3.pclock = 40;
   save();
   render();
-  if (entry) flash(entry.highlight === 'td' || entry.kind === 'score' ? 'TOUCHDOWN' : '', entry.highlight === 'td' ? 'td' : '');
+  if (!entry || !g) { autoAdvance(); return; }
+  // What the play did to the game, as one banner.
+  let text = '', tone = '';
+  if (entry.highlight === 'td' || (entry.kind === 'score' && b && g.score.some((v, i) => v - b.score[i] >= 6))) { text = 'TOUCHDOWN'; tone = 'td'; }
+  else if (entry.kind === 'score') { text = 'SCORE'; tone = 'td'; }
+  else if (entry.kind === 'turnover') { text = /INTERCEPT/i.test(entry.text) ? 'INTERCEPTION' : 'FUMBLE · TURNOVER'; tone = 'to'; }
+  else if (b && g.poss !== b.poss && !g.final && entry.off && ['run', 'pass'].includes(OFF_PLAYS[entry.off]?.kind)) { text = 'TURNOVER ON DOWNS'; tone = 'to'; }
+  else if (entry.highlight === 'sack') { text = 'SACK'; tone = 'to'; }
+  else if (b && g.poss === b.poss && g.down === 1 && b.down >= 1 && entry.yards > 0) { text = 'FIRST DOWN'; tone = 'big'; }
+  else if (b && g.poss === b.poss) text = `${downText(g)}`;
+  flash(text, tone);
   autoAdvance();
 }
 
@@ -1109,7 +1220,7 @@ function flash(text, tone = '') {
   if (!el || !text) return;
   el.textContent = text;
   el.className = `hud-flash on ${tone}`;
-  L3.flashT = performance.now() + 1400;
+  L3.flashT = performance.now() + 1500;
 }
 
 const FLASH = { int: ['INTERCEPTED!', 'to'], sack: ['SACK!', 'to'], broken: ['Broken tackle!', ''], juke: ['Juke!', ''], ghost: ['Phased through!', 'big'],
@@ -1132,12 +1243,12 @@ function readInput(lp) {
 }
 
 function hudTip(lp) {
-  if (!lp) return '';
+  if (!lp) return S.game && !S.game.final && needsUser(S.game) && !S.busy ? 'Pick a play · number keys' : '';
   const c = lp.control;
-  if (lp.phase === 'pre') return lp.user === lp.o ? `Space to snap${lp.kind === 'pass' ? ' · then 1-5 to throw' : ''}` : 'Q to pick a defender · Space to start';
+  if (lp.phase === 'pre') return lp.user === lp.o ? `Space to snap${lp.kind === 'pass' ? ' · then 1-5 to throw' : ''} · C camera` : 'Q to pick a defender · Space to start';
   if (lp.phase === 'dead') return '';
   if (!c) return 'Watching';
-  if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run') return '1-5 throw · T throw away · Arrows move · Space spin';
+  if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run') return '1-5 throw · T throw away · Arrows move';
   if (c.carrier) return 'Arrows run · Shift sprint · Space juke · R spin · E truck';
   if (c.side !== lp.carrierTeam || c.side === 'def') return 'Arrows move · Space dive · Q switch to the ball';
   return 'Arrows move';
@@ -1149,9 +1260,13 @@ function loop(now) {
   const dt = Math.min(0.1, (now - (L3.last || now)) / 1000);
   L3.last = now;
   const lp = L3.lp;
+  const g = S.game;
   if (lp) {
     if (lp.phase === 'pre') {
-      stepLive(lp, null);
+      // Fixed-step the walk to the line, like the live play.
+      L3.acc += dt;
+      while (L3.acc >= DT) { stepLive(lp, null); L3.acc -= DT; }
+      if (lp.phase !== 'pre') render();
       if (L3.edges.has('Space')) { L3.edges.clear(); doSnap(); }
       else if (L3.edges.has('KeyQ') || L3.edges.has('Tab')) {
         L3.edges.clear();
@@ -1160,7 +1275,9 @@ function loop(now) {
           lp.control = order[(order.indexOf(lp.control) + 1) % order.length];
         }
       } else L3.edges.clear();
-      if (L3.autoSnap != null) { L3.autoSnap -= dt; if (L3.autoSnap <= 0) doSnap(); }
+      if (L3.autoSnap != null && lp.set) { L3.autoSnap -= dt; if (L3.autoSnap <= 0) doSnap(); }
+      // Play clock: when it runs out on a lined-up play, the ball is snapped.
+      if (lp.set && L3.autoSnap == null) { L3.pclock = Math.max(0, L3.pclock - dt); if (L3.pclock <= 0) doSnap(); }
     } else {
       L3.acc += dt;
       while (L3.acc >= DT) {
@@ -1174,24 +1291,57 @@ function loop(now) {
       }
       if (lp.phase === 'dead') {
         L3.deadT += dt;
-        if (L3.deadT > 1.5) { finishLive(); return; }
+        if (L3.deadT > (lp.end?.how === 'td' ? 2.6 : 1.7)) { finishLive(); return; }
       }
     }
+  } else if (L3.preview?.lp) {
+    // Between plays: the teams walk to the new spot while you pick a play.
+    const pv = L3.preview.lp;
+    L3.acc += dt;
+    while (L3.acc >= DT) { stepLive(pv, null); L3.acc -= DT; }
+    if (g && !g.final && needsUser(g) && !S.busy) L3.pclock = Math.max(0, L3.pclock - dt);
+  }
+  const pc = document.getElementById('pclock');
+  if (pc) {
+    const txt = `:${String(Math.ceil(L3.pclock)).padStart(2, '0')}`;
+    if (pc.textContent !== txt) { pc.textContent = txt; pc.classList.toggle('low', L3.pclock <= 5); }
   }
   const tip = document.getElementById('hud-tip');
   const t = hudTip(L3.lp);
   if (tip && tip.textContent !== t) tip.textContent = t;
   const call = document.getElementById('hud-call');
-  const ct = L3.lp ? `${OFF_PLAYS[L3.off].name} vs ${DEF_PLAYS[L3.def].name}` : '';
+  const ct = L3.lp && L3.lp.phase !== 'pre' ? `${OFF_PLAYS[L3.off].name} vs ${DEF_PLAYS[L3.def].name}` : '';
   if (call && call.textContent !== ct) call.textContent = ct;
   if (L3.flashT && now > L3.flashT) { L3.flashT = 0; const f = document.getElementById('hud-flash'); if (f) f.className = 'hud-flash'; }
   stage.frame(now);
 }
 
+// Back to the call sheet from a lined-up play; the players stay where they are.
+function recall() {
+  if (L3.lp?.phase !== 'pre') return;
+  L3.spots = worldSpots(L3.lp); L3.preview = null; L3.lp = null;
+  render();
+}
+
+function cycleCamera() {
+  const i = CAMERA_MODES.findIndex(([k]) => k === S.cam);
+  setCamera(CAMERA_MODES[(i + 1) % CAMERA_MODES.length][0]);
+  flash(CAMERA_MODES.find(([k]) => k === S.cam)[1], 'muted');
+}
+function setCamera(k) { S.cam = k; stage?.setCameraMode(k); savePrefs(); if (S.menuOpen) render(); }
+
 function onKey(e, down) {
   if (S.screen !== 'game' || !stage || !S.game) return;
   if (e.target.closest?.('input, select, textarea')) return;
   const code = e.code;
+  if (down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
+    if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
+    if (code === 'Escape') {
+      if (S.menuOpen) { S.menuOpen = false; render(); return; }
+      if (L3.lp?.phase === 'pre' && !S.coachDown) { recall(); return; }
+    }
+  }
   // Call keys on the play sheet, only while no play is lined up or live.
   if (!L3.lp && down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
     const g = S.game;
@@ -1225,7 +1375,7 @@ function bindTouch(root) {
 
 function startGame(game, meta) {
   S.game = game; S.gameMeta = meta; S.gameTab = 'log'; S.busy = false; S.subSel = null;
-  L3.lp = null; L3.preview = null;
+  L3.lp = null; L3.preview = null; L3.spots = null; L3.pclock = 40;
   setScreen('game');
   autoAdvance();
 }
@@ -1297,7 +1447,7 @@ function onClick(e) {
       if (!g || g.final || S.busy || L3.lp) break;
       if (act === 'subin' && S.subSel) manualSub(g, userSide(), S.subSel, Number(el.dataset.id));
       if (act === 'subback') manualSub(g, userSide(), el.dataset.slot, null);
-      S.subSel = null; L3.preview = null;
+      S.subSel = null; if (L3.preview) L3.spots = worldSpots(L3.preview.lp); L3.preview = null;
       save(); render();
       break;
     }
@@ -1348,7 +1498,11 @@ function onClick(e) {
     case 'finishgame': finishLeagueGame(); break;
     case 'call': doCall(el.dataset.call); break;
     case 'snap': doSnap(); break;
-    case 'recall': if (L3.lp?.phase === 'pre') { L3.lp = null; render(); } break;
+    case 'recall': recall(); break;
+    case 'menu': S.menuOpen = !S.menuOpen; render(); break;
+    case 'cam': setCamera(el.dataset.cam); break;
+    case 'quality': S.quality = el.dataset.q; stage?.setQuality(S.quality); savePrefs(); render(); break;
+    case 'details': S.menuOpen = false; render(); document.querySelector('.game.g3d .below')?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' }); break;
     case 'sim': {
       const g = S.game;
       if (!g || S.busy || (L3.lp && L3.lp.phase !== 'pre')) return;
@@ -1402,6 +1556,7 @@ function onChange(e) {
   if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
+  if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
   if (t.id === 'import-file' && t.files?.[0]) t.files[0].text().then(importSave);
   if (t.dataset?.cut) {
     const id = Number(t.dataset.cut);
@@ -1448,6 +1603,7 @@ function render() {
   const boardScroll = document.querySelector('.board .tablewrap')?.scrollTop;
   const focusId = document.activeElement?.id;
   app.innerHTML = renderTop() + `<main>${body}</main>`;
+  document.body.classList.toggle('g3d-on', S.screen === 'game' && !!stage);
   if (S.screen === 'game') mountStage();
   if (S.screen === 'draft' && boardScroll != null) { const b = document.querySelector('.board .tablewrap'); if (b) b.scrollTop = boardScroll; }
   if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
