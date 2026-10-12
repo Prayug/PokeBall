@@ -3,7 +3,7 @@ import { PLAYERS, SLOTS, SLOT, SLOT_KEYS, OFF_SLOTS, DEF_SLOTS, ATTRS, BASELINE,
 import { SPRITES } from './sprites.js';
 import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER } from './types.js';
 import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
-  quarterText, fgDistance, fgChance, absSpot, createGame } from './engine.js';
+  quarterText, fgDistance, fgChance, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights } from './engine.js';
 import { createLivePlay, snap, step as stepLive, playSeconds, DT } from './live.js';
 import { Stage, webglAvailable } from './field3d.js';
 import * as LG from './league.js';
@@ -444,21 +444,54 @@ function scoreboard(g) {
   </div>`;
 }
 
-function playCards(g) {
-  const us = userSide();
-  const onOff = g.poss === us;
+// Play families for the call sheet: a short label and a colored edge per group.
+const DEF_GROUPS = [['front', 'Front', ['base', 'goal_line']], ['blitz', 'Blitz', ['run_blitz', 'pass_blitz']],
+  ['cover', 'Coverage', ['cover2', 'cover3', 'man_press', 'prevent']]];
+// Number keys for the visible calls in order; kicks get letters.
+const CALL_KEYS = [['Digit1', '1'], ['Digit2', '2'], ['Digit3', '3'], ['Digit4', '4'], ['Digit5', '5'], ['Digit6', '6'],
+  ['Digit7', '7'], ['Digit8', '8'], ['Digit9', '9'], ['Digit0', '0'], ['Minus', '-']];
+const KICK_KEYS = { punt: ['KeyP', 'P'], fg: ['KeyF', 'F'] };
+
+// The calls on the sheet right now, grouped, each with its key. Also marks the one that fits
+// the down: the heaviest weight in the AI's own tables, read without rolling g.rng.
+function callSheet(g) {
+  const onOff = g.poss === userSide();
+  const heaviest = (w, keys) => keys.filter((k) => w[k] > 0).sort((x, y) => w[y] - w[x])[0];
+  let groups, fit;
   if (onOff) {
     const fg = fgDistance(g);
-    const keys = Object.keys(OFF_PLAYS).filter((k) => (k !== 'punt' && k !== 'fg') || g.down === 4 || (k === 'fg' && fg <= 60));
-    return `<div class="callhead"><h3>Call your offense</h3><span class="muted">${downText(g)} at ${spotText(g)}</span></div>
-      <div class="plays">${keys.map((k) => {
-        const p = OFF_PLAYS[k];
-        const extra = k === 'fg' ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
-        return `<button class="play ${p.kind}" data-act="call" data-call="${k}"><b>${p.name}</b><span>${extra}</span></button>`;
-      }).join('')}</div>`;
+    const shown = Object.keys(OFF_PLAYS).filter((k) => (k !== 'punt' && k !== 'fg') || g.down === 4 || (k === 'fg' && fg <= 60));
+    const kind = (k) => OFF_PLAYS[k].kind;
+    groups = [['run', 'Run', shown.filter((k) => kind(k) === 'run')], ['pass', 'Pass', shown.filter((k) => kind(k) === 'pass')],
+      ['kick', 'Kicking', shown.filter((k) => kind(k) === 'punt' || kind(k) === 'fg')]];
+    const lean = offenseLean(g);
+    if (typeof lean === 'string') fit = shown.includes(lean) ? lean : null;
+    else fit = lean >= 0.5 ? heaviest(passWeights(g), groups[1][2]) : heaviest(runWeights(g), groups[0][2]);
+  } else {
+    groups = DEF_GROUPS;
+    fit = heaviest(defenseWeights(g), Object.keys(DEF_PLAYS));
   }
-  return `<div class="callhead"><h3>Call your defense</h3><span class="muted">${esc(g.teams[g.poss].abbr)} ball, ${downText(g)} at ${spotText(g)}</span></div>
-    <div class="plays">${Object.entries(DEF_PLAYS).map(([k, p]) => `<button class="play def" data-act="call" data-call="${k}"><b>${p.name}</b><span>${p.blurb}</span></button>`).join('')}</div>`;
+  let n = 0;
+  const keyed = groups.filter(([, , ks]) => ks.length).map(([fam, label, ks]) => [fam, label, ks.map((k) => {
+    const key = KICK_KEYS[k] && onOff ? KICK_KEYS[k] : CALL_KEYS[n++];
+    return { call: k, code: key?.[0], label: key?.[1] };
+  })]);
+  return { onOff, groups: keyed, fit };
+}
+
+function playCards(g, { keys = false } = {}) {
+  const { onOff, groups, fit } = callSheet(g);
+  const fg = fgDistance(g);
+  const card = ({ call, label }, fam) => {
+    const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
+    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
+    return `<button class="play f-${fam} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}">
+      <b>${p.name}</b><span>${extra}</span>${call === fit ? '<em class="fittag">Fits this down</em>' : ''}${keys && label ? `<kbd>${label}</kbd>` : ''}</button>`;
+  };
+  const head = onOff ? `<div class="callhead"><h3>${downText(g)} at ${spotText(g)}</h3><span class="muted">Call your offense</span></div>`
+    : `<div class="callhead"><h3>${downText(g)} at ${spotText(g)}</h3><span class="muted">${esc(g.teams[g.poss].abbr)} ball · call your defense</span></div>`;
+  return `${head}<div class="playgroups">${groups.map(([fam, label, cs]) => `<div class="pgroup"><h4>${label}</h4>
+    <div class="plays">${cs.map((c) => card(c, fam)).join('')}</div></div>`).join('')}</div>`;
 }
 
 function lastPlayHtml(g) {
@@ -475,9 +508,18 @@ function renderGame() {
   const us = userSide();
   const live3d = !!stage;
   const decide = !g.final && needsUser(g) && !S.busy && !L3.lp;
-  let controls;
+  const simOff = L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : '';
+  const simBtns = `<button class="btn" data-act="sim" data-stop="drive" ${simOff}>Sim drive</button>
+        <button class="btn" data-act="sim" data-stop="quarter" ${simOff}>Sim quarter</button>
+        <button class="btn" data-act="sim" data-stop="game" ${simOff}>Sim to the end</button>`;
+  const coachBox = `<label class="check"><input type="checkbox" id="g-coach" ${S.coach ? 'checked' : ''}> Coach mode</label>`;
+  // On the 3D field the sims tuck into a Skip disclosure on the Coach mode row.
+  const simrow = live3d ? `<div class="simrow">${coachBox}${S.skipOpen ? simBtns : ''}<button class="btn skip" id="g-skip" data-act="skip" aria-expanded="${!!S.skipOpen}">${S.skipOpen ? 'Hide' : 'Skip'}</button></div>`
+    : `<div class="simrow">${coachBox}${simBtns}</div>`;
+  let controls, dock = 'call';
   if (g.final) {
-    controls = `<div class="card final"><h2>${g.winner == null ? 'Tie game' : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose'}, ${Math.max(...g.score)} to ${Math.min(...g.score)}</h2>
+    dock = 'final';
+    controls = `<div class="card final callcard"><h2>${g.winner == null ? 'Tie game' : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose'}, ${Math.max(...g.score)} to ${Math.min(...g.score)}</h2>
       <div class="actions">${S.gameMeta?.quick ? '<button class="btn primary" data-act="quick">Play another quick game</button><button class="btn" data-act="home">Home</button>'
         : '<button class="btn primary" data-act="finishgame">Back to the season</button>'}</div></div>`;
   } else {
@@ -485,23 +527,33 @@ function renderGame() {
     if (L3.lp) {
       const lp = L3.lp;
       const mine = lp.user === lp.o ? OFF_PLAYS[L3.off].name : DEF_PLAYS[L3.def].name;
+      dock = lp.phase === 'pre' ? 'lined' : 'live';
       head = `<div class="callhead"><h3>${lp.phase === 'pre' ? `Lined up: ${esc(mine)}` : 'Play in progress'}</h3><span class="muted">${downText(g)} at ${spotText(g)}</span></div>
         ${lp.phase === 'pre' ? `<div class="actions"><button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap the ball' : 'Start the play'} <kbd>Space</kbd></button>
         ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change play</button>'}</div>` : ''}`;
-    } else if (decide) head = playCards(g);
-    else head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">Coach mode hands you 3rd and 4th downs and the last two minutes</span></div>`;
-    controls = `<div class="card callcard">${head}
-      <div class="simrow">
-        <label class="check"><input type="checkbox" id="g-coach" ${S.coach ? 'checked' : ''}> Coach mode</label>
-        <button class="btn" data-act="sim" data-stop="drive" ${L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : ''}>Sim drive</button>
-        <button class="btn" data-act="sim" data-stop="quarter" ${L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : ''}>Sim quarter</button>
-        <button class="btn" data-act="sim" data-stop="game" ${L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : ''}>Sim to the end</button>
-      </div></div>`;
+    } else if (decide) head = playCards(g, { keys: live3d });
+    else {
+      dock = 'wait';
+      head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">Coach mode hands you 3rd and 4th downs and the last two minutes</span></div>`;
+    }
+    controls = `<div class="card callcard">${head}${simrow}</div>`;
   }
-  const field = live3d ? `<div class="stage-slot" id="stage-slot"></div>${keysHelp()}` : `<div class="fieldwrap">${renderField(g)}</div>`;
-  return `<section class="game ${live3d ? 'g3d' : ''}">
+  if (live3d) {
+    // Field first: the dock rides on the near turf, and is gone while the ball is live.
+    const dockHtml = dock === 'live' ? '' : controls.replace('class="card ', `class="card dock d-${dock} `);
+    return `<section class="game g3d">
     ${scoreboard(g)}
-    ${field}
+    <div class="stage-slot" id="stage-slot">${dockHtml}</div>
+    ${lastPlayHtml(g)}
+    <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
+    <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : drivesHtml(g)}</div>
+    ${keysHelp()}
+    <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
+  </section>`;
+  }
+  return `<section class="game">
+    ${scoreboard(g)}
+    <div class="fieldwrap">${renderField(g)}</div>
     ${lastPlayHtml(g)}
     ${controls}
     <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
@@ -646,9 +698,26 @@ function ensureStage() {
 function mountStage() {
   const slot = document.getElementById('stage-slot');
   if (!slot || !stageWrap) return;
-  slot.appendChild(stageWrap);
+  slot.prepend(stageWrap);
+  fitStage();
   stage.resize();
   if (!L3.lp) showPreview();
+}
+
+// The 3D game is one viewport column: the stage fills what the sticky top bar and scoreboard
+// leave of the screen.
+function fitStage() {
+  const top = document.querySelector('.top')?.offsetHeight ?? 0;
+  const sb = document.querySelector('.game.g3d .scoreboard')?.offsetHeight ?? 0;
+  const root = document.documentElement.style;
+  root.setProperty('--top-h', `${top}px`);
+  root.setProperty('--sb-h', `${sb}px`);
+  fitDock();
+}
+
+function fitDock() {
+  const dock = document.querySelector('.game.g3d .dock');
+  stage?.setInset(dock ? dock.offsetHeight + 10 : 0);
 }
 
 // Between plays, line both teams up at the new spot.
@@ -675,8 +744,10 @@ function startLive(off, def, opts) {
   L3.edges.clear();
   stage.setPlay(L3.lp);
   render();
+  // Bring the stage up under the sticky scoreboard.
   const top = stageWrap?.getBoundingClientRect().top;
-  if (top != null && (top < 60 || top > window.innerHeight * 0.4)) window.scrollTo({ top: Math.max(0, window.scrollY + top - 70), behavior: reduceMotion ? 'auto' : 'smooth' });
+  const want = (document.querySelector('.top')?.offsetHeight ?? 0) + (document.querySelector('.game.g3d .scoreboard')?.offsetHeight ?? 0) + 12;
+  if (top != null && Math.abs(top - want) > 40) window.scrollTo({ top: Math.max(0, window.scrollY + top - want), behavior: reduceMotion ? 'auto' : 'smooth' });
 }
 
 function doSnap() {
@@ -730,7 +801,7 @@ function readInput(lp) {
 }
 
 function hudTip(lp) {
-  if (!lp) return S.game && !S.game.final ? 'Call a play below' : '';
+  if (!lp) return '';
   const c = lp.control;
   if (lp.phase === 'pre') return lp.user === lp.o ? `Space to snap${lp.kind === 'pass' ? ' · then 1-5 to throw' : ''}` : 'Q to pick a defender · Space to start';
   if (lp.phase === 'dead') return '';
@@ -790,6 +861,14 @@ function onKey(e, down) {
   if (S.screen !== 'game' || !stage || !S.game) return;
   if (e.target.closest?.('input, select, textarea')) return;
   const code = e.code;
+  // Call keys on the play sheet, only while no play is lined up or live.
+  if (!L3.lp && down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const g = S.game;
+    if (!g.final && needsUser(g) && !S.busy) {
+      const hit = callSheet(g).groups.flatMap(([, , cs]) => cs).find((c) => c.code === code);
+      if (hit) { e.preventDefault(); doCall(hit.call); return; }
+    }
+  }
   const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'Tab',
     'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(code);
   if (!game) return;
@@ -851,6 +930,7 @@ function onClick(e) {
   const act = el.dataset.act;
   const L = S.league;
   switch (act) {
+    case 'skip': S.skipOpen = !S.skipOpen; render(); break;
     case 'home': S.game = S.gameMeta?.quick ? null : S.game; setScreen('home'); break;
     case 'go': setScreen(el.dataset.to); break;
     case 'continue': {
@@ -1012,6 +1092,7 @@ function start(data) {
   document.addEventListener('click', onClick);
   document.addEventListener('input', onInput);
   document.addEventListener('change', onChange);
+  window.addEventListener('resize', () => { if (S.screen === 'game' && stage) fitStage(); });
   document.addEventListener('submit', onSubmit);
   window.addEventListener('keydown', (e) => onKey(e, true));
   window.addEventListener('keyup', (e) => onKey(e, false));

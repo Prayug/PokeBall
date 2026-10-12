@@ -1,16 +1,21 @@
 // The 3D stadium: a three.js scene that draws a live play. Pokémon are animated 3D-model
-// sprites standing on the turf as billboards, showing their back when they run away from the
-// camera and their front when they come toward it. On top of each sprite's own idle loop,
+// sprites on upright planes that turn to the camera on yaw only, so they stay planted on the
+// turf, showing their back when they run away from the camera and their front when they come
+// toward it. They idle in place, cycle their strip with stride length when they run, crouch on
+// the snap and fall flat onto the turf when they are tackled. On top of each sprite's own idle loop,
 // every player is posed each frame from what it is doing in the play: running strides,
 // throwing, catching, jukes, spins, trucks, blocks, dives, tackles and celebrations.
 import * as THREE from 'three';
-import { SPRITE_INDEX, FRAMES } from './sprites3d.js';
+import { SPRITE_INDEX } from './sprites3d.js';
 import { SPRITES } from './sprites.js';
 import { PLAYERS } from './ratings.js';
 import { absSpot } from './engine.js';
 
 const PX = 16; // texture pixels per yard
+// Sprites keep one pixel density across the field, like a Mode 7 stadium: yards per sprite pixel.
+const SPRITE_PX = 0.034;
 const FIELD_W = 53.3;
+const reduceMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 export function webglAvailable() {
   try {
@@ -40,6 +45,9 @@ export class Stage {
     this.evSeen = 0;
     this.celebrate = 0;
     this.teamsKey = '';
+    // Pixels of the stage covered by the play dock at the bottom; the view shifts up by half of
+    // it so the line of scrimmage stays in the open part of the field.
+    this.inset = 0; this.insetWant = 0;
     this.buildWorld();
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(this.el);
@@ -80,6 +88,22 @@ export class Stage {
     stand(160, 50, 36, Math.PI);
     stand(80, -26, 0, Math.PI / 2);
     stand(80, 126, 0, -Math.PI / 2);
+    // Goal posts on both end lines
+    const postMat = new THREE.MeshLambertMaterial({ color: '#ffd23f' });
+    for (const [x, s] of [[-10, -1], [110, 1]]) {
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 3.4, 10), postMat);
+      base.position.set(x + s * 0.7, 1.7, 0);
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.7, 8), postMat);
+      neck.rotation.z = Math.PI / 2; neck.position.set(x + s * 0.35, 3.4, 0);
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 6.17, 10), postMat);
+      bar.rotation.x = Math.PI / 2; bar.position.set(x, 3.4, 0);
+      S.add(base, neck, bar);
+      for (const z of [-3.08, 3.08]) {
+        const up = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 9, 8), postMat);
+        up.position.set(x, 3.4 + 4.5, z);
+        S.add(up);
+      }
+    }
     // Light towers
     const lampMat = new THREE.MeshBasicMaterial({ color: '#fff7d6' });
     const poleMat = new THREE.MeshLambertMaterial({ color: '#39424e' });
@@ -95,11 +119,9 @@ export class Stage {
     this.firstLine = new THREE.Mesh(lineGeo, new THREE.MeshBasicMaterial({ color: '#ffd23f', transparent: true, opacity: 0.9 }));
     for (const l of [this.losLine, this.firstLine]) { l.rotation.x = -Math.PI / 2; l.position.y = 0.02; S.add(l); }
     // Ball
-    this.ball = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 10), new THREE.MeshStandardMaterial({ color: '#7a3b1b', roughness: 0.6 }));
-    this.ball.scale.set(0.62, 0.38, 0.38);
-    const laces = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.12), new THREE.MeshBasicMaterial({ color: '#f4efe6' }));
-    laces.position.y = 0.47;
-    this.ball.add(laces);
+    // Football: a prolate leather ball with laces, its long axis along local x.
+    this.ball = new THREE.Mesh(footballGeometry(), new THREE.MeshStandardMaterial({ map: footballTexture(), roughness: 0.55 }));
+    this.ballSpin = 0;
     S.add(this.ball);
     this.ballShadow = shadowMesh(0.5);
     S.add(this.ballShadow);
@@ -168,27 +190,27 @@ export class Stage {
   }
 
   // ---------- sprites ----------
-  // A Pokémon's textures: its animated front and back strips once its chunk has loaded,
-  // and its menu still until then.
+  // A Pokémon's textures: its animated front and back pixel strips once its chunk has loaded,
+  // and its menu still until then. Sizes are in sprite pixels.
   textures(id) {
     let t = this.texCache.get(id);
     const strip = bank.strips[id];
     if (t && (t.full || !strip)) return t;
-    const idx = SPRITE_INDEX[id] ?? [0, 1, 1, 1, 1];
+    const idx = SPRITE_INDEX[id] ?? [0, 64, 64, 64, 64, 1, 1, 1];
     if (!t) {
       loadChunk(idx[0]);
       const still = makeTex(SPRITES[id]);
-      const tx = [1 / 96, 1 / 96];
-      t = { full: false, front: still, back: still, frames: 1, fAspect: idx[1] / idx[2], bAspect: idx[1] / idx[2], fTexel: tx, bTexel: tx, stillBack: true };
+      const px = [idx[1], idx[2]];
+      t = { full: false, front: still, back: still, frames: 1, fFrames: 1, bFrames: 1, secs: 1, fPx: px, bPx: px, stillBack: true };
       this.texCache.set(id, t);
     }
     if (strip) {
       // Swap the still for the animated strips once both have decoded, so nothing blinks.
       if (!t.pending) t.pending = { front: makeTex(strip[0]), back: makeTex(strip[1]) };
-      if (t.pending.front.image.complete && t.pending.back.image.complete && t.pending.front.image.width) {
+      if (texReady(t.pending.front) && texReady(t.pending.back)) {
         t.front.dispose();
-        t = { full: true, front: t.pending.front, back: t.pending.back, frames: FRAMES,
-          fAspect: idx[1] / idx[2], bAspect: idx[3] / idx[4], fTexel: [1 / idx[1], 1 / idx[2]], bTexel: [1 / idx[3], 1 / idx[4]] };
+        t = { full: true, front: t.pending.front, back: t.pending.back, fFrames: idx[5] ?? 1, bFrames: idx[6] ?? 1, secs: idx[7] || 1,
+          fPx: [idx[1], idx[2]], bPx: [idx[3], idx[4]] };
         this.texCache.set(id, t);
       }
     }
@@ -204,15 +226,13 @@ export class Stage {
     mat.uniforms.team.value.set(team.color);
     const mesh = new THREE.Mesh(SPRITE_GEO, mat);
     mesh.matrixAutoUpdate = false;
-    const hM = PLAYERS[p.id].height / 10;
-    const h = Math.max(1.3, Math.min(3.8, 1.05 + Math.sqrt(hM) * 0.9));
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.86, 28), new THREE.MeshBasicMaterial({ color: team.color, transparent: true, opacity: 0.95, side: THREE.DoubleSide }));
+    const h = 2;
+    // A thin, faint team ring for everyone; the full ring marks who matters this frame.
+    const ring = new THREE.Mesh(RING_THIN, new THREE.MeshBasicMaterial({ color: team.color, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }));
     ring.rotation.x = -Math.PI / 2;
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(0.62, 28), new THREE.MeshBasicMaterial({ color: team.color, transparent: true, opacity: 0.28, side: THREE.DoubleSide }));
-    disc.rotation.x = -Math.PI / 2;
     const shadow = shadowMesh(0.75);
-    this.scene.add(mesh, ring, disc, shadow);
-    a = { key, id: p.id, mesh, ring, disc, shadow, h, h0: h, tex: null, useBack: false, flip: false, phase: Math.random() * FRAMES,
+    this.scene.add(mesh, ring, shadow);
+    a = { key, id: p.id, mesh, ring, shadow, h, h0: h, tex: null, useBack: false, flip: false, phase: Math.random() * 12,
       gait: Math.random() * 2, color: team.color, seen: 0, fall: 0, fallDir: 1, act: null, lastStep: 0, ghostT: 0, flash: 0, stars: null };
     this.actors.set(key, a);
     return a;
@@ -221,7 +241,7 @@ export class Stage {
   removeActor(key) {
     const a = this.actors.get(key);
     if (!a) return;
-    for (const o of [a.mesh, a.ring, a.disc, a.shadow]) { this.scene.remove(o); if (o.geometry !== SPRITE_GEO) o.geometry?.dispose?.(); o.material?.dispose?.(); }
+    for (const o of [a.mesh, a.ring, a.shadow]) { this.scene.remove(o); if (![SPRITE_GEO, RING_FULL, RING_THIN].includes(o.geometry)) o.geometry?.dispose?.(); o.material?.dispose?.(); }
     if (a.stars) { this.scene.remove(a.stars); a.stars.children.forEach((c) => c.material.dispose()); }
     this.actors.delete(key);
   }
@@ -247,6 +267,8 @@ export class Stage {
     for (const [k, a] of this.actors) if (a.seen !== stamp) this.removeActor(k);
     for (const a of this.actors.values()) { a.fall = 0; a.act = null; a.flash = 0; }
     this.celebrate = 0;
+    this.prevPhase = lp.phase;
+    this.snapT = -10;
     this.drawRoutes();
   }
 
@@ -335,6 +357,8 @@ export class Stage {
       a.vs = (wvx * a.rx + wvz * a.rz) / Math.max(4, p.top);
     }
     this.readEvents(lp, t);
+    if (this.prevPhase === 'pre' && lp.phase !== 'pre') this.snapT = t;
+    this.prevPhase = lp.phase;
     const tdCarrier = lp.phase === 'dead' && lp.end?.how === 'td' ? lp.carrier : null;
     if (tdCarrier && !this.celebrate) { this.celebrate = t; this.confetti(this.actorOf(tdCarrier)?.pos, lp.g.teams[tdCarrier.ti].color); }
     let heldBy = null;
@@ -349,7 +373,13 @@ export class Stage {
       if (away > 0.35) a.useBack = true; else if (away < -0.35) a.useBack = false;
       if (a.useBack) { if (side < -0.4) a.flip = true; else if (side > 0.4) a.flip = false; }
       else if (side > 0.4) a.flip = true; else if (side < -0.4) a.flip = false;
-      a.phase += dt * (7 + a.speed * 0.7);
+      // Sprite size from its pixels at one density for everyone, within sane bounds.
+      a.h0 = clampN(tx.fPx[1] * SPRITE_PX, 1.0, 3.4);
+      a.oneFrame = Math.max(tx.fFrames ?? 1, tx.bFrames ?? 1) < 2;
+      // Idle at the sprite's own animation speed; on the move, advance the strip by distance
+      // covered so a faster Pokémon cycles faster. One cycle is a stride that grows with size.
+      a.moving = a.speed > (a.moving ? 0.8 : 1.4);
+      a.phase += a.moving ? dt * a.speed / (1.6 + a.h0 * 1.1) : dt / (tx.secs || 1);
 
       const pose = this.pose(lp, p, a, t, dt, tdCarrier);
       let back = a.useBack;
@@ -357,30 +387,40 @@ export class Stage {
       if (pose.spin != null) { const c = Math.cos(pose.spin); sx *= Math.max(0.08, Math.abs(c)); if (c < 0) back = !back; }
       const tex = back ? tx.back : tx.front;
       const flip = back && tx.stillBack ? !a.flip : a.flip;
+      const nFrames = (back ? tx.bFrames : tx.fFrames) ?? 1;
+      const px = back ? tx.bPx : tx.fPx;
       const u = a.mesh.material.uniforms;
       if (u.map.value !== tex) u.map.value = tex;
-      u.frames.value = tx.frames;
-      u.frame.value = Math.floor(a.phase) % tx.frames;
+      u.frames.value = nFrames;
+      u.frame.value = Math.floor(a.phase * nFrames) % nFrames;
       u.flip.value = flip ? 1 : 0;
-      u.texel.value.set(...(back ? tx.bTexel : tx.fTexel));
+      u.texel.value.set(1 / px[0], 1 / px[1]);
       a.flash = Math.max(0, a.flash - dt * 2.2);
       u.flash.value = Math.min(0.85, a.flash * 1.6);
-      const aspect = back ? tx.bAspect : tx.fAspect;
+      const aspect = px[0] / px[1];
       // Long, flat Pokémon (Wailord, Steelix...) are capped in width so they fit on a line.
-      const fit = Math.min(1, 3.2 / (a.h0 * aspect));
-      a.h = a.h0 * fit;
+      const hh = clampN(px[1] * SPRITE_PX, 1.0, 3.4);
+      const fit = Math.min(1, 2.6 / (hh * aspect));
+      a.h = hh * fit;
       a.w = a.h * aspect;
-      spriteMatrix(a.mesh.matrix, a.pos.x, pose.lift, a.pos.z, a.yaw, pose.shear, pose.roll, a.w * sx, a.h * pose.sy);
+      // Nothing is drawn until the image has decoded; an empty texture would show as a box.
+      a.mesh.visible = texReady(tex);
+      spriteMatrix(a.mesh.matrix, a.pos.x, pose.lift + pose.pitch * 0.03, a.pos.z, a.yaw, pose.pitch, pose.shear, pose.roll, a.w * sx, a.h * pose.sy);
       a.mesh.matrixWorldNeedsUpdate = true;
+      // Draw far to near so the near line always lands on top.
+      a.mesh.renderOrder = -Math.hypot(cam.x - a.pos.x, cam.y, cam.z - a.pos.z);
       a.pose = pose;
+      const key = p === lp.control || (lp.ball.state === 'held' && lp.ball.holder === p && lp.phase !== 'pre')
+        || (p.slot === 'QB' && p.side === 'off' && !lp.thrown && lp.qbState !== 'run' && lp.kind === 'pass');
+      const rg = key ? RING_FULL : RING_THIN;
+      if (a.ring.geometry !== rg) { a.ring.geometry = rg; a.ring.material.opacity = key ? 0.9 : 0.35; }
       a.ring.position.set(a.pos.x, 0.03, a.pos.z);
-      a.disc.position.set(a.pos.x, 0.025, a.pos.z);
       const sh = 1 / (1 + pose.lift * 0.6);
       a.shadow.position.set(a.pos.x, 0.02, a.pos.z);
       a.shadow.scale.set((0.8 + aspect * 0.4) * sh * (1 + Math.abs(Math.sin(pose.roll)) * 0.8), (0.8 + aspect * 0.4) * sh, 1);
       a.shadow.material.opacity = sh;
       // Afterimages on spins, jukes and Ghost-type phasing.
-      if ((pose.ghost || t < a.ghostT) && t - (a.lastGhost ?? 0) > 0.05) { a.lastGhost = t; this.ghost(a, tex, flip, u.frame.value, tx.frames, t < a.ghostT ? '#b388ff' : null); }
+      if ((pose.ghost || t < a.ghostT) && t - (a.lastGhost ?? 0) > 0.05) { a.lastGhost = t; this.ghost(a, tex, flip, u.frame.value, nFrames, t < a.ghostT ? '#b388ff' : null); }
       // Dust kicked up at full speed.
       if (pose.step && a.speed > 0.8 * p.top) this.dust(a.pos, a.speed / 10);
       // Dazed stars over a stunned player.
@@ -408,6 +448,9 @@ export class Stage {
         const a = this.actorOf(p);
         const pw = this.world(p.x, p.y);
         sp.position.set(pw.x, (a?.h ?? 2) + 0.9, pw.z);
+        // Keep the keys small on receivers right under the camera.
+        const k = clampN(this.camera.position.distanceTo(sp.position) * 0.075, 0.6, 1.3);
+        sp.scale.set(k, k, 1);
       }
     }
     this.updateCamera(dt);
@@ -419,11 +462,12 @@ export class Stage {
     this.renderer.render(this.scene, this.camera);
   }
 
-  // The body language for one player this frame: lean (shear), tilt (roll), squash and
-  // stretch, hop height, and a spin angle. Built from what the player is doing in the play.
+  // The body language for one player this frame: lean (shear), tilt (roll), falling back onto
+  // the turf (pitch), squash and stretch, hop height, and a spin angle. Built from what the
+  // player is doing in the play.
   pose(lp, p, a, t, dt, tdCarrier) {
-    const P = { shear: 0, roll: 0, sx: 1, sy: 1, lift: 0, spin: null, ghost: false, step: false };
-    const sp = a.speed, run = Math.min(1, sp / 6);
+    const P = { shear: 0, roll: 0, pitch: 0, sx: 1, sy: 1, lift: 0, spin: null, ghost: false, step: false };
+    const sp = a.speed, run = a.moving && !reduceMotion ? Math.min(1, sp / 6) : 0;
     const live = lp.phase === 'live';
     // Running gait: a bob and a waddle in time with the stride, leaning into the run.
     const prev = a.gait;
@@ -446,6 +490,12 @@ export class Stage {
       P.sy = ol ? 0.84 : 0.95; P.sx = ol ? 1.08 : 1;
       P.shear = ol ? -this.lateralTo(a, p.side === 'off' ? 5 : -5, p.y) * 0.03 : 0;
       P.sy += Math.sin(t * 2.2 + a.gait) * 0.012;
+    }
+    // The snap: everyone dips into a short crouch, then springs out of it.
+    const sinceSnap = t - this.snapT;
+    if (!reduceMotion && sinceSnap >= 0 && sinceSnap < 0.32) {
+      const k = sinceSnap < 0.1 ? sinceSnap / 0.1 : 1 - (sinceSnap - 0.1) / 0.22;
+      P.sy *= 1 - 0.16 * k; P.sx *= 1 + 0.07 * k; P.lift = 0;
     }
     // Quarterback in the pocket: ball up by the ear, ready to fire.
     if (live && p.slot === 'QB' && p.side === 'off' && lp.kind === 'pass' && lp.ball.holder === p && lp.qbState !== 'run') {
@@ -508,19 +558,19 @@ export class Stage {
           case 'whiff': {
             // Lunges, misses and hits the turf, then pops back up.
             const fallK = u < 0.35 ? u / 0.35 : u < 0.7 ? 1 : 1 - (u - 0.7) / 0.3;
-            P.roll = -A.side * 1.35 * Math.sin(fallK * Math.PI / 2); P.shear = 0; P.lift = u < 0.35 ? Math.sin(u / 0.35 * Math.PI) * 0.35 : 0;
+            P.pitch = 1.35 * Math.sin(fallK * Math.PI / 2); P.roll = -A.side * 0.3 * fallK; P.shear = 0; P.lift = u < 0.35 ? Math.sin(u / 0.35 * Math.PI) * 0.35 : 0;
             break;
           }
           case 'knocked': {
             // Bowled over backwards by a truck stick.
             const fallK = u < 0.3 ? u / 0.3 : u < 0.65 ? 1 : 1 - (u - 0.65) / 0.35;
-            P.roll = -A.side * 1.45 * Math.sin(fallK * Math.PI / 2); P.lift = u < 0.3 ? Math.sin(u / 0.3 * Math.PI) * 0.6 : 0; P.shear = 0;
+            P.pitch = 1.45 * Math.sin(fallK * Math.PI / 2); P.roll = -A.side * 0.3 * fallK; P.lift = u < 0.3 ? Math.sin(u / 0.3 * Math.PI) * 0.6 : 0; P.shear = 0;
             break;
           }
           case 'tackle': {
             // Wraps up and drives the carrier to the ground.
-            const k = Math.min(1, u * A.dur / 0.35);
-            P.roll = -A.side * 1.3 * Math.sin(k * Math.PI / 2); P.lift = Math.sin(k * Math.PI) * 0.3; P.shear = 0; P.sy = 1;
+            const k = reduceMotion ? 1 : Math.min(1, u * A.dur / 0.35);
+            P.pitch = 1.3 * Math.sin(k * Math.PI / 2); P.roll = -A.side * 0.25 * k; P.lift = reduceMotion ? 0 : Math.sin(k * Math.PI) * 0.3; P.shear = 0; P.sy = 1;
             if (lp.phase !== 'dead' && u * A.dur > 0.6) a.act = null;
             break;
           }
@@ -531,10 +581,13 @@ export class Stage {
     }
     // Tackled ball carriers (and sacked quarterbacks) go down.
     const down = lp.phase === 'dead' && lp.end && ((lp.end.how === 'tackle' || lp.end.how === 'sack') && lp.carrier === p || (lp.end?.how === 'sack' && p.slot === 'QB' && p.side === 'off'));
-    a.fall = down ? Math.min(1, a.fall + dt * 4) : Math.max(0, a.fall - dt * 3);
-    if (a.fall > 0) { P.roll = -a.fallDir * 1.4 * Math.sin(a.fall * Math.PI / 2); P.shear = 0; P.lift = 0; P.sy = 1; P.spin = null; }
+    a.fall = down ? (reduceMotion ? 1 : Math.min(1, a.fall + dt * 4)) : Math.max(0, a.fall - dt * 3);
+    // Tackled: the plane pitches back until the Pokémon lies on the turf, tipped a little toward
+    // the side it was hit from.
+    if (a.oneFrame && run > 0) { P.lift *= 1.7; P.roll *= 2.2; }
+    if (a.fall > 0) { const k = Math.sin(a.fall * Math.PI / 2); P.pitch = 1.48 * k; P.roll = -a.fallDir * 0.3 * k; P.shear = 0; P.lift = 0; P.sy = 1; P.sx = 1; P.spin = null; }
     // Touchdown: the scorer leaps and spins, teammates nearby jump with him.
-    if (tdCarrier && this.celebrate) {
+    if (tdCarrier && this.celebrate && !reduceMotion) {
       const ct = t - this.celebrate;
       if (p === tdCarrier) { P.lift = Math.abs(Math.sin(ct * 6.5)) * 0.9; P.spin = ct % 1.6 < 0.5 ? (ct % 1.6) / 0.5 * Math.PI * 2 : null; P.sy = 1.05; P.shear = 0; P.roll = 0; }
       else if (p.ti === tdCarrier.ti && Math.hypot(p.x - tdCarrier.x, p.y - tdCarrier.y) < 12) { P.lift = Math.abs(Math.sin(ct * 6 + a.gait)) * 0.45; P.shear = 0; P.roll = 0; }
@@ -542,30 +595,39 @@ export class Stage {
     return P;
   }
 
-  // The ball: tucked by the carrier, up by the quarterback's ear, on the turf before the
-  // snap, or in flight.
+  // The ball: parked beside the carrier's chest, up by the quarterback's ear, on the turf
+  // before the snap, or spiraling around its long axis in flight.
   placeBall(lp, holder, t, dt) {
     const b = lp.ball;
     const ball = this.ball;
+    const orient = (yaw, pitch, spin) => ball.rotation.set(spin, yaw, pitch, 'YZX');
     if (holder && lp.phase === 'pre') {
-      const w = this.world(holder.p.x + (holder.p.side === 'off' ? 0.5 : -0.5), holder.p.y, 0.22);
+      const w = this.world(holder.p.x + (holder.p.side === 'off' ? 0.5 : -0.5), holder.p.y, 0.2);
       ball.position.copy(w);
-      ball.rotation.set(0, 0, 0);
+      orient(0, 0, Math.PI / 2);
     } else if (holder) {
       const a = holder, P = a.pose;
       const qbSet = lp.kind === 'pass' && a.p.slot === 'QB' && a.p.side === 'off' && !lp.thrown && lp.qbState !== 'run';
-      const side = qbSet ? 0.15 : (a.vs >= 0 ? 0.28 : -0.28);
-      const up = (qbSet ? 0.78 : 0.45) * a.h * P.sy + P.lift;
-      const tc = 0.35; // toward the camera so it reads in front of the body
+      // Out at the edge of the body and a step toward the camera, so the sprite never hides it.
+      const side = (qbSet ? 0.3 : 0.4) * (a.vs >= 0 ? 1 : -1) * a.w;
+      const up = (qbSet ? 0.8 : 0.52) * a.h * P.sy * Math.cos(P.pitch) + P.lift + 0.12;
       const cx = this.camera.position.x - a.pos.x, cz = this.camera.position.z - a.pos.z, cl = Math.hypot(cx, cz) || 1;
-      ball.position.set(a.pos.x + a.rx * (side * a.w + P.shear * up) + (cx / cl) * tc, up, a.pos.z + a.rz * (side * a.w + P.shear * up) + (cz / cl) * tc);
+      const tc = 0.5;
+      ball.position.set(a.pos.x + a.rx * (side + P.shear * up) + (cx / cl) * tc, up, a.pos.z + a.rz * (side + P.shear * up) + (cz / cl) * tc);
       const v = Math.hypot(a.p.vx, a.p.vy);
-      ball.rotation.set(0, v > 0.5 ? Math.atan2(-a.p.vy * this.dir, a.p.vx * this.dir) : a.yaw + Math.PI / 2, qbSet ? 0.5 : 0.25);
+      orient(v > 0.5 ? Math.atan2(-a.p.vy * this.dir, a.p.vx * this.dir) : a.yaw + Math.PI / 2, qbSet ? 0.7 : 0.35, Math.PI / 2);
     } else {
       const bw = this.world(b.x, b.y, b.z);
+      const rise = dt > 0 && this.lastBall ? (bw.y - this.lastBall.y) / dt : 0;
+      const run = dt > 0 && this.lastBall ? Math.hypot(bw.x - this.lastBall.x, bw.z - this.lastBall.z) / dt : 0;
       ball.position.copy(bw);
-      if (b.state === 'air' && lp.thrown) { ball.rotation.z += dt * 18; ball.rotation.y = Math.atan2(-(lp.thrown.ty - lp.thrown.sy) * this.dir, (lp.thrown.tx - lp.thrown.sx) * this.dir); }
+      if (b.state === 'air' && lp.thrown) {
+        this.ballSpin += dt * 24;
+        const yaw = Math.atan2(-(lp.thrown.ty - lp.thrown.sy) * this.dir, (lp.thrown.tx - lp.thrown.sx) * this.dir);
+        orient(yaw, run > 0.5 ? Math.atan2(rise, run) * 0.8 : 0, this.ballSpin);
+      } else if (bw.y < 0.3) ball.position.y = 0.2;
     }
+    this.lastBall = (this.lastBall ?? new THREE.Vector3()).copy(ball.position);
     // Spiking it after a touchdown.
     if (this.celebrate && lp.end?.how === 'td') {
       const ct = t - this.celebrate;
@@ -573,7 +635,8 @@ export class Stage {
       if (a && ct < 1.4) {
         const k = ct / 1.4;
         ball.position.set(a.pos.x + a.rx * 0.6, Math.max(0.2, (1 - k) * a.h * 0.6 + Math.sin(k * Math.PI) * 3 * (1 - k)), a.pos.z + a.rz * 0.6);
-        ball.rotation.z += dt * 14;
+        this.ballSpin += dt * 14;
+        orient(a.yaw, 1.2 * (1 - k), this.ballSpin);
       }
     }
     this.ballShadow.position.set(ball.position.x, 0.03, ball.position.z);
@@ -671,24 +734,44 @@ export class Stage {
       const b = lp.ball;
       const focus = b.state === 'air' && lp.thrown ? { x: lp.thrown.sx + (lp.thrown.tx - lp.thrown.sx) * 0.7, y: lp.thrown.sy + (lp.thrown.ty - lp.thrown.sy) * 0.7 } : b;
       const w = this.world(focus.x, focus.y);
-      fx = w.x; fz = w.z * 0.75;
+      fx = w.x; fz = w.z * 0.9;
     }
-    const narrow = this.el.clientWidth < 640;
-    const back = narrow ? 22 : 18, high = narrow ? 15 : 11.5;
+    const pre = lp.phase === 'pre';
+    const { back, high } = this.camRig(pre);
     const wantPos = new THREE.Vector3(fx - s * back, high, fz * 0.8);
-    const wantLook = new THREE.Vector3(fx + s * 10, 0, fz);
-    const k = 1 - Math.exp(-dt * (lp.phase === 'pre' ? 6 : 3.5));
+    // Before the snap, aim at the line itself so both lines read; once it is live, lead the play.
+    const wantLook = new THREE.Vector3(fx + s * (pre ? (shift ? 6 : 4) : 6), 0, fz);
+    const k = reduceMotion ? 1 : 1 - Math.exp(-dt * (lp.phase === 'pre' ? 6 : 3.5));
     this.camPos.lerp(wantPos, k);
     this.camLook.lerp(wantLook, k);
     this.camera.position.copy(this.camPos);
     this.camera.lookAt(this.camLook);
+    this.applyInset(reduceMotion ? 1 : 1 - Math.exp(-dt * 6));
+  }
+
+  setInset(px) { this.insetWant = Math.max(0, px || 0); }
+
+  applyInset(k) {
+    this.inset += (this.insetWant - this.inset) * k;
+    const w = this.el.clientWidth, h = this.el.clientHeight;
+    if (!w || !h) return;
+    if (this.inset < 0.5) { if (this.camera.view?.enabled) this.camera.clearViewOffset(); return; }
+    this.camera.setViewOffset(w, h, 0, Math.min(h * 0.3, this.inset / 2), w, h);
+  }
+
+  // Broadcast camera: close behind the play, a little higher before the snap so the routes
+  // stay visible, and pulled back on narrow screens.
+  camRig(pre) {
+    const narrow = this.el.clientWidth < 640;
+    return { back: narrow ? 17 : 13, high: (narrow ? 12 : 8.5) + (pre ? 2 : 0) };
   }
 
   snapCamera() {
-    const narrow = this.el.clientWidth < 640;
+    const { back, high } = this.camRig(true);
     const fx = this.los + (this.camSign !== this.dir ? -this.camSign * 7 : 0);
-    this.camPos.set(fx - this.camSign * (narrow ? 22 : 18), narrow ? 15 : 11.5, 0);
-    this.camLook.set(fx + this.camSign * 10, 0, 0);
+    this.camPos.set(fx - this.camSign * back, high, 0);
+    this.camLook.set(fx + this.camSign * (this.camSign !== this.dir ? 6 : 4), 0, 0);
+    this.inset = this.insetWant;
   }
 
   resize() {
@@ -723,11 +806,14 @@ function loadChunk(c) {
   document.head.appendChild(s);
 }
 
+const texReady = (tex) => !!(tex?.image?.complete && tex.image.naturalWidth && tex.version > 0);
+
+// Pixel art: nearest-neighbour up close, no mipmaps (they would bleed frames together).
 function makeTex(uri) {
   const img = new Image();
   const tex = new THREE.Texture(img);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   img.onload = () => { tex.needsUpdate = true; };
   if (uri) img.src = uri;
@@ -739,6 +825,8 @@ function makeTex(uri) {
 const MARGIN = 0.06;
 const SPRITE_GEO = new THREE.PlaneGeometry(1 + 2 * MARGIN, 1 + 2 * MARGIN).translate(0, 0.5, 0);
 const CONFETTI_GEO = new THREE.PlaneGeometry(0.22, 0.12);
+const RING_FULL = new THREE.RingGeometry(0.62, 0.86, 32);
+const RING_THIN = new THREE.RingGeometry(0.74, 0.8, 32);
 
 const SPRITE_VERT = `
 #include <common>
@@ -797,11 +885,13 @@ function spriteMaterial(ghost = false) {
   });
 }
 
-// translate * yaw (face the camera) * shear (lean, feet planted) * roll (tilt about the feet) * scale
+// translate * yaw (face the camera) * pitch (fall back about the feet) * shear (lean, feet
+// planted) * roll (tilt about the feet) * scale
 const _m = new THREE.Matrix4(), _r = new THREE.Matrix4();
-function spriteMatrix(out, x, y, z, yaw, shear, roll, sx, sy) {
+function spriteMatrix(out, x, y, z, yaw, pitch, shear, roll, sx, sy) {
   out.makeTranslation(x, y, z);
   out.multiply(_r.makeRotationY(yaw));
+  if (pitch) out.multiply(_r.makeRotationX(-pitch));
   out.multiply(_m.set(1, shear, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1));
   out.multiply(_r.makeRotationZ(roll));
   out.multiply(_m.makeScale(sx, sy, 1));
@@ -867,21 +957,53 @@ function shadowMesh(r) {
   return m;
 }
 
+// Stands: big, soft seat blocks in a few muted shades, so the crowd reads as a crowd from the
+// field instead of confetti noise.
 function crowdTexture() {
   const c = document.createElement('canvas');
   c.width = 256; c.height = 256;
   const x = c.getContext('2d');
-  x.fillStyle = '#141c26'; x.fillRect(0, 0, 256, 256);
-  const cols = ['#e5402b', '#eef2e6', '#ffb547', '#3d6fd6', '#7d5bb5', '#2e7d6b', '#a7bba9'];
-  for (let row = 0; row < 26; row++) {
-    for (let i = 0; i < 40; i++) {
-      x.fillStyle = cols[(row * 7 + i * 13 + ((i * row) % 5)) % cols.length];
-      x.globalAlpha = 0.35 + ((i * 31 + row * 17) % 10) / 20;
-      x.fillRect(i * 6.4 + (row % 2) * 3, row * 9.8 + 2, 3.4, 4.2);
+  x.fillStyle = '#18212c'; x.fillRect(0, 0, 256, 256);
+  const cols = ['#5a6577', '#6d7686', '#8a5550', '#4f6a8c', '#7c7368', '#a4a9b0'];
+  for (let row = 0; row < 14; row++) {
+    for (let i = 0; i < 20; i++) {
+      x.fillStyle = cols[(row * 5 + i * 7 + ((i * row) % 3)) % cols.length];
+      x.globalAlpha = 0.55 + ((i * 31 + row * 17) % 5) / 25;
+      x.fillRect(i * 12.8 + (row % 2) * 6.4 + 1.5, row * 18.3 + 4, 9, 11);
     }
     x.globalAlpha = 1;
-    x.fillStyle = 'rgba(0,0,0,0.35)'; x.fillRect(0, row * 9.8, 256, 1.2);
+    x.fillStyle = 'rgba(0,0,0,0.4)'; x.fillRect(0, row * 18.3, 256, 2.5);
   }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// The football: a lathe-turned prolate spheroid, long axis along x.
+function footballGeometry() {
+  const L = 0.34, R = 0.2, pts = [];
+  for (let i = 0; i <= 16; i++) {
+    const u = -1 + (2 * i) / 16;
+    pts.push(new THREE.Vector2(Math.max(0.012, R * Math.pow(1 - u * u, 0.75)), u * L));
+  }
+  return new THREE.LatheGeometry(pts, 20).rotateZ(-Math.PI / 2);
+}
+
+// Leather with white stripes near the tips and a lace strip along the top seam.
+function footballTexture() {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 64;
+  const x = c.getContext('2d');
+  // u runs around the ball, v along its length.
+  const gr = x.createLinearGradient(0, 0, 0, 64);
+  gr.addColorStop(0, '#5a2a12'); gr.addColorStop(0.5, '#8a4520'); gr.addColorStop(1, '#5a2a12');
+  x.fillStyle = gr; x.fillRect(0, 0, 128, 64);
+  x.fillStyle = '#f4efe6';
+  for (const v of [9, 51]) { x.fillRect(0, v, 128, 4); }
+  x.fillRect(30, 21, 4, 22);
+  for (let k = 0; k < 7; k++) x.fillRect(26, 22 + k * 3, 12, 1.6);
+  x.strokeStyle = 'rgba(30,12,4,0.6)'; x.lineWidth = 1;
+  for (const u of [32, 96]) { x.beginPath(); x.moveTo(u, 0); x.lineTo(u, 64); x.stroke(); }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
