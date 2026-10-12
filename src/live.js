@@ -449,7 +449,11 @@ export function snap(lp) {
   if (lp.formation === 'shotgun' && c && qb) {
     // The ball flies back from the center to the quarterback.
     lp.ball = { state: 'snap', holder: null, x: c.x + 0.4, y: c.y, z: 0.3, from: { x: c.x + 0.4, y: c.y }, t0: 0, T: 0.22 + dist(c, qb) * 0.02 };
-  } else lp.ball.holder = qb;
+  } else {
+    // Under center: the ball comes up from the center's hands into the quarterback's.
+    lp.ball.holder = qb;
+    if (c && qb) lp.ball.xfer = { from: c, to: qb, t0: 0, T: 0.12, snap: true, at: { x: lp.ball.x, y: lp.ball.y, z: lp.ball.z ?? 0.17 } };
+  }
   if (lp.kind === 'run' && lp.play.dir === 'sneak') setCarrier(lp, qb);
   // Front responsibilities: each down lineman owns the gap he is shaded toward; the widest
   // rusher on each side keeps contain.
@@ -560,7 +564,7 @@ function actionOf(lp, p, sp) {
   if (lp.windup && p === lp.off.QB) return 'THROW';
   if (lp.thrown && p === lp.off.QB && lp.t - lp.thrown.t0 < 0.3) return 'THROW';
   const X = lp.ball.xfer;
-  if (X && (X.from === p || X.to === p)) return 'HANDOFF';
+  if (X && !X.snap && (X.from === p || X.to === p)) return 'HANDOFF';
   if (p.caughtAt != null && lp.t - p.caughtAt < 0.4) return 'CATCH';
   const F = lp.thrown;
   if (F && lp.ball.state === 'air' && (F.target === p || (p.side === 'def' && Math.hypot(F.tx - p.x, F.ty - p.y) < 1.8)) && F.t0 + F.T - lp.t < 0.5) return 'REACH';
@@ -1913,9 +1917,18 @@ function syncBall(lp) {
     const X = b.xfer;
     if (X) {
       const u = clamp((lp.t - X.t0) / X.T, 0, 1), k = u * u * (3 - 2 * u);
-      const q = X.from, from = { x: q.x + q.fx * (q.r + 0.15), y: q.y + q.fy * (q.r + 0.15), z: clamp(q.h * 0.55, 0.7, 1.5) };
+      const q = X.from, from = X.at ?? { x: q.x + q.fx * (q.r + 0.15), y: q.y + q.fy * (q.r + 0.15), z: clamp(q.h * 0.55, 0.7, 1.5) };
       at.x = from.x + (at.x - from.x) * k; at.y = from.y + (at.y - from.y) * k; at.z = from.z + (at.z - from.z) * k;
       if (u >= 1) b.xfer = null;
+    } else {
+      // The hold changes shape (a snap caught, the passer cocking it, a catch tucked away):
+      // the ball moves there over a few frames instead of jumping.
+      const h = b.holder, d = Math.hypot(at.x - b.x, at.y - b.y, at.z - (b.z ?? at.z));
+      const max = Math.hypot(h.vx, h.vy) * DT + 0.22;
+      if (d > max && Number.isFinite(b.z)) {
+        const k = max / d;
+        at.x = b.x + (at.x - b.x) * k; at.y = b.y + (at.y - b.y) * k; at.z = b.z + (at.z - b.z) * k;
+      }
     }
     b.x = at.x; b.y = at.y; b.z = at.z;
   }
