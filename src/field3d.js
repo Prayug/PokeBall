@@ -12,7 +12,7 @@ import { PLAYERS } from './ratings.js';
 import { absSpot } from './engine.js';
 import { Stadium, HALF_W } from './stadium3d.js';
 import { template, upgradeTemplate, makeFigure, disposeFigure, placeholder, flies } from './figure3d.js';
-import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel } from './model3d.js';
+import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs } from './model3d.js';
 import { Animator } from './anim3d.js';
 import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
@@ -220,8 +220,16 @@ export class Stage {
       // Match the clip's stride to the ground speed, within reason.
       speed = clampN(s.speed / (role === 'run' ? 6 : 3) * (2 / Math.max(0.8, s.height)), 0.6, 2.2);
     }
-    playClip(f, role, 0.18, speed);
+    const played = playClip(f, role, 0.18, speed);
+    resetLimbs(f);
     f.mixer.update(dt);
+    // The model's own legs: full procedural stride unless its run or walk clip is playing.
+    const want = played === 'run' || played === 'walk' ? 0 : played === 'idle' || !played ? 1 : 0.4;
+    f.limbW += (want - f.limbW) * (1 - Math.exp(-dt * 8));
+    const sf = s.top > 0 ? clampN(s.speed / s.top, 0, 1.2) : 0;
+    const runWant = s.speed > 0.7 ? 0.4 + 0.6 * Math.min(1, sf) : s.engaged ? 0.35 : 0;
+    f.runK = (f.runK ?? 0) + (runWant - (f.runK ?? 0)) * (1 - Math.exp(-dt * 6));
+    driveLimbs(f, { phase: a.anim.gait, run: f.runK, t: a.anim.t, flap: s.hover ? 1 : 0, weight: f.limbW });
   }
 
   // ---------- pre-snap play art ----------
