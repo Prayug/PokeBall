@@ -504,6 +504,7 @@ export function step(lp, input = null) {
     if (rb && dist(rb, qb) < rb.r + qb.r + 0.75) startExchange(lp, qb, rb);
   }
   // AI quarterback, then the throwing motion
+  if (lp.kind === 'pass' && !lp.thrown && !lp.windup) coverageRead(lp);
   if (lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'done') qbBrain(lp);
   windup(lp);
 
@@ -713,28 +714,50 @@ function qbMove(lp, p) {
   } else seek(p, { x: lp.dropX + 1, y: p.y * 0.9 }, 0.3);
 }
 
+// How open each eligible receiver is right now, measured where the ball would meet him if it
+// were thrown this instant: the nearest defender's distance from that spot. OPEN, CONTESTED or
+// COVERED; the HUD colors the throw icons from it and the quarterback reads it.
+export const OPENNESS = ['OPEN', 'CONTESTED', 'COVERED'];
+function coverageRead(lp) {
+  const qb = lp.off.QB;
+  if (!qb || lp.kind !== 'pass') return;
+  if ((lp.covTick = (lp.covTick ?? 0) - DT) > 0) return;
+  lp.covTick = 0.1;
+  for (const k of lp.eligible ?? []) {
+    const r = lp.off[k];
+    if (!r) continue;
+    if (r.role !== 'route' || (r.route?.[0]?.block && r.wp === 0)) { r.open = null; r.openState = null; continue; }
+    const T = dist(qb, r) / throwSpeed(qb) + WINDUP_T;
+    const px = r.x + r.vx * T, py = r.y + r.vy * T;
+    let open = 99;
+    for (const q of lp.players) if (q.side === 'def') open = Math.min(open, Math.hypot(q.x + q.vx * T * 0.6 - px, q.y + q.vy * T * 0.6 - py) - q.r * 0.5);
+    r.open = open; r.lead = { x: px, y: py };
+    r.openState = open >= 2.6 ? 'OPEN' : open >= 1.2 ? 'CONTESTED' : 'COVERED';
+  }
+}
+
+// The quarterback's progression: the play's reads in order (its primary target first), each
+// given a beat before his eyes move on; a wide-open man anywhere in his vision is taken early,
+// and under pressure he takes the best he has or checks down.
 function qbBrain(lp) {
   const qb = lp.off.QB;
   if (!qb || lp.ball.holder !== qb || lp.qbState === 'run') return;
   if (lp.qbState === 'drop' && lp.t >= lp.readAt) lp.qbState = 'read';
   // Crossing the line makes the quarterback a runner.
   if (qb.x > 0.3) { lp.qbState = 'run'; lp.scramble = true; setCarrier(lp, qb); event(lp, 'scramble', '', qb); return; }
-  if (lp.user === lp.o && !lp.autoQB) {
-    // The user throws; the quarterback's eyes still go to the most open receiver.
-    if (lp.qbState === 'read' && (lp.readTick -= DT) <= 0) {
-      lp.readTick = 0.3;
-      let best = null, bo = -1;
-      for (const k of lp.eligible) {
-        const r = lp.off[k];
-        if (!r || r.role !== 'route') continue;
-        let open = 99;
-        for (const q of lp.players) if (q.side === 'def') open = Math.min(open, dist(q, r));
-        if (open > bo) { bo = open; best = r; }
-      }
-      lp.qbLook = best;
-    }
-    return;
+  if (!lp.reads) {
+    const w = lp.play.targets ?? {};
+    lp.reads = [...(lp.eligible ?? [])].sort((a, b) => (w[b] ?? 0) - (w[a] ?? 0));
+    lp.readIdx = 0; lp.readSince = lp.readAt;
   }
+  const read = () => lp.off[lp.reads[lp.readIdx]];
+  if (lp.qbState === 'read') {
+    // A beat per read; sharper quarterbacks move through it faster.
+    const beat = 0.62 - (qb.a.awr - 60) * 0.004;
+    if (lp.t - lp.readSince > beat && lp.readIdx < lp.reads.length - 1) { lp.readIdx++; lp.readSince = lp.t; }
+    lp.qbLook = read() ?? lp.qbLook;
+  } else lp.qbLook = lp.off[lp.reads[0]] ?? null;
+  if (lp.user === lp.o && !lp.autoQB) return; // the user throws; his eyes still go through the reads
   if (lp.qbState !== 'read') return;
   lp.readTick -= DT;
   if (lp.readTick > 0) return;
@@ -745,28 +768,33 @@ function qbBrain(lp) {
   for (const q of lp.players) if (q.side === 'def' && !q.eng) nearRush = Math.min(nearRush, dist(q, qb));
   lp.pressure = nearRush < 2.6;
   const vision = (qb.a.acc + qb.a.awr) / 2;
-  const noise = 0.5 + Math.max(0, 99 - vision) * 0.035 + (lp.pressure ? 0.8 : 0);
-  let best = null;
-  for (const k of lp.eligible) {
+  const noise = 0.4 + Math.max(0, 99 - vision) * 0.03 + (lp.pressure ? 0.8 : 0);
+  const scoreOf = (r) => {
+    if (!r || r.open == null) return null;
+    const gain = clamp(r.lead.x, -3, 25) * 0.07;
+    return r.open + gain + noise * randn(g);
+  };
+  const cur = read(), cs = scoreOf(cur);
+  // Everyone else: only a man left wide open catches his eye off the read.
+  let best = cur && cs != null ? { r: cur, score: cs } : null;
+  for (const k of lp.reads) {
     const r = lp.off[k];
-    if (!r || r.role !== 'route' || (r.route?.[0]?.block && r.wp === 0)) continue;
-    const T = dist(qb, r) / throwSpeed(qb);
-    const px = r.x + r.vx * T, py = r.y + r.vy * T;
-    let open = 99;
-    for (const q of lp.players) if (q.side === 'def') open = Math.min(open, Math.hypot(q.x + q.vx * T * 0.6 - px, q.y + q.vy * T * 0.6 - py));
-    const gain = clamp(px, -3, 25) * 0.07;
-    const score = open + gain + (lp.play.targets[k] ?? 0) * 2.2 + noise * randn(g);
-    if (!best || score > best.score) best = { r, score, open };
+    if (r === cur) continue;
+    const s = scoreOf(r);
+    if (s == null) continue;
+    const seen = s - 1.6; // off-read throws need more
+    if (!best || seen > best.score) best = { r, score: seen };
   }
-  // Where his eyes are: the read he likes best right now.
-  if (best) lp.qbLook = best.r;
-  const need = 4.3 - elapsed * 1.4;
-  if (best && (best.score > need || (lp.pressure && best.score > 2.4))) { throwTo(lp, best.r); return; }
+  const need = 3.2 - elapsed * 0.9;
+  if (best && (best.score > need || (lp.pressure && best.score > 1.9))) { throwTo(lp, best.r); return; }
   if (nearRush < 1.8 || elapsed > 2.6) {
     const spd = qb.a.spd;
     if (chance(g, clamp((spd - 50) / 120, 0.05, 0.4) * 0.35)) { lp.qbState = 'run'; lp.scramble = true; setCarrier(lp, qb); event(lp, 'scramble', '', qb); return; }
     if (elapsed > 2.6 && chance(g, 0.12)) { throwAway(lp); return; }
-    if (best && elapsed > 1.7 && best.score > 0.3) throwTo(lp, best.r);
+    // The checkdown: whoever is most open, if anyone is.
+    let dump = null;
+    for (const k of lp.reads) { const r = lp.off[k]; if (r?.open != null && (!dump || r.open > dump.open)) dump = r; }
+    if (dump && elapsed > 1.7 && dump.open > 1.3) throwTo(lp, dump);
   }
 }
 
@@ -982,9 +1010,37 @@ function zoneWant(lp, p) {
   seek(p, { x: tx, y: ty }, 1, 0.6);
 }
 
+// Pursuit with leverage. The defender with the outside position on the carrier keeps it
+// (contain: he aims a step outside so the carrier is turned back inside); the others come
+// inside-out so there is no cutback; the deep men stay over the top, between the carrier and
+// the end zone, until he is close enough to take on.
 function pursueWant(lp, p, c) {
   if (!c || p.eng) return;
   if (p.react > 0) { p.react -= DT; slowDown(p, DT); return; }
+  const fwd = c.side === 'off' ? 1 : -1;
+  const d = dist(p, c);
+  if (d > 3.2 && c.side === 'off') {
+    const out = sgn(c.y || 0.01);
+    // Contain: the pursuer outside the carrier and level with or ahead of him.
+    const outside = (p.y - c.y) * out > 0.5 && (p.x - c.x) * fwd > -1;
+    // Deep help: well downfield of the carrier.
+    const deep = (p.x - c.x) * fwd > 8 && d > 7;
+    if (deep) {
+      // Shuffle to stay square over the top and close the gap at an angle.
+      const T = Math.min(1.2, d / p.top);
+      const tx = c.x + c.vx * T + fwd * Math.min(2.5, d * 0.2), ty = c.y + c.vy * T;
+      return seek(p, { x: tx, y: ty }, 1, 0.05);
+    }
+    intercept(p, c, 1);
+    if (p.want) {
+      const sh = outside ? out * 0.6 : -out * 0.25;
+      const tl = Math.max(1, d);
+      p.want.vy += sh * p.top / tl;
+      const l = len(p.want.vx, p.want.vy) || 1, cap = p.top;
+      if (l > cap) { p.want.vx *= cap / l; p.want.vy *= cap / l; }
+    }
+    return;
+  }
   intercept(p, c, 1);
 }
 
@@ -1015,8 +1071,16 @@ function carrierWant(lp, p) {
   const g = lp.g;
   const fwd = p.side === 'off' ? 1 : -1;
   // Designed runs hit the hole first.
-  if (lp.kind === 'run' && p.slot === 'RB' && lp.t - (lp.carrierAt ?? 0) < 0.55 && p.x < 0) {
-    return seek(p, { x: 1.5, y: lp.holeY }, 1, 0.05);
+  // Designed runs hit the hole first. An outside run stretches to the edge, then reads it: if
+  // a defender has set the edge outside him, he bounces back inside instead of running into it.
+  if (lp.kind === 'run' && p.slot === 'RB' && p.x < 0.5) {
+    const e = lp.t - (lp.carrierAt ?? 0);
+    if (lp.play.dir === 'outside' && e < 1.1 && !lp.bounced) {
+      const out = sgn(lp.holeY);
+      const edge = lp.players.find((q) => q.side !== p.side && !q.eng && q.stun <= 0 && (q.y - p.y) * out > 0.3 && Math.abs(q.x - p.x) < 3 && dist(q, p) < 3.4);
+      if (edge && e > 0.35) { lp.bounced = true; event(lp, 'bounce', '', p, edge); }
+      else return seek(p, { x: Math.min(1.5, -1 + e * 3), y: lp.holeY }, 1, 0.05);
+    } else if (e < 0.55 && lp.play.dir !== 'outside') return seek(p, { x: 1.5, y: lp.holeY }, 1, 0.05);
   }
   let best = null;
   for (let a = -90; a <= 90; a += 15) {
@@ -1313,7 +1377,7 @@ function blocks(lp) {
     }
     // Rate of getting off the block, per second: rating and type edge, quick feet shed sooner,
     // and nobody sheds in the first instants of the fit.
-    const base = passPro ? 0.42 : lp.carrierSet ? 0.13 : 0.08;
+    const base = passPro ? 0.55 : lp.carrierSet ? 0.13 : 0.08;
     const quick = clamp((d.a.acc - b.a.acc) / 60, -0.4, 0.5);
     let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.45 ? 0.3 : 1);
     if (!passPro) rate = Math.max(rate, 0.1);

@@ -105,7 +105,12 @@ export class Stage {
     // Throw keys over the receivers.
     this.icons = {};
     RECEIVER_KEYS.forEach((k, i) => {
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: badgeTexture(String(i + 1), ART_COLORS[i]), depthTest: false, fog: false }));
+      // One texture per read: green ring open, amber contested, red covered, plain before his
+      // route has started.
+      const maps = { null: badgeTexture(String(i + 1), ART_COLORS[i]) };
+      for (const st of ['OPEN', 'CONTESTED', 'COVERED']) maps[st] = badgeTexture(String(i + 1), ART_COLORS[i], st);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: maps.null, depthTest: false, fog: false }));
+      sp.userData.maps = maps; sp.userData.st = null;
       sp.scale.set(1.1, 1.1, 1); sp.renderOrder = 10; sp.visible = false;
       this.icons[k] = sp; S.add(sp);
     });
@@ -640,7 +645,9 @@ export class Stage {
       if (sp.visible) {
         const a = this.actorOf(p);
         sp.position.set(a.pos.x, (a.fig?.template.height ?? 2) + 0.7, a.pos.z);
-        const s = clampN(this.camera.position.distanceTo(sp.position) * 0.03, 0.45, 0.95);
+        const st = lp.phase === 'live' ? p.openState ?? null : null;
+        if (st !== sp.userData.st) { sp.userData.st = st; sp.material.map = sp.userData.maps[st]; sp.material.needsUpdate = true; }
+        const s = clampN(this.camera.position.distanceTo(sp.position) * 0.03, 0.45, 0.95) * (lp.qbLook === p && lp.phase === 'live' ? 1.15 : 1);
         sp.scale.set(s, s, 1);
       }
     }
@@ -888,12 +895,15 @@ function slotTexture(slot, color) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
-function badgeTexture(label, color) {
+const OPEN_RING = { OPEN: '#3fd97a', CONTESTED: '#ffb52e', COVERED: '#ff4d4d' };
+function badgeTexture(label, color, st = null) {
   const c = document.createElement('canvas'); c.width = c.height = 64;
   const x = c.getContext('2d');
-  x.beginPath(); x.arc(32, 32, 27, 0, Math.PI * 2); x.fillStyle = color; x.fill();
-  x.lineWidth = 4; x.strokeStyle = 'rgba(10,20,15,0.85)'; x.stroke();
-  x.fillStyle = '#0d1a14'; x.font = '700 36px "Barlow Condensed", Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  const r = st ? 22 : 27;
+  if (st) { x.beginPath(); x.arc(32, 32, 29, 0, Math.PI * 2); x.fillStyle = OPEN_RING[st]; x.fill(); }
+  x.beginPath(); x.arc(32, 32, r, 0, Math.PI * 2); x.fillStyle = color; x.fill();
+  x.lineWidth = st ? 3 : 4; x.strokeStyle = 'rgba(10,20,15,0.85)'; x.stroke();
+  x.fillStyle = '#0d1a14'; x.font = (st ? '700 30px' : '700 36px') + ' "Barlow Condensed", Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
   x.fillText(label, 32, 34);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
