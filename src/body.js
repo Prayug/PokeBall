@@ -10,11 +10,12 @@ import { PLAYERS } from './ratings.js';
 
 const cache = new Map();
 
-// The drawn body may spill a little past the capsule (arms, ears, tails), but not much: to
-// the sides by 15%, front and back by 35% (lines face each other across the neutral zone,
-// which leaves room for a snout or a tail).
-export const FOOT_SIDE = 1.15;
-export const FOOT_DEPTH = 1.35;
+// The drawn body may spill a little past the capsule (arms, ears, tails): to the sides by 30%,
+// front and back by 60% (lines face each other across the neutral zone, which leaves room for
+// a snout or a tail). Formations space players by these same footprints, so bodies drawn at
+// this size still never touch before the snap.
+export const FOOT_SIDE = 1.3;
+export const FOOT_DEPTH = 1.6;
 export const MIN_R = 0.38, MAX_R = 0.8;
 
 export function bodyOf(id) {
@@ -22,7 +23,9 @@ export function bodyOf(id) {
   if (b) return b;
   const P = PLAYERS[id];
   const m = P ? P.height / 10 : 1.2, kg = P ? P.weight / 10 : 60;
-  const height = Math.min(2.5, Math.max(1.0, 0.9 + 0.62 * Math.log2(1 + m)));
+  // About 1.6 yards for a Pikachu, 2.6 for a Snorlax, 3.2 at most: big enough to recognize
+  // from the broadcast camera, with the size order of the Pokédex kept.
+  const height = Math.min(3.2, Math.max(1.35, 1.25 + 0.8 * Math.log2(1 + m)));
   // Collision radius in yards: heavier is wider, but a football body: a 0.4 yard skill player
   // up to a 0.8 yard nose tackle (a lineman is about 1.3 yards shoulder to shoulder).
   const r = Math.min(MAX_R, Math.max(MIN_R, 0.33 + 0.09 * Math.log2(1 + kg / 10)));
@@ -32,12 +35,16 @@ export function bodyOf(id) {
 }
 
 // Scale for a model whose rest-pose bounds are w (across), h (up), d (front to back), so it
-// stands at the species height without spilling past its collision capsule. Wide or long
-// bodies come out shorter than their height says; they still look big, just not merged.
+// stands at the species height without spilling past its footprint. Wide or long bodies come
+// out shorter than their height says. A long body (a serpent, a whale) keeps at least 75% of
+// its height and may run a little past its footprint front to back, where there is room; a
+// wide one never gets wider than its spot, so it cannot cover the neighbors on the line.
+export const MIN_FIT = 0.75;
 export function fitScale(B, w, h, d) {
-  let s = B.height / Math.max(1e-6, h);
+  const full = B.height / Math.max(1e-6, h);
+  let s = full;
   const maxW = B.r * 2 * FOOT_SIDE, maxD = B.r * 2 * FOOT_DEPTH;
-  if (w * s > maxW) s = maxW / w;
-  if (d * s > maxD) s = maxD / d;
+  if (d * s > maxD) s = Math.max(maxD / d, full * MIN_FIT);
+  if (w * s > maxW) s = maxW / w; // never wider than its spot on the line
   return s;
 }

@@ -6,7 +6,7 @@ import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCal
   quarterText, fgDistance, fgChance, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights, manualSub } from './engine.js';
 import { createLivePlay, snap, step as stepLive, playSeconds, worldSpots, playState, DT } from './live.js';
 import { Stage, webglAvailable } from './field3d.js';
-import { CAMERA_MODES, CAMERA_DEFAULTS, CAMERA_LIMITS } from './camera3d.js';
+import { CAMERA_MODES, CAMERA_SHOTS, CAMERA_LIMITS, cameraDefaults } from './camera3d.js';
 import { diagram, formationName } from './playbook.js';
 import * as LG from './league.js';
 
@@ -21,7 +21,7 @@ const S = {
   depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 22, legendaries: false, typeCap: true, clock: true },
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
   menuOpen: false, cam: 'broadcast', weatherFx: true, quality: 'auto',
-  names: false, debug: false, csTab: null, cal: { ...CAMERA_DEFAULTS },
+  names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'pre',
 };
 let timers = { draft: null, clock: null, auto: null };
 
@@ -79,12 +79,12 @@ function loadPrefs() {
       if (p.weatherFx != null) S.weatherFx = !!p.weatherFx;
       if (['auto', 'high', 'low'].includes(p.quality)) S.quality = p.quality;
       if (p.names != null) S.names = !!p.names;
-      if (p.cal) Object.assign(S.cal, p.cal);
+      if (p.camShots) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
     }
   } catch { /* ignore */ }
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, setup: S.setup, cam: S.cam, weatherFx: S.weatherFx, quality: S.quality, names: S.names, cal: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, setup: S.setup, cam: S.cam, weatherFx: S.weatherFx, quality: S.quality, names: S.names, camShots: S.cal })); } catch { /* ignore */ }
 }
 
 // ---------- small view helpers ----------
@@ -958,12 +958,14 @@ function debugHtml() {
   const issues = lp?.formationIssues ?? [];
   const slider = (k, label, unit) => {
     const [lo, hi] = CAMERA_LIMITS[k];
-    return `<label class="cal"><span>${label}</span><input type="range" id="cal-${k}" min="${lo}" max="${hi}" step="0.5" value="${S.cal[k]}"><output id="calv-${k}">${S.cal[k]}${unit}</output></label>`;
+    const v = S.cal[S.calShot][k];
+    return `<label class="cal"><span>${label}</span><input type="range" id="cal-${k}" min="${lo}" max="${hi}" step="0.5" value="${v}"><output id="calv-${k}">${v}${unit}</output></label>`;
   };
   return `<div class="dbg card" aria-label="Debug view">
     <h4>Debug <span class="muted" id="dbg-state">${L3.state ?? ''}</span></h4>
     <p class="small ${issues.length ? 'bad' : 'good'}">${lp ? (issues.length ? `Formation: ${issues.length} problem${issues.length === 1 ? '' : 's'}: ${esc(issues.slice(0, 3).join('; '))}` : 'Formation check passed: 11 on 11, 7 on the line, no overlaps') : 'No formation on the field'}</p>
     <h4>Broadcast camera</h4>
+    <div class="gm-row">${CAMERA_SHOTS.map(([k, n]) => `<button class="btn tiny${S.calShot === k ? ' on' : ''}" data-act="calshot" data-k="${k}">${n}</button>`).join('')}</div>
     ${slider('distance', 'Distance', ' yd')}${slider('height', 'Height', ' yd')}${slider('pitch', 'Pitch', '°')}${slider('fov', 'Field of view', '°')}
     <button class="btn tiny" data-act="calreset">Reset camera</button>
   </div>`;
@@ -1606,7 +1608,8 @@ function onClick(e) {
     case 'call': doCall(el.dataset.call); break;
     case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; render(); break;
     case 'cspage': S.csPage = Math.max(0, (S.csPage ?? 0) + Number(el.dataset.d)); render(); break;
-    case 'calreset': S.cal = { ...CAMERA_DEFAULTS }; stage?.rig.setCalibration(S.cal); savePrefs(); render(); break;
+    case 'calshot': S.calShot = el.dataset.k; render(); break;
+    case 'calreset': S.cal = cameraDefaults(); stage?.rig.setCalibration(S.cal); savePrefs(); render(); break;
     case 'snap': doSnap(); break;
     case 'recall': recall(); break;
     case 'menu': S.menuOpen = !S.menuOpen; render(); break;
@@ -1661,10 +1664,10 @@ function onInput(e) {
   if (t.id === 'd-search') { S.draft.search = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id?.startsWith('cal-')) {
     const k = t.id.slice(4);
-    S.cal[k] = Number(t.value);
+    S.cal[S.calShot][k] = Number(t.value);
     stage?.rig.setCalibration(S.cal);
     const o = document.getElementById(`calv-${k}`);
-    if (o) o.textContent = `${S.cal[k]}${k === 'pitch' || k === 'fov' ? '°' : ' yd'}`;
+    if (o) o.textContent = `${S.cal[S.calShot][k]}${k === 'pitch' || k === 'fov' ? '°' : ' yd'}`;
     savePrefs();
   }
 }

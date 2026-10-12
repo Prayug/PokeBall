@@ -242,7 +242,7 @@ function alignOffense(lp) {
   if (O.TE) { O.TE.y = yR + SPLIT + 0.25 + O.TE.r; O.TE.x = lineX(O.TE); yR = O.TE.y + O.TE.r; }
   if (O.QB) {
     if (F.QB) { O.QB.x = F.QB[0]; O.QB.y = F.QB[1]; }
-    else { O.QB.x = (C ? C.x - C.r * FOOT_DEPTH : -1) - O.QB.r * FOOT_DEPTH - 0.1; O.QB.y = 0; } // under center
+    else { O.QB.x = (C ? C.x - C.r : -1) - O.QB.r - 0.15; O.QB.y = 0; } // under center
   }
   if (O.RB && F.RB) {
     if (lp.formation === 'shotgun' && O.QB) { O.RB.x = O.QB.x; O.RB.y = O.QB.y + O.QB.r + O.RB.r + 1.0; }
@@ -283,7 +283,9 @@ function alignLines(lp) {
     let moved = false;
     for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
       const a = ps[i], b = ps[j];
-      const need = a.side === b.side ? (a.r + b.r) * FOOT_SIDE + 0.2 : (a.r + b.r) * FOOT_DEPTH + 0.25;
+      // Under center the quarterback's hands are on the center: that pair only needs to not touch.
+      const exchange = a.side === b.side && a.side === 'off' && (a.slot === 'C' && b.slot === 'QB' || a.slot === 'QB' && b.slot === 'C');
+      const need = exchange ? a.r + b.r + 0.1 : a.side === b.side ? (a.r + b.r) * FOOT_SIDE + 0.2 : (a.r + b.r) * FOOT_DEPTH + 0.25;
       const dx = b.x - a.x, dy = b.y - a.y, d = len(dx, dy);
       if (d >= need) continue;
       moved = true;
@@ -296,7 +298,9 @@ function alignLines(lp) {
       const push = (need - d) / 2 + 0.01;
       if (lineman(a) && lineman(b) || Math.abs(dy) > Math.abs(dx) * 0.5 || d < 0.01) {
         const s = dy === 0 ? (a.y <= 0 ? -1 : 1) : sgn(dy);
-        a.y -= s * push; b.y += s * push;
+        // The center stays over the ball; whoever crowds him moves the whole way.
+        const ka = a.slot === 'C' && a.side === 'off' ? 0 : b.slot === 'C' && b.side === 'off' ? 2 : 1;
+        a.y -= s * push * ka; b.y += s * push * (2 - ka);
       } else {
         const ux = dx / d, uy = dy / d;
         a.x -= ux * push; a.y -= uy * push; b.x += ux * push; b.y += uy * push;
@@ -979,7 +983,7 @@ function animIdle(lp, dt) { for (const p of lp.players) p.anim += dt * 2; }
 // Bodies don't pass through each other: overlapping capsules are pushed apart until they
 // just touch. Ball carriers and engaged blockers hold their ground and the other one gives;
 // when both hold, both give. Contact itself (blocks, tackles) happens at the capsule edge.
-const SEP_MAX = 0.08;
+const SEP_MAX = 0.14;
 function separate(lp, passes = 2) {
   const ps = lp.players;
   const holds = (p) => !!(p.eng || p.carrier);

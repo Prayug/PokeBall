@@ -154,7 +154,7 @@ export class Stage {
     // under everyone; only your player and the ball carrier get one.
     const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map: pipTexture(p.side === 'off'), color: team.color, depthTest: false, transparent: true, fog: false }));
     ring.renderOrder = 9; ring.scale.set(0.42, 0.42, 1);
-    const blob = new THREE.Mesh(BLOB_GEO, new THREE.MeshBasicMaterial({ map: blobTexture(), color: new THREE.Color(team.color).lerp(_c.set('#000000'), 0.35), transparent: true, depthWrite: false, opacity: 0.7 }));
+    const blob = new THREE.Mesh(BLOB_GEO, new THREE.MeshBasicMaterial({ map: blobTexture(), color: new THREE.Color(team.color).lerp(_c.set('#000000'), 0.15), transparent: true, depthWrite: false, opacity: 0.85 }));
     blob.rotation.x = -Math.PI / 2; blob.position.y = 0.02; blob.scale.setScalar(body.r * 1.5);
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: slotTexture(p.slot, team.color), depthTest: false, transparent: true, fog: false }));
     tag.renderOrder = 12; tag.visible = false; tag.scale.set(1.3, 0.55, 1);
@@ -258,24 +258,24 @@ export class Stage {
         RECEIVER_KEYS.forEach((k, i) => {
           const p = lp.off[k];
           if (!p) return;
-          if (p.role === 'passblock' || !p.route) { G.add(ribbon([W(p.home.x, p.home.y), W(p.home.x - 1.4, p.home.y * 0.8)], 0.16, '#9fb3c8', 0.6, 'bar')); return; }
+          if (p.role === 'passblock' || !p.route) { G.add(ribbon([W(p.home.x, p.home.y), W(p.home.x - 1.4, p.home.y * 0.8)], 0.08, '#9fb3c8', 0.4, 'bar')); return; }
           const pts = [W(p.home.x, p.home.y)];
           for (const w of p.route) if (w.x != null) pts.push(W(w.x, w.y));
-          if (pts.length > 1) G.add(ribbon(pts, 0.2, ART_COLORS[i], 0.92, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow'));
+          if (pts.length > 1) G.add(ribbon(pts, 0.1, ART_COLORS[i], 0.55, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow'));
         });
       } else {
         // Run: the lane the carrier takes and who each blocker takes.
         const c = lp.carrier ?? lp.off.RB;
         if (c) {
           const hole = lp.holeY ?? 0;
-          G.add(ribbon([W(c.home.x, c.home.y), W(-3.5, hole * 0.35), W(1.5, hole), W(6, hole * 1.05)], 0.34, '#ffd23f', 0.9, 'arrow'));
+          G.add(ribbon([W(c.home.x, c.home.y), W(-3.5, hole * 0.35), W(1.5, hole), W(6, hole * 1.05)], 0.16, '#ffd23f', 0.55, 'arrow'));
         }
         for (const k of ['LT', 'LG', 'C', 'RG', 'RT', 'TE']) {
           const b = lp.off[k];
           if (!b?.assign) continue;
           const d = b.assign;
           const to = { x: (b.home.x + d.home.x) / 2 + 0.3, y: (b.home.y + d.home.y) / 2 };
-          G.add(ribbon([W(b.home.x, b.home.y), W(to.x, to.y)], 0.12, '#cfd8e3', 0.75, 'bar'));
+          G.add(ribbon([W(b.home.x, b.home.y), W(to.x, to.y)], 0.07, '#cfd8e3', 0.45, 'bar'));
         }
       }
     } else {
@@ -283,15 +283,15 @@ export class Stage {
       for (const p of Object.values(lp.def)) {
         if (p.zone) {
           const z = p.zone;
-          const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshBasicMaterial({ color: z.x >= 15 ? '#4fc3f7' : '#ffd23f', transparent: true, opacity: 0.16, depthWrite: false, fog: false }));
+          const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshBasicMaterial({ color: z.x >= 15 ? '#4fc3f7' : '#ffd23f', transparent: true, opacity: 0.1, depthWrite: false, fog: false }));
           disc.rotation.x = -Math.PI / 2; disc.position.copy(W(z.x, z.y)); disc.scale.set(z.r * 0.85, z.r * 0.6, 1); disc.position.y = 0.035;
           G.add(disc);
-          G.add(ribbon([W(p.home.x, p.home.y), W(z.x, z.y)], 0.1, z.x >= 15 ? '#4fc3f7' : '#ffd23f', 0.55, 'bar'));
+          G.add(ribbon([W(p.home.x, p.home.y), W(z.x, z.y)], 0.06, z.x >= 15 ? '#4fc3f7' : '#ffd23f', 0.4, 'bar'));
         } else if (p.man) {
-          G.add(ribbon([W(p.home.x, p.home.y), W(p.man.home.x + 0.5, p.man.home.y)], 0.09, '#ff9d7a', 0.7, 'bar'));
+          G.add(ribbon([W(p.home.x, p.home.y), W(p.man.home.x + 0.5, p.man.home.y)], 0.06, '#ff9d7a', 0.45, 'bar'));
         } else if (p.role === 'rush') {
           const blitz = !LINE_SLOTS.has(p.slot);
-          G.add(ribbon([W(p.home.x, p.home.y), W(-2.5, p.home.y * 0.5)], blitz ? 0.24 : 0.14, blitz ? '#ff5a4f' : '#e7b7b0', blitz ? 0.95 : 0.6, 'arrow'));
+          G.add(ribbon([W(p.home.x, p.home.y), W(-2.5, p.home.y * 0.5)], blitz ? 0.13 : 0.08, blitz ? '#ff5a4f' : '#e7b7b0', blitz ? 0.6 : 0.4, 'arrow'));
         }
       }
     }
@@ -397,14 +397,14 @@ export class Stage {
       const lift = a.fig ? a.anim.lift : 0;
       const top = (a.fig?.template.height ?? a.body.height) + Math.max(0, lift);
       a.ring.position.set(a.pos.x, top + 0.45, a.pos.z);
-      const ps = clampN(this.camera.position.distanceTo(a.ring.position) * 0.012, 0.3, 0.75);
+      const ps = clampN(this.camera.position.distanceTo(a.ring.position) * 0.011, 0.26, 0.6);
       a.ring.scale.set(ps, ps, 1);
       a.tag.visible = this.debug;
       if (this.debug) { a.tag.position.set(a.pos.x, top + 0.75, a.pos.z); const ts = clampN(this.camera.position.distanceTo(a.tag.position) * 0.013, 0.32, 0.85); a.tag.scale.set(ts * 2.3, ts, 1); }
       a.blob.position.set(a.pos.x, 0.02, a.pos.z);
       const sh = 1 / (1 + lift * 0.9);
       a.blob.scale.setScalar(a.body.r * 1.6 * (0.7 + sh * 0.3));
-      a.blob.material.opacity = 0.75 * sh;
+      a.blob.material.opacity = 0.85 * sh;
       a.ring.visible = !(lp.phase === 'dead' && a.fallWant) && this.showPips && lp.control !== p && !(lp.ball.state === 'held' && lp.ball.holder === p && lp.phase === 'live');
       if (lp.ball.state === 'held' && lp.ball.holder === p) held = a;
       obstacles.push({ x: a.pos.x, z: a.pos.z, r: a.body.r, h: s.height + lift });
@@ -656,8 +656,8 @@ export class Stage {
       sp.visible = !!(icons && p && p.role === 'route');
       if (sp.visible) {
         const a = this.actorOf(p);
-        sp.position.set(a.pos.x, (a.fig?.template.height ?? 2) + 0.85, a.pos.z);
-        const s = clampN(this.camera.position.distanceTo(sp.position) * 0.05, 0.7, 1.6);
+        sp.position.set(a.pos.x, (a.fig?.template.height ?? 2) + 0.7, a.pos.z);
+        const s = clampN(this.camera.position.distanceTo(sp.position) * 0.03, 0.45, 0.95);
         sp.scale.set(s, s, 1);
       }
     }
@@ -672,7 +672,21 @@ export class Stage {
         const { tex, aspect } = labelTexture(PLAYERS[c.id].name, c.slot);
         this.label.material.map = tex; this.label.material.needsUpdate = true; this.labelAspect = aspect;
       }
-      const h = (sel.fig?.template.height ?? 2) + 1.55;
+      // Above his head, and above anyone standing between him and the camera, so the label
+      // never sits on top of another player.
+      let top = (sel.fig?.template.height ?? 2);
+      const cx = this.camera.position.x, cz = this.camera.position.z, H = this.camera.position.y;
+      const tx = sel.pos.x - cx, tz = sel.pos.z - cz, tl = Math.hypot(tx, tz) || 1;
+      for (const o of this.actors.values()) {
+        if (o === sel || !o.root.visible) continue;
+        const ox = o.pos.x - cx, oz = o.pos.z - cz;
+        const along = (ox * tx + oz * tz) / tl;
+        if (along > tl + 7 || along < 1) continue;
+        const across = Math.abs(ox * tz - oz * tx) / tl;
+        // The height at his distance that lines up on screen with the top of this one.
+        if (across < o.body.r + 1.4) top = Math.max(top, H + ((o.fig?.template.height ?? 2) + 0.2 - H) * tl / along);
+      }
+      const h = top + 0.9;
       this.label.position.set(sel.pos.x, h, sel.pos.z);
       const s = clampN(this.camera.position.distanceTo(this.label.position) * 0.034, 0.5, 1.2);
       this.label.scale.set(s * this.labelAspect, s, 1);
@@ -683,7 +697,7 @@ export class Stage {
   framing(lp) {
     const f = this.frm ?? (this.frm = { focus: new THREE.Vector3(), fwd: 1, spread: 10, pre: true, deep: 0, tight: false, qb: new THREE.Vector3() });
     // RESULT: hold the shot where the play ended.
-    if (this.gameState === 'RESULT' && this.frmInit) { f.tight = true; f.pre = false; return f; }
+    if (this.gameState === 'RESULT' && this.frmInit) { f.tight = true; f.pre = false; f.shot = 'post'; return f; }
     this.frmInit = true;
     f.fwd = this.dir; f.pre = lp.phase === 'pre'; f.deep = 0; f.tight = false;
     const qb = this.actorOf(lp.off.QB);
@@ -694,8 +708,11 @@ export class Stage {
       // spread sets.
       let back = 0, wide = 0;
       for (const p of lp.players) if (p.side === 'off') { back = Math.min(back, p.home?.x ?? p.x); wide = Math.max(wide, Math.abs(p.home?.y ?? p.y)); }
-      this.world((back + 5) / 2, 0, 0, f.focus);
-      f.spread = clampN(10 + -back * 0.6 + Math.max(0, wide - 15) * 0.2, 14, 22);
+      // Low behind the deepest back, so he, the quarterback and the line are all in the
+      // bottom half of the frame and the routes run up into the top half.
+      this.world(back + 3.5, 0, 0, f.focus);
+      f.spread = clampN(10 + Math.max(0, wide - 15) * 0.25, 10, 18);
+      f.shot = 'pre';
     } else if (b.state === 'air' && lp.thrown) {
       const T = lp.thrown;
       const u = clampN((lp.t - T.t0) / T.T, 0, 1);
@@ -703,17 +720,20 @@ export class Stage {
       this.world(T.sx + (T.tx - T.sx) * (0.35 + u * 0.65), T.sy + (T.ty - T.sy) * (0.35 + u * 0.65), 0, f.focus);
       f.deep = Math.hypot(T.tx - T.sx, T.ty - T.sy);
       f.spread = 12 + Math.min(14, f.deep * 0.3);
+      f.shot = 'pass';
     } else if (lp.carrierSet || lp.phase === 'dead') {
       const c = lp.carrier ?? lp.ball.holder;
       if (c) this.world(c.x + c.vx * 0.3, c.y + c.vy * 0.3, 0, f.focus); else this.world(b.x, b.y, 0, f.focus);
-      f.spread = lp.phase === 'dead' ? 8 : 10;
+      f.spread = 10;
       f.tight = lp.phase === 'dead';
+      f.shot = lp.phase === 'dead' ? 'post' : 'run';
     } else {
       // Pocket: between the quarterback and the line, so the drop, the rush and the first
       // yards of the routes all stay in view.
       const q = lp.off.QB ?? b;
-      this.world((Math.max(q.x, -9) + 3) / 2, q.y * 0.4, 0, f.focus);
-      f.spread = lp.kind === 'pass' ? 15 : 12;
+      this.world(Math.max(q.x, -9) + 3, q.y * 0.4, 0, f.focus);
+      f.spread = 12;
+      f.shot = lp.kind === 'pass' ? 'pass' : 'run';
     }
     return f;
   }
