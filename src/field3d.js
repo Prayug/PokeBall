@@ -16,6 +16,7 @@ import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel,
 import { Animator } from './anim3d.js';
 import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
+import { flightAt } from './live.js';
 
 const reduceMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const RECEIVER_KEYS = ['WR1', 'WR2', 'WR3', 'TE', 'RB'];
@@ -134,7 +135,7 @@ export class Stage {
     this.kit = teamKit(g.teams);
     for (const p of lp.players) this.actorFor(p, { ...g.teams[p.ti], color: this.kit[p.ti] }).seen = stamp;
     for (const [k, a] of this.actors) if (a.seen !== stamp) this.removeActor(k);
-    for (const a of this.actors.values()) { a.act = null; if (this.gameState !== 'RESULT') a.fallWant = 0; a.flash = 0; }
+    for (const a of this.actors.values()) { a.act = null; if (this.gameState !== 'PLAY_RESULT') a.fallWant = 0; a.flash = 0; }
     this.prevPhase = lp.phase;
     this.drawArt();
   }
@@ -305,7 +306,7 @@ export class Stage {
       switch (e.kind) {
         case 'throw':
           // The ball leaves from where it is drawn right now: the passer's hand.
-          if (a) { a.act = { kind: 'throw', t0: t, dur: 0.45 }; a.releaseH = this.ball.position.y; this.releasePos = this.ball.position.clone(); this.airOff = null; }
+          if (a) { this.releasePos = this.ball.position.clone(); this.airOff = null; }
           break;
         case 'catch': case 'int':
           if (a) { a.act = { kind: 'secure', t0: t, dur: 0.45 }; a.flash = 0.5; this.burst(a.pos, e.kind === 'int' ? '#ff7a59' : '#ffffff', 0.8); }
@@ -322,20 +323,18 @@ export class Stage {
             if (a) this.burst(a.pos.clone().lerp(b.pos, 0.5), hard ? '#ffd23f' : '#ffffff', hard ? 1.1 : 0.7);
           }
           break;
-        case 'tackle': case 'sack': {
-          if (a) { a.act = { kind: 'tackle', t0: t, dur: 99 }; }
-          if (b) {
-            b.fallWant = 1;
-            // Driven the way the tackler was moving into him.
-            const dx = a ? b.pos.x - a.pos.x : 1, dz = a ? b.pos.z - a.pos.z : 0;
-            b.fallDir = this.localDir(b, dx, dz, 1);
-            b.flash = 0.35;
-          }
-          if (a && b) this.burst(b.pos.clone().lerp(a.pos, 0.4), e.kind === 'sack' ? '#ff7a59' : '#ffffff', e.kind === 'sack' ? 1.3 : 0.9);
-          this.rig.shake = Math.max(this.rig.shake, e.kind === 'sack' ? 0.28 : 0.14);
+        case 'contact':
+          // The hit itself: the carrier is driven the way the tackler was moving into him.
+          if (b) { const dx = a ? b.pos.x - a.pos.x : 1, dz = a ? b.pos.z - a.pos.z : 0; b.fallDir = this.localDir(b, dx, dz, 1); b.flash = 0.35; }
+          if (a && b) this.burst(b.pos.clone().lerp(a.pos, 0.4), '#ffffff', 0.8);
+          this.rig.shake = Math.max(this.rig.shake, 0.12);
+          break;
+        case 'tackle': case 'sack':
+          // The whistle: the pair is on the turf.
+          if (a && b && e.kind === 'sack') this.burst(b.pos.clone().lerp(a.pos, 0.4), '#ff7a59', 1.1);
+          this.rig.shake = Math.max(this.rig.shake, e.kind === 'sack' ? 0.22 : 0.1);
           if (e.kind === 'sack') this.stadium.cheer(0.6);
           break;
-        }
         case 'incomplete': if (a) a.act = { kind: 'miss', t0: t, dur: 0.7 }; break;
         default: break;
       }
@@ -351,7 +350,11 @@ export class Stage {
   }
 
   // ---------- per frame ----------
-  frame(now = performance.now()) {
+  // alpha: how far the game loop is between the last two fixed simulation steps (0..1). Every
+  // body and the ball are drawn at that point between their previous and current positions,
+  // so motion is smooth at any frame rate without the renderer inventing any of it.
+  frame(now = performance.now(), alpha = 1) {
+    this.alpha = clampN(alpha, 0, 1);
     const dtRaw = (now - this.last) / 1000;
     const dt = Math.min(0.05, dtRaw);
     this.last = now;
@@ -372,13 +375,14 @@ export class Stage {
       const a = this.actorOf(p);
       if (!a) continue;
       this.syncFigure(a);
-      this.world(p.x, p.y, 0, a.pos);
-      // Facing: where the player is going, turning at its own rate.
-      const want = this.wantYaw(lp, p, a);
+      const k = this.alpha;
+      this.world((p.px ?? p.x) + (p.x - (p.px ?? p.x)) * k, (p.py ?? p.y) + (p.y - (p.py ?? p.y)) * k, 0, a.pos);
+      // Facing comes from the simulation (which turns each player at its own rate); the
+      // renderer only interpolates it.
+      const want = Math.atan2(p.fx * this.dir, p.fy * this.dir);
       if (!a.yawInit || reduceMotion) { a.yaw = want; a.yawInit = true; }
-      const rate = (5 + (p.a.agi ?? 60) / 14) * (p.carrier ? 1.1 : 1);
       const d = angDiff(a.yaw, want);
-      const step = clampN(d, -rate * dt, rate * dt);
+      const step = d * (1 - Math.exp(-dt * 30));
       a.yaw += step;
       a.turn = a.turn * 0.8 + (dt > 0 ? step / dt : 0) * 0.2;
       const s = this.situation(lp, p, a, t, td);
@@ -421,97 +425,77 @@ export class Stage {
     this.renderer.render(this.scene, this.camera);
   }
 
-  // Which way a player should face this frame.
-  wantYaw(lp, p, a) {
-    const yawOf = (fx, fy) => Math.atan2(fx * this.dir, fy * this.dir);
-    const toward = (x, y) => yawOf(x - p.x, y - p.y);
-    const sp = Math.hypot(p.vx, p.vy);
-    if (lp.phase === 'pre') {
-      if (sp > 0.8) return yawOf(p.vx, p.vy);
-      return yawOf(p.side === 'off' ? 1 : -1, 0);
-    }
-    if (p.eng) return toward(p.eng.x, p.eng.y);
-    // A pass in the air: the target and anyone playing the ball turn to find it.
-    const T = lp.thrown;
-    if (lp.phase === 'live' && T && lp.ball.state === 'air' && T.target) {
-      const left = T.t0 + T.T - lp.t;
-      const near = Math.hypot(T.tx - p.x, T.ty - p.y);
-      if ((T.target === p && left < 0.75) || (p.side === 'def' && near < 3 && left < 0.6)) return toward(lp.ball.x, lp.ball.y);
-    }
-    // Dropping back and backpedaling in coverage: keep the eyes upfield; set in the pocket,
-    // the quarterback turns to the receiver he is reading.
-    if (lp.phase === 'live' && !lp.carrierSet && !lp.thrown) {
-      if (p.slot === 'QB' && p.side === 'off' && lp.qbLook && lp.ball.holder === p && lp.qbState === 'read') return toward(lp.qbLook.x, lp.qbLook.y);
-      if (p.side === 'off' && (p.slot === 'QB' || p.role === 'passblock') && p.vx < 0) return yawOf(1, 0);
-      if (p.side === 'def' && p.role === 'cover' && p.vx > 0 && sp < p.top * 0.8) return yawOf(-1, p.vy * 0.15);
-    }
-    if (sp > 0.6) return yawOf(p.vx, p.vy);
-    if (lp.phase === 'dead') return a.yaw;
-    // Standing: watch the ball.
-    const b = lp.ball;
-    if (Math.hypot(b.x - p.x, b.y - p.y) > 1) return toward(b.x, b.y);
-    return a.yaw;
-  }
-
-  // What the animation layer needs to know about a player this frame.
+  // What the animation layer needs to know about a player this frame. Everything here is read
+  // from the simulation: the player's action state (p.act, set by live.js), its speed and
+  // facing, its block, the throw and the tackle in progress. The renderer adds nothing that
+  // did not happen in the game; it only adds the one-shot effects of events (a stumble after a
+  // broken tackle, the miss after an incompletion).
   situation(lp, p, a, t, td) {
-    const s = { speed: Math.hypot(p.vx, p.vy), top: p.top, mode: lp.phase, turn: a.turn, set: true };
+    const s = { speed: Math.hypot(p.vx, p.vy), top: p.top, mode: lp.phase, turn: a.turn, set: true, act: p.act };
     if (lp.phase === 'pre') {
-      s.set = s.speed < 0.35;
+      s.set = p.act === 'READY';
       s.stance = STANCE[p.slot] ?? 'skill';
       if (p.slot === 'QB' && lp.formation !== 'shotgun') s.stance = 'qbUnder';
     }
     s.engaged = !!p.eng && lp.phase === 'live';
     if (p.eng) {
       const o = this.actorOf(p.eng); s.pushSide = o ? Math.sign(this.lateralOf(a, o.pos)) : 0;
-      // Losing the block: the pair is drifting the way he faces from, so he leans back.
-      const fx = Math.sin(a.yaw), fz = Math.cos(a.yaw);
-      s.pushBack = (p.vx * this.dir * fx + p.vy * this.dir * fz) < -0.25;
+      // Losing the block: the pair is drifting back the way he faces from, so he leans back.
+      s.pushBack = (p.vx * p.fx + p.vy * p.fy) < -0.25;
+      s.shed = p.contact === 'SHEDDING';
     }
     const holding = lp.ball.state === 'held' && lp.ball.holder === p && lp.phase !== 'pre';
     s.carrier = holding;
-    s.qbHold = holding && p.slot === 'QB' && p.side === 'off' && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run' && lp.t > 0.25;
+    s.qbHold = holding && p.slot === 'QB' && p.side === 'off' && lp.kind === 'pass' && !lp.carrierSet && lp.t > 0.25;
     s.hover = a.flier && !(a.fallWant > 0);
-    // Facing vs moving: backpedaling.
-    if (s.speed > 0.7) { const fx = Math.sin(a.yaw), fz = Math.cos(a.yaw); s.backpedal = (p.vx * this.dir * fx + p.vy * this.dir * fz) / s.speed < -0.3; }
-    // One-shots
+    s.backpedal = p.act === 'BACKPEDAL';
+    // The throw: cocked through the windup, released at 0.45, follow-through after.
+    if (p.side === 'off' && p.slot === 'QB') {
+      const W = lp.windup, F = lp.thrown;
+      if (W) s.throwU = clampN((lp.t - W.t0) / W.T, 0, 1) * 0.45;
+      else if (F && lp.t - F.t0 < 0.4) s.throwU = 0.45 + ((lp.t - F.t0) / 0.4) * 0.55;
+    }
+    // One-shot reactions to events.
     const A = a.act;
     if (A) {
       const u = (t - A.t0) / A.dur;
-      if (u >= 1 && A.kind !== 'tackle') a.act = null;
+      if (u >= 1) a.act = null;
       else switch (A.kind) {
-        case 'throw': s.throwU = u; break;
         case 'secure': s.carrier = true; s.reach = Math.max(0, 1 - u * 2); break;
-        case 'whiff': { const k = u < 0.3 ? u / 0.3 : u < 0.65 ? 1 : 1 - (u - 0.65) / 0.35; s.fall = k; s.fallDir = a.fallDir; break; }
-        case 'tackle': s.dive = Math.min(1, (t - A.t0) / 0.28); if (lp.phase !== 'dead' && t - A.t0 > 0.7) a.act = null; break;
         case 'miss': s.stun = Math.sin(u * Math.PI) * 0.6; break;
         default: break;
       }
     }
-    // Diving at the carrier or the ball.
-    if (p.dive != null && p.dive > -0.6 && A?.kind !== 'tackle') s.dive = clampN((0.3 - p.dive) / 0.5, 0, 1) * (p.dive > -0.3 ? 1 : (p.dive + 0.6) / 0.3);
-    // Reaching for a pass that is about to arrive (the target, and a defender playing it).
-    const T = lp.thrown;
-    if (lp.phase === 'live' && T && lp.ball.state === 'air') {
-      const left = T.t0 + T.T - lp.t;
-      const close = Math.hypot(T.tx - p.x, T.ty - p.y);
-      if ((T.target === p || (p.side === 'def' && close < 1.8)) && left < 0.5) { s.reach = 1 - left / 0.5; s.reachHigh = lp.ball.z > 2.6 ? 0.35 : 0; }
+    if (p.act === 'STUMBLE' || (A?.kind === 'whiff' && p.stun > 0)) {
+      const u = 1 - clampN(p.stun / 0.9, 0, 1), k = u < 0.3 ? u / 0.3 : u < 0.65 ? 1 : 1 - (u - 0.65) / 0.35;
+      s.fall = k * (p.stunFall ? 1 : 0.55); s.fallDir = a.fallDir;
     }
+    // The tackle sequence: the tackler lays out or wraps, the carrier goes down the way he
+    // was hit, both from the simulation's own progress.
+    const T = lp.tackle;
+    if (T && T.q === p) s.dive = T.dove ? Math.min(1, (lp.t - T.t0) / 0.2) : 0.55 + 0.45 * (p.fallU ?? 0);
+    if ((T && T.c === p) || p.act === 'DOWN') {
+      a.fallWant = p.act === 'DOWN' ? 1 : p.fallU ?? 0;
+      if (!a.fallDir && T) { const o = this.actorOf(T.q); a.fallDir = this.localDir(a, o ? a.pos.x - o.pos.x : 1, o ? a.pos.z - o.pos.z : 0, 1); }
+    }
+    if (p.act === 'DOWN' && T?.q === p) { s.dive = 1; a.fallWant = 0; }
+    // A diving try for the ball or the carrier that missed.
+    if (p.dive != null && p.dive > -0.6 && !(T && T.q === p)) s.dive = clampN((0.3 - p.dive) / 0.5, 0, 1) * (p.dive > -0.3 ? 1 : (p.dive + 0.6) / 0.3);
+    // Reaching for a pass that is about to arrive (the target, and a defender playing it).
+    const F = lp.thrown;
+    if (p.act === 'REACH' && F) { const left = F.t0 + F.T - lp.t; s.reach = clampN(1 - left / 0.5, 0, 1); s.reachHigh = lp.ball.z > p.h * 0.9 ? 0.35 : 0; }
+    if (p.act === 'CATCH') s.reach = Math.max(s.reach ?? 0, 1 - (lp.t - (p.caughtAt ?? lp.t)) / 0.4);
     if (p.juke > 0) s.juke = Math.sin(clampN(p.juke / 0.35, 0, 1) * Math.PI) * (p.jukeSide ?? 1);
     if (p.truck > 0) s.truck = Math.sin(clampN(p.truck / 0.4, 0, 1) * Math.PI);
     if (p.spin > 0) s.spin = (1 - p.spin / 0.45) * Math.PI * 2 * (p.spinDir ?? 1);
-    if (p.stun > 0 && !p.eng) s.stun = Math.max(s.stun ?? 0, Math.min(1, p.stun * 2));
-    // Down on the turf after the whistle.
-    const downed = lp.phase === 'dead' && lp.end && (((lp.end.how === 'tackle' || lp.end.how === 'sack') && lp.carrier === p) || (lp.end.how === 'sack' && p.slot === 'QB' && p.side === 'off'));
-    if (downed) { a.fallWant = 1; if (!a.fallDir) a.fallDir = [0, -1]; }
-    if (a.fallWant) { s.fall = Math.max(s.fall ?? 0, a.fallWant); s.fallDir = a.fallDir; s.carrier = false; }
-    if (lp.phase === 'pre' && a.fallWant && this.gameState !== 'RESULT') a.fallWant = 0;
+    if (p.stun > 0 && !p.eng && p.act !== 'STUMBLE') s.stun = Math.max(s.stun ?? 0, Math.min(1, p.stun * 2));
+    // Getting back up after a play: the fall eases off while the player stands (RECOVER).
+    if (lp.phase === 'pre') { a.fallWant = p.act === 'RECOVER' ? Math.max(0, (p.recover ?? 0) / 0.9) : 0; if (!a.fallWant) a.fallDir = null; }
+    if (a.fallWant) { s.fall = Math.max(s.fall ?? 0, a.fallWant); s.fallDir = a.fallDir; s.carrier = s.carrier && a.fallWant < 0.5; }
     // Touchdown: the scorer and nearby teammates celebrate.
-    if (td && this.celebrate && lp.carrier) {
+    if (td && this.celebrate && p.act === 'CELEBRATE') {
       const c = lp.carrier;
-      if (p === c) s.celebrate = Math.min(1, (t - this.celebrate) * 3);
-      else if (p.ti === c.ti && Math.hypot(p.x - c.x, p.y - c.y) < 14) s.celebrate = Math.min(1, (t - this.celebrate - 0.3) * 2);
-      if (s.celebrate <= 0) s.celebrate = 0;
+      s.celebrate = p === c ? Math.min(1, (t - this.celebrate) * 3) : Math.max(0, Math.min(1, (t - this.celebrate - 0.3) * 2));
     }
     return s;
   }
@@ -547,14 +531,17 @@ export class Stage {
     return out.set(x, y, z).applyMatrix4(f.bones[bone].matrixWorld);
   }
 
-  // The ball: in the carrier's arm, up by the passer's ear, in the center's hands before the
-  // snap, or flying on the simulation's trajectory.
+  // The ball. Its position is the simulation's (interpolated between steps): at the center
+  // before the snap, in flight on its real arc, or loose and bouncing. When a model holds it,
+  // it is pinned to that model's hand or arm (the attachment point), and it glides between
+  // attachment points instead of popping.
   placeBall(lp, holder, t, dt) {
-    const b = lp.ball, ball = this.ball;
+    const b = lp.ball, ball = this.ball, k = this.alpha;
     const orient = (yaw, pitch, spin) => ball.rotation.set(spin, yaw, pitch, 'YZX');
-    if (holder?.fig && b.state === 'held') {
+    const simAt = (out) => this.world((b.px ?? b.x) + (b.x - (b.px ?? b.x)) * k, (b.py ?? b.y) + (b.y - (b.py ?? b.y)) * k, (b.pz ?? b.z) + (b.z - (b.pz ?? b.z)) * k, out);
+    if (holder?.fig && b.state === 'held' && !b.xfer) {
       const T = holder.fig.template, A = T.rig, dz = (T.depth / T.scale) * 0.5, M = holder.fig.model;
-      const qbSet = lp.phase !== 'pre' && lp.kind === 'pass' && holder === this.actorOf(lp.off.QB) && !lp.thrown && lp.qbState !== 'run';
+      const qbSet = lp.phase !== 'pre' && lp.kind === 'pass' && holder === this.actorOf(lp.off.QB) && !lp.carrierSet;
       if (lp.phase === 'pre') {
         // On the turf at the center's hands.
         this.world(0.05, 0, 0.17, ball.position);
@@ -573,59 +560,55 @@ export class Stage {
         this.bonePoint(holder, 'chest', A.armX * 0.75, -(A.shoulder - A.legTop) * 0.25, dz * 0.95, ball.position);
         orient(holder.yaw - Math.PI / 2, 0.35, 0);
       }
-      // Hand-offs and catches: glide the last few inches instead of popping.
+      // Catches and picks: glide the last few inches into the hands instead of popping.
       if (this.ballGlide > 0 && this.lastBall) { ball.position.lerp(this.lastBall, this.ballGlide); this.ballGlide = Math.max(0, this.ballGlide - dt * 6); }
-    } else if (b.state === 'held' && b.holder) {
-      this.world(b.x, b.y, b.z, ball.position);
     } else {
-      this.world(b.x, b.y, b.z, ball.position);
-      const T = lp.thrown;
-      if (b.state === 'air' && T) {
-        // Leave from the passer's hand and arrive at the receiver's chest.
-        const u = clampN((lp.t - T.t0) / T.T, 0, 1.2);
-        const qa = this.actorOf(lp.off.QB), ra = this.actorOf(T.target);
-        const h0 = qa?.releaseH ?? 1.9, h1 = ra ? (ra.fig?.template.height ?? 1.8) * 0.62 : 1.2;
-        ball.position.y += (h0 - 1.9) * Math.max(0, 1 - u) + (h1 - 1.9) * Math.min(1, u);
-        // Out of the passer's hand: start exactly where the hand released it and blend onto
-        // the flight path over the first part of the throw.
+      simAt(ball.position);
+      const F = lp.thrown;
+      if (b.state === 'air' && F) {
+        // Out of the passer's hand: start exactly where the model's hand released it and blend
+        // onto the simulated flight over the first part of the throw.
+        const u = clampN((lp.t - F.t0) / F.T, 0, 1.2);
         if (this.releasePos) {
           if (!this.airOff) this.airOff = this.releasePos.clone().sub(ball.position);
-          ball.position.addScaledVector(this.airOff, Math.max(0, 1 - u / 0.3));
+          ball.position.addScaledVector(this.airOff, Math.max(0, 1 - u / 0.25));
         }
         this.ballSpin += dt * 26;
-        const yaw = Math.atan2(-(T.ty - T.sy) * this.dir, (T.tx - T.sx) * this.dir);
-        const rise = this.lastBall && dt > 0 ? (ball.position.y - this.lastBall.y) / dt : 0;
-        const run = this.lastBall && dt > 0 ? Math.hypot(ball.position.x - this.lastBall.x, ball.position.z - this.lastBall.z) / dt : 1;
-        orient(yaw, Math.atan2(rise, run) * 0.9, this.ballSpin);
+        const yaw = Math.atan2(-(F.ty - F.sy) * this.dir, (F.tx - F.sx) * this.dir);
+        const e = lp.t - F.t0, vz = F.vz - 10.7 * e, vh = Math.hypot(F.tx - F.sx, F.ty - F.sy) / F.T;
+        orient(yaw, Math.atan2(vz, vh) * 0.9, this.ballSpin);
       } else if (b.state === 'snap') {
         this.ballSpin += dt * 10;
         orient(Math.PI / 2 * this.dir, 0, this.ballSpin);
-      } else if (ball.position.y < 0.3) ball.position.y = 0.17;
+      } else if (b.state === 'loose') {
+        // Tumbling end over end until it settles.
+        const sp = Math.hypot(b.vx ?? 0, b.vy ?? 0, b.vz ?? 0);
+        this.ballSpin += dt * sp * 3;
+        ball.rotation.set(this.ballSpin, ball.rotation.y, ball.position.y < 0.2 ? Math.PI / 2 : this.ballSpin * 0.4);
+      } else if (b.xfer) orient(holder ? holder.yaw - Math.PI / 2 : 0, 0.3, 0);
+      if (ball.position.y < 0.15) ball.position.y = 0.15;
     }
-    if (this.prevHolder !== holder) { this.ballGlide = this.prevHolder && holder ? 0.85 : 0; this.prevHolder = holder; }
+    if (this.prevHolder !== holder) { this.ballGlide = this.prevHolder === undefined || !holder || b.xfer ? 0 : 0.85; this.prevHolder = holder; }
     // Spiking it after a touchdown.
     if (this.celebrate && lp.end?.how === 'td') {
       const ct = t - this.celebrate, a = this.actorOf(lp.carrier);
       if (a && ct < 1.3) {
-        const k = ct / 1.3;
-        ball.position.set(a.pos.x + Math.sin(a.yaw) * 0.6, Math.max(0.17, (1 - k) * 1.6 + Math.sin(k * Math.PI) * 2.4 * (1 - k)), a.pos.z + Math.cos(a.yaw) * 0.6);
-        this.ballSpin += dt * 14; orient(a.yaw, 1.2 * (1 - k), this.ballSpin);
+        const k2 = ct / 1.3;
+        ball.position.set(a.pos.x + Math.sin(a.yaw) * 0.6, Math.max(0.17, (1 - k2) * 1.6 + Math.sin(k2 * Math.PI) * 2.4 * (1 - k2)), a.pos.z + Math.cos(a.yaw) * 0.6);
+        this.ballSpin += dt * 14; orient(a.yaw, 1.2 * (1 - k2), this.ballSpin);
       }
     }
     this.lastBall = (this.lastBall ?? new THREE.Vector3()).copy(ball.position);
-    // Pass target and flight path
-    const T = lp.thrown;
-    const inAir = b.state === 'air' && !!T?.target;
+    // Pass target and flight path, drawn from the same trajectory the simulation flies.
+    const F = lp.thrown;
+    const inAir = b.state === 'air' && !!F?.target;
     this.target.visible = inAir;
     this.arc.visible = inAir && !reduceMotion;
     if (inAir) {
-      this.world(T.tx, T.ty, 0.04, this.target.position);
-      const qa = this.actorOf(lp.off.QB), ra = this.actorOf(T.target);
-      const h0 = qa?.releaseH ?? 1.9, h1 = ra ? (ra.fig?.template.height ?? 1.8) * 0.62 : 1.2;
+      this.world(F.tx, F.ty, 0.04, this.target.position);
       for (let i = 0; i <= 40; i++) {
-        const u = i / 40;
-        const z = 1.9 + Math.sin(Math.PI * u) * (0.3 + T.T * T.T * 1.4) + (h0 - 1.9) * (1 - u) + (h1 - 1.9) * u;
-        this.world(T.sx + (T.tx - T.sx) * u, T.sy + (T.ty - T.sy) * u, z, _v);
+        const at = flightAt(F, (i / 40) * F.T);
+        this.world(at.x, at.y, at.z, _v);
         this.arcPts.set([_v.x, _v.y, _v.z], i * 3);
       }
       this.arc.geometry.attributes.position.needsUpdate = true;
@@ -697,7 +680,7 @@ export class Stage {
   framing(lp) {
     const f = this.frm ?? (this.frm = { focus: new THREE.Vector3(), fwd: 1, spread: 10, pre: true, deep: 0, tight: false, qb: new THREE.Vector3() });
     // RESULT: hold the shot where the play ended.
-    if (this.gameState === 'RESULT' && this.frmInit) { f.tight = true; f.pre = false; f.shot = 'post'; return f; }
+    if (this.gameState === 'PLAY_RESULT' && this.frmInit) { f.tight = true; f.pre = false; f.shot = 'post'; return f; }
     this.frmInit = true;
     f.fwd = this.dir; f.pre = lp.phase === 'pre'; f.deep = 0; f.tight = false;
     const qb = this.actorOf(lp.off.QB);
