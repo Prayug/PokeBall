@@ -3,8 +3,9 @@
 // and tackles are resolved from the same ratings and type matchups as the simulated games.
 // Coordinates are yards in the offense's frame: x runs downfield from the line of scrimmage,
 // y runs across the field (sidelines at ±SIDE). No DOM access, so tests can run it headless.
+import { traitMod } from './traits.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
-import { OFF_PLAYS, rand, randn, chance, clamp, sigmoid, eff, rep, has, nm, st, fumbleCheck } from './engine.js';
+import { OFF_PLAYS, rand, randn, chance, clamp, sigmoid, eff, rep, nm, st, fumbleCheck } from './engine.js';
 import { WEATHER } from './types.js';
 import { bodyOf, FOOT_DEPTH, FOOT_SIDE } from './body.js';
 
@@ -1425,7 +1426,7 @@ function blocks(lp) {
     }
     // Rate of getting off the block, per second: rating and type edge, quick feet shed sooner,
     // and nobody sheds in the first instants of the fit.
-    const base = passPro ? 0.55 : lp.carrierSet ? 0.13 : 0.08;
+    const base = passPro ? 0.7 : lp.carrierSet ? 0.13 : 0.08;
     const quick = clamp((d.a.acc - b.a.acc) / 60, -0.4, 0.5);
     let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.45 ? 0.3 : 1);
     if (!passPro) rate = Math.max(rate, 0.1);
@@ -1538,11 +1539,13 @@ function release(lp, r, away) {
   for (const q of lp.players) if (q.side === 'def' && !q.eng) near = Math.min(near, dist(q, qb));
   const pressured = near < 2.4;
   const D = lp.def;
-  const intimidated = Object.values(D).some((d) => has(d.id, 'intimidate')) && !has(qb.id, 'clearBody');
-  if (intimidated) note(lp, 'ability', `${nm(qb.id)} is rattled by Intimidate`, qb);
-  const acc = qb.a.acc - (intimidated ? 3 : 0) - (lp.g.weather === 'rain' ? 4 : 0);
+  const tAcc = traitMod('throwAccuracy', { qb, def: Object.values(D) });
+  traitNotes(lp, tAcc, { qb }, qb);
+  const acc = qb.a.acc + tAcc.v - (lp.g.weather === 'rain' ? 4 : 0);
   const air = Math.hypot(px - rp.x, py - rp.y);
-  let sd = (0.25 + air * 0.042) * (1.9 - acc / 90) * (pressured ? (has(qb.id, 'focus') ? 1.25 : 1.5) : 1);
+  const tPr = pressured ? traitMod('pressure', { qb }) : null;
+  if (tPr) traitNotes(lp, tPr, { qb }, qb);
+  let sd = (0.25 + air * 0.042) * (1.9 - acc / 90) * (pressured ? 1 + 0.5 * tPr.v : 1);
   if (lp.manual && lp.control === qb && len(qb.vx, qb.vy) > 2) sd *= 1.25; // throwing on the run
   px += randn(g) * sd * 1.2; py += randn(g) * sd;
   py = clamp(py, -SIDE - 2, SIDE + 2);
@@ -1644,7 +1647,7 @@ function arrival(lp) {
   const spot = { x: T.tx, y: T.ty };
   const r = T.target;
   const dr = dist(r, spot);
-  const reachOf = (p) => 1.45 + (flier(p) ? 0.25 : 0);
+  const reachOf = (p) => 1.45 + traitMod('catchReach', { p }).v;
   let dfd = null, dd = 99;
   for (const q of lp.players) if (q.side === 'def' && !q.eng) { const d = dist(q, spot); if (d < dd) { dd = d; dfd = q; } }
   lp.sepAtArrival = dd; lp.drAtArrival = dr;
@@ -1653,11 +1656,12 @@ function arrival(lp) {
   lp.stats.cov = dfd && dd < 3 ? dfd : lp.stats.cov;
   const inBounds = Math.abs(spot.y) < SIDE && spot.x < lp.goalX + 10;
   const rReach = reachOf(r);
-  if (dr <= rReach && dr > 1.45) note(lp, 'ability', `${nm(r.id)} flies up for a ball out of reach`, r);
+  if (dr <= rReach && dr > 1.45) traitNotes(lp, traitMod('catchReach', { p: r }), { p: r }, r, true);
   // Defender plays the ball first if he is closer.
   if (dfd && dd < 1.5 && (dd < dr || dr > rReach - 0.05)) {
-    const hawk = PLAYERS[dfd.id].types.includes('Dark') ? 0.07 : 0;
-    if (hawk) note(lp, 'ability', `${nm(dfd.id)} reads the throw (Dark type)`, dfd);
+    const tInt = traitMod('intChance', { d: dfd, r });
+    const hawk = tInt.v;
+    traitNotes(lp, tInt, { d: dfd, r }, dfd);
     const R = rep(dfd.id, dfd.a.cov, r.id, r.a.hndC);
     const pI = (diff) => clamp(0.12 + hawk + diff * 0.006 + (T.pressured ? 0.04 : 0) + (dr > rReach ? 0.12 : 0) - dd * 0.05, 0.03, 0.42)
       * (lp.offCall === 'screen' ? 0.4 : 1) + (userPlay && dfd === userDef ? 0.18 : 0);
@@ -1729,6 +1733,11 @@ function contest(lp, pWith, pWithout, R, a, d, where) {
   return hit;
 }
 
+// Notes for the traits that acted at a hook (quiet ones only when the caller says so).
+function traitNotes(lp, T, ctx, who, decided = false) {
+  for (const t of T.used) if (!t.quiet || decided) note(lp, t.kind, t.note(ctx), who);
+}
+
 // Something about a Pokémon (its type, its ability, its build) changed this play.
 function note(lp, kind, text, who = null) {
   if (lp.notes.some((n) => n.text === text)) return;
@@ -1736,7 +1745,6 @@ function note(lp, kind, text, who = null) {
   event(lp, 'note', text, who);
 }
 
-function flier(p) { const P = PLAYERS[p.id]; return P.types.includes('Flying') || P.ability === 'Levitate'; }
 
 function incomplete(lp, text, by = null) {
   if (lp.ball.state === 'air') dropBall(lp, 0.3);
@@ -1777,7 +1785,9 @@ function contacts(lp) {
     if (c.spin > 0) p -= (user ? 0.3 : 0.17) * (0.3 + (c.a.spd + c.a.strBT) / 320 - q.a.tkl / 400) * (headOn ? 1.25 : 0.8);
     if (c.truck > 0) p -= 0.08 + (c.a.strBT - q.a.tkl) * 0.012 + clamp(Math.log(PLAYERS[c.id].weight / Math.max(1, PLAYERS[q.id].weight)) * 0.06, -0.12, 0.15);
     if (q.dive != null && q.dive > 0) p += 0.1;
-    if (has(c.id, 'slippery')) p -= 0.05;
+    const tTk = traitMod('tackleOdds', { c, q });
+    p += tTk.v;
+    if (tTk.used.length) traitNotes(lp, tTk, { c, q }, c);
     if (c.slow > 0) p += 0.12;
     if (lp.t - (lp.carrierAt ?? 0) < 0.5 && lp.caught) p += 0.1;
     // A Ghost phases through its first would-be tackler each game.
@@ -1965,7 +1975,8 @@ function buildResult(lp, end) {
     const qs = st(g, o, qb.id);
     qs.sk++; st(g, d, tackler.id).dsk++; st(g, d, tackler.id).tk++; g.teams[o].team.sacks++;
     let text = `${nm(tackler.id)} sacks ${nm(qb.id)} for a loss of ${Math.max(0, -yards)}.${se ? " It's super effective!" : ''}`;
-    const strip = has(qb.id, 'noFumble') ? 0 : 0.07 + (PLAYERS[tackler.id].types.includes('Poison') ? 0.03 : 0);
+    const tSt = traitMod('stripChance', { c: qb, q: tackler });
+    const strip = Math.max(0, 0.07 + tSt.v);
     if (chance(g, strip)) {
       qs.fum++; st(g, d, tackler.id).ff++;
       if (chance(g, 0.6)) {
@@ -1988,7 +1999,7 @@ function buildResult(lp, end) {
     const r = { kind: 'pass', yards, carrier: c.id, scorer: c.id, qb: qb.id, text, clockStop: stop, highlight, se };
     if (tackler && end.how === 'tackle') {
       st(g, d, tackler.id).tk++;
-      if (chance(g, 0.006) && !has(c.id, 'noFumble')) {
+      if (chance(g, Math.max(0, 0.006 + Math.min(0, traitMod('stripChance', { c, q: tackler }).v)))) {
         rs.fum++; st(g, d, tackler.id).ff++;
         return { ...r, text: text + ` FUMBLE! ${g.teams[d].name} recover.`, turnover: 'fumble', returnSpot: 100 - clamp(lp.spot + yards, 1, 99), highlight: 'turnover', clockStop: true };
       }

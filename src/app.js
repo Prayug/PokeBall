@@ -79,12 +79,13 @@ function loadPrefs() {
       if (p.weatherFx != null) S.weatherFx = !!p.weatherFx;
       if (['auto', 'high', 'low'].includes(p.quality)) S.quality = p.quality;
       if (p.names != null) S.names = !!p.names;
+      if (p.pips != null) S.pips = !!p.pips;
       if (p.camShots) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
     }
   } catch { /* ignore */ }
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, weatherFx: S.weatherFx, quality: S.quality, names: S.names, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, camShots: S.cal })); } catch { /* ignore */ }
 }
 
 // ---------- small view helpers ----------
@@ -962,6 +963,7 @@ function menuHtml(g, simBtns, coachBox) {
     <h4>Graphics</h4><div class="gm-row seg">${[['auto', 'Auto'], ['high', 'High'], ['low', 'Fast']].map(([k, l]) => `<button class="btn tiny ${S.quality === k ? 'on' : ''}" data-act="quality" data-q="${k}" aria-pressed="${S.quality === k}">${l}</button>`).join('')}</div>
     <label class="check"><input type="checkbox" id="g-wx" ${S.weatherFx ? 'checked' : ''}> Weather effects (${WEATHER[g.weather].name})</label>
     <label class="check"><input type="checkbox" id="g-names" ${S.names ? 'checked' : ''}> Name and position over your player</label>
+    <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}> Team markers under every player</label>
     <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}> Debug view: position labels, formation check, camera calibration <kbd>\`</kbd></label>
     ${keysHelp()}
     <button class="btn tiny" data-act="details">Box score and play-by-play</button>
@@ -1370,11 +1372,12 @@ function resultBanner(e, lp, before) {
   else if (e.kind === 'punt') head = 'Punt';
   else if (e.kind === 'fg') { head = 'Field goal no good'; tone = 'to'; }
   else if (how === 'incomplete') { head = 'Incomplete'; tone = 'muted'; }
-  else if (e.kind === 'sack') { head = 'Sack'; tone = 'to'; }
+  else if (e.kind === 'sack' || how === 'sack') { head = 'Sack'; tone = 'to'; }
   else if (!changed && g.down === 1 && b.down >= 1 && yd > 0) { head = 'First down'; tone = 'big'; }
   else if (how === 'out') head = 'Out of bounds';
   else head = yd < 0 ? 'Loss' : 'Tackle';
-  const notes = (lp?.notes ?? []).filter((n) => n.kind === 'type' || n.kind === 'ability' || n.kind === 'size').slice(0, 2).map((n) => n.text);
+  // Why it happened, when a Pokémon's type, ability or size decided part of the play.
+  const notes = (lp?.notes ?? []).filter((n) => n.kind === 'type' || n.kind === 'ability' || n.kind === 'size').slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
   const next = g.final ? 'Final' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
   const clock = e.clockStop && !td ? 'Clock stopped' : '';
   return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed };
@@ -1386,7 +1389,7 @@ function showBanner(B) {
   L3.banner = B;
   el.className = `lower3 on ${B.tone}${B.possession ? ' poss' : ''}`;
   el.innerHTML = `<div class="l3-head"><b>${esc(B.head)}</b>${B.yds ? `<span class="l3-yds">${esc(B.yds)}</span>` : ''}${B.clock ? `<span class="l3-clock">${B.clock}</span>` : ''}</div>
-    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note">${esc(n)}</p>`).join('')}<p class="l3-next">${esc(B.next)}</p>`;
+    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}<p class="l3-next">${esc(B.next)}</p>`;
 }
 function hideBanner(after = 0) {
   clearTimeout(timers.banner);
@@ -1816,6 +1819,7 @@ function onChange(e) {
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
   if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }
+  if (t.id === 'g-pips') { S.pips = t.checked; if (stage) stage.showPips = S.pips; savePrefs(); }
   if (t.id === 'g-debug') setDebug(t.checked);
   if (t.id === 'import-file' && t.files?.[0]) t.files[0].text().then(importSave);
   if (t.dataset?.cut) {
