@@ -95,7 +95,6 @@ export function blockReason(L, team, id) {
     const same = team.roster.filter((x) => PLAYERS[x].types[0] === p.types[0]).length;
     if (same >= 4) return `Already 4 ${p.types[0]} types`;
   }
-  if (p.legendary && team.roster.some((x) => PLAYERS[x].legendary)) return 'Already has a legendary';
   return null;
 }
 
@@ -491,7 +490,6 @@ export function makeTradeOffer(L) {
   const meBase = teamStrength(me.roster);
   const topOvr = (id) => PLAYERS[id].ovr[PLAYERS[id].best[0]];
   const mine = me.roster.slice().sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 10);
-  const hasLegend = (roster, except) => roster.some((x) => x !== except && PLAYERS[x].legendary);
   let best = null;
   for (const t of L.teams) {
     if (t.user) continue;
@@ -502,8 +500,6 @@ export function makeTradeOffer(L) {
     }).sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 8);
     for (const send of mine) {
       for (const get of theirs) {
-        if (PLAYERS[get].legendary && hasLegend(me.roster, send)) continue;
-        if (PLAYERS[send].legendary && hasLegend(t.roster, get)) continue;
         const meGain = teamStrength(me.roster.map((x) => (x === send ? get : x))) - meBase;
         if (meGain <= 0.5) continue;
         const aiGain = teamStrength(t.roster.map((x) => (x === get ? send : x))) - base + aiLikes(t, send) - aiLikes(t, get);

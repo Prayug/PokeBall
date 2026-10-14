@@ -24,10 +24,10 @@ const v = new THREE.Vector3();
 // The debug calibration panel edits these live.
 export const CAMERA_SHOTS = [['pre', 'Pre-snap'], ['pass', 'Passing'], ['run', 'Running'], ['post', 'Post-play']];
 export const CAMERA_DEFAULTS = {
-  pre: { distance: 13, height: 8.5, pitch: 22, fov: 50 },
-  pass: { distance: 14, height: 9.5, pitch: 23, fov: 52 },
-  run: { distance: 12, height: 8, pitch: 22, fov: 50 },
-  post: { distance: 11, height: 7, pitch: 21, fov: 48 },
+  pre: { distance: 14.5, height: 9.5, pitch: 22, fov: 50 },
+  pass: { distance: 15.5, height: 10.5, pitch: 23, fov: 52 },
+  run: { distance: 13.5, height: 9, pitch: 22, fov: 50 },
+  post: { distance: 12.5, height: 8, pitch: 21, fov: 48 },
 };
 export const CAMERA_LIMITS = { distance: [6, 45], height: [2.5, 40], pitch: [5, 70], fov: [25, 75] };
 export const cameraDefaults = () => JSON.parse(JSON.stringify(CAMERA_DEFAULTS));
@@ -151,7 +151,8 @@ export class CameraRig {
       this.shake *= Math.exp(-dt * 9);
     }
     this.camera.lookAt(this.look);
-    const fov = this.mode === 'qb' ? 52 : this.mode === 'tactical' ? 38 : this.mode === 'broadcast' ? (this.wantFov ?? 50) : 42;
+    // kick (0..1): the controlled player is sprinting, so the lens widens a touch for speed.
+    const fov = (this.mode === 'qb' ? 52 : this.mode === 'tactical' ? 38 : this.mode === 'broadcast' ? (this.wantFov ?? 50) : 42) + (this.kick ?? 0) * 5;
     if (Math.abs(this.camera.fov - fov) > 0.01) { this.camera.fov += (fov - this.camera.fov) * (snap ? 1 : 1 - Math.exp(-dt * 3)); this.camera.updateProjectionMatrix(); }
   }
 

@@ -78,6 +78,7 @@ function finish(T, gltf) {
   });
   const clips = {};
   for (const c of gltf.animations) clips[c.name] = c;
+  for (const k of ['idle', 'walk', 'run']) if (clips[k]) stripRootMotion(clips[k]);
   // Measure in the idle pose: skinned bounds follow the bones.
   const probe = cloneSkinned(scene);
   if (clips.idle) { const mx = new THREE.AnimationMixer(probe); mx.clipAction(clips.idle).play(); mx.update(0.01); }
@@ -98,6 +99,26 @@ function finish(T, gltf) {
     offset: new THREE.Vector3(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2),
     height: size.y * s, width: size.x * s, depth: size.z * s,
   });
+}
+
+// Many run and walk clips carry root motion: the model's origin (or hips) travels forward over
+// the clip and jumps back when it loops. The simulation already moves the player, so that
+// drift is taken out of every looping clip: each position track loses its straight-line travel
+// from first key to last and keeps only the bob and sway around it, so the loop closes.
+function stripRootMotion(clip) {
+  for (const tr of clip.tracks) {
+    if (!tr.name.endsWith('.position')) continue;
+    const t = tr.times, v = tr.values, n = t.length, w = v.length / n;
+    if (n < 2 || w !== 3) continue;
+    const span = t[n - 1] - t[0];
+    if (!(span > 0)) continue;
+    const d = [0, 1, 2].map((c) => v[(n - 1) * 3 + c] - v[c]);
+    if (Math.hypot(...d) < 1e-6) continue;
+    for (let i = 0; i < n; i++) {
+      const u = (t[i] - t[0]) / span;
+      for (let c = 0; c < 3; c++) v[i * 3 + c] -= d[c] * u;
+    }
+  }
 }
 
 // One player's instance: group (yards) > pivot (whole-body lean, lift) > model (scaled).

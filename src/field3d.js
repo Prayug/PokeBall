@@ -300,10 +300,11 @@ export class Stage {
     // Blocking and throwing are posed on the skeleton (poseLimbs); a rig-less model has
     // only its clips, so it uses its attack clip for contact.
     else if (s.truck > 0.3 || s.dive > 0.3 || ((s.engaged || (s.throwU != null && s.throwU < 1)) && !f.rig)) role = 'attack';
-    else if (s.speed > 0.7) {
+    else if (a.anim.moving) {
       role = f.actions.run ? 'run' : 'walk';
-      // Match the clip's stride to the ground speed, within reason.
-      speed = clampN(s.speed / (role === 'run' ? 6 : 3) * (2 / Math.max(0.8, s.height)), 0.6, 2.2);
+      // Match the clip's stride to the ground speed, within reason (a big body takes longer
+      // strides, so its clip runs slower for the same speed).
+      speed = clampN(s.speed / (role === 'run' ? 6 : 3) * (2 / Math.max(0.8, s.height)) * (1 + 0.15 * a.anim.sprK), 0.6, 2.4);
     }
     const played = playClip(f, role, 0.18, speed);
     resetLimbs(f);
@@ -312,7 +313,7 @@ export class Stage {
     const want = played === 'run' || played === 'walk' ? 0 : played === 'idle' || !played ? 1 : 0.4;
     f.limbW += (want - f.limbW) * (1 - Math.exp(-dt * 8));
     const sf = s.top > 0 ? clampN(s.speed / s.top, 0, 1.2) : 0;
-    const runWant = s.speed > 0.7 ? 0.4 + 0.6 * Math.min(1, sf) : s.engaged ? 0.35 : 0;
+    const runWant = a.anim.moving ? 0.4 + 0.6 * Math.min(1, sf) + 0.35 * a.anim.sprK : s.engaged ? 0.35 : 0;
     f.runK = (f.runK ?? 0) + (runWant - (f.runK ?? 0)) * (1 - Math.exp(-dt * 6));
     driveLimbs(f, { phase: a.anim.gait, run: f.runK, t: a.anim.t, flap: s.hover ? 1 : 0, weight: f.limbW });
     poseLimbs(f, a.anim.fb);
@@ -427,7 +428,9 @@ export class Stage {
   frame(now = performance.now(), alpha = 1) {
     this.alpha = clampN(alpha, 0, 1);
     const dtRaw = (now - this.last) / 1000;
-    const dt = Math.min(0.05, dtRaw);
+    // Animation keeps real time down to 10 frames a second, like the simulation does, so legs
+    // and clips never fall behind the bodies they belong to on a slow device.
+    const dt = Math.min(0.1, dtRaw);
     this.last = now;
     this.autoScale(dtRaw);
     const t = now / 1000;
@@ -462,6 +465,11 @@ export class Stage {
       s.shortLegs = T?.rig ? T.rig.legTop / T.px < 0.22 : false;
       if (a.fig) a.anim.update(dt, s);
       if (a.fig?.model) this.modelClip(a, s, dt);
+      // Sprinting (the player you control, or the ball carrier): turf kicked up behind.
+      if (s.sprint && a.anim.moving && (p === lp.control || p === lp.carrier) && lp.phase === 'live') {
+        a.dustT = (a.dustT ?? 0) - dt;
+        if (a.dustT <= 0) { a.dustT = 0.07; this.dust(a.pos, p.vx * this.dir, p.vy * this.dir); }
+      }
       a.root.position.copy(a.pos);
       a.root.rotation.y = a.yaw + (a.fig ? a.anim.yawOffset : 0);
       if (a.ph) { a.ph.position.y = s.hover ? 0.4 : 0; }
@@ -487,7 +495,9 @@ export class Stage {
     this.placeBall(lp, held, t, dt);
     this.markers(lp, now, dt);
     this.debugOverlay(lp);
-    // Camera
+    // Camera: a wider lens while the player you control sprints.
+    const kickWant = lp.phase === 'live' && lp.control?.sprinting ? 1 : 0;
+    this.rig.kick = (this.rig.kick ?? 0) + (kickWant - (this.rig.kick ?? 0)) * (1 - Math.exp(-dt * 4));
     this.rig.update(dt, this.framing(lp), this.camera.aspect, obstacles, this.snapNext || reduceMotion);
     this.snapNext = false;
     this.applyInset(reduceMotion ? 1 : 1 - Math.exp(-dt * 6));
@@ -523,6 +533,7 @@ export class Stage {
     s.qbHold = holding && p.slot === 'QB' && p.side === 'off' && lp.kind === 'pass' && !lp.carrierSet && lp.t > 0.25;
     s.hover = a.flier && !(a.fallWant > 0);
     s.backpedal = p.act === 'BACKPEDAL';
+    s.sprint = p.act === 'SPRINT' || (p.act === 'CARRY' && !!p.sprinting);
     // The throw: cocked through the windup, released at 0.45, follow-through after.
     if (p.side === 'off' && p.slot === 'QB') {
       const W = lp.windup, F = lp.thrown;
@@ -847,6 +858,19 @@ export class Stage {
     this.addFx(ring, 0.45, (u) => { const s = 0.6 + u * 2.4 * size; ring.scale.set(s, s, 1); ring.material.opacity = 0.75 * (1 - u); }, () => ring.material.dispose());
   }
 
+  dust(pos, vx, vy) {
+    if (!pos || reduceMotion) return;
+    const m = new THREE.Mesh(DUST_GEO, new THREE.MeshBasicMaterial({ color: '#cfc3a4', transparent: true, depthWrite: false }));
+    const l = Math.hypot(vx, vy) || 1, side = (Math.random() - 0.5) * 0.5;
+    // Behind the feet, drifting back and up. World x is field x, world z is field y.
+    const x0 = pos.x - (vx / l) * 0.5 + (vy / l) * side, z0 = pos.z - (vy / l) * 0.5 - (vx / l) * side;
+    this.addFx(m, 0.5, (u) => {
+      m.position.set(x0 - (vx / l) * u * 0.6, 0.12 + u * 0.45, z0 - (vy / l) * u * 0.6);
+      m.scale.setScalar(0.7 + u * 1.6);
+      m.material.opacity = 0.5 * (1 - u);
+    }, () => m.material.dispose());
+  }
+
   confetti(pos, color) {
     if (!pos || reduceMotion) return;
     const cols = [color, '#ffd23f', '#ffffff', '#4fc3f7', '#ff7a59'];
@@ -949,6 +973,7 @@ function teamKit(teams) {
 const SLOT_LABEL = { LE: 'DE', DT1: 'DT', DT2: 'DT', OLB: 'LB', MLB: 'LB', FS: 'S', SS: 'S', CB1: 'CB', CB2: 'CB', CB3: 'CB', WR1: 'WR', WR2: 'WR', WR3: 'WR' };
 const BLOB_GEO = new THREE.PlaneGeometry(2, 2);
 const BURST_GEO = new THREE.RingGeometry(0.5, 0.7, 32);
+const DUST_GEO = new THREE.SphereGeometry(0.22, 7, 5);
 const CONFETTI_GEO = new THREE.PlaneGeometry(0.22, 0.12);
 
 let blobTex = null;

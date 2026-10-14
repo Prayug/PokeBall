@@ -158,7 +158,7 @@ function renderHome() {
           <label class="pill"><input type="radio" name="rounds" value="26" ${st.rounds === 26 ? 'checked' : ''}> 26 rounds, with 4 bench</label>
         </fieldset>
         <label class="check"><input type="checkbox" id="f-typecap" ${st.typeCap ? 'checked' : ''}> At most 4 Pokémon of one primary type</label>
-        <label class="check"><input type="checkbox" id="f-legend" ${st.legendaries ? 'checked' : ''}> Include legendaries, Ultra Beasts and Paradox Pokémon (one per team)</label>
+        <label class="check"><input type="checkbox" id="f-legend" ${st.legendaries ? 'checked' : ''}> Include legendaries, Ultra Beasts and Paradox Pokémon</label>
         <label class="check"><input type="checkbox" id="f-clock" ${st.clock ? 'checked' : ''}> 60-second pick clock</label>
         <button class="btn primary" type="submit">Start the draft</button>
       </form>
@@ -193,7 +193,8 @@ function phaseLabel(L) {
 function boardIds() {
   const L = S.league, me = user(), d = S.draft;
   const q = d.search.trim().toLowerCase();
-  let ids = LG.available(L).filter((id) => (!q || P(id).name.toLowerCase().includes(q)) && (!d.type || P(id).types.includes(d.type)) && (!d.gen || P(id).gen === Number(d.gen)));
+  // Drafted Pokémon leave the board, and so do ones this team can't take (type cap).
+  let ids = LG.available(L).filter((id) => !LG.blockReason(L, me, id) && (!q || P(id).name.toLowerCase().includes(q)) && (!d.type || P(id).types.includes(d.type)) && (!d.gen || P(id).gen === Number(d.gen)));
   const open = LG.openSlots(me);
   const fit = (id) => {
     if (d.rate !== 'fit') return { slot: d.rate, v: P(id).ovr[d.rate] };
@@ -1202,6 +1203,7 @@ function setFlow(st) {
   L3.flow = st;
   L3.flowAt = performance.now();
   L3.edges.clear();
+  if (st !== 'PRE_SNAP' && st !== 'FORMATION_SETUP') L3.snapWant = false;
   const g = S.game;
   L3.trace.push({ state: st, at: Math.round(performance.now()), clock: g?.clock, poss: g?.poss, down: g?.down, toGo: g?.toGo, spot: g?.spot, score: g ? [...g.score] : null });
   if (L3.trace.length > 400) L3.trace.shift();
@@ -1467,8 +1469,10 @@ function loop(now) {
       while (L3.acc >= DT) { stepLive(lp, null); L3.acc -= DT; }
       if (lp.phase !== 'pre') render();
       // Snap only once set, and only on a press made in this state (no carried-over keys).
+      // A press while the line is still settling is kept and snaps the moment it is set.
       const ready = lp.set && now - L3.flowAt > 250;
-      if (L3.edges.has('Space') && ready) { L3.edges.clear(); doSnap(); }
+      if (L3.edges.has('Space')) L3.snapWant = true;
+      if (L3.snapWant && ready) { L3.edges.clear(); L3.snapWant = false; doSnap(); }
       else if (L3.edges.has('KeyQ') || L3.edges.has('Tab')) {
         L3.edges.clear();
         if (lp.user === lp.d && lp.control) {
@@ -1575,6 +1579,9 @@ function setDebug(on) {
 function setCamera(k) { S.cam = k; stage?.setCameraMode(k); savePrefs(); if (S.menuOpen) render(); }
 
 function onKey(e, down) {
+  // A release always counts, whatever is on screen: a key let go between plays (the dive held
+  // through the whistle) would otherwise stay "held" and its next press would never register.
+  if (!down) L3.keys.delete(e.code);
   if (S.screen !== 'game' || !stage || !S.game) return;
   if (e.target.closest?.('input, select, textarea')) return;
   const code = e.code;
@@ -1602,7 +1609,7 @@ function onKey(e, down) {
   if (!game) return;
   if (!L3.lp) { if (code === 'Space' && down && e.target === document.body) e.preventDefault(); return; }
   e.preventDefault();
-  if (down) { if (!L3.keys.has(code)) L3.edges.add(code); L3.keys.add(code); } else L3.keys.delete(code);
+  if (down) { if (!L3.keys.has(code) || !e.repeat) L3.edges.add(code); L3.keys.add(code); }
 }
 
 function bindTouch(root) {
