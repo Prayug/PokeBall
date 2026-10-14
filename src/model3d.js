@@ -113,11 +113,12 @@ function finish(T, gltf) {
   const B = bodyOf(T.id);
   const s = fitModel(B, yTop - yMin, core, tips);
   // The footprint formations space this Pokémon by: what is actually drawn.
-  setMeasured(T.id, tips.side * s, tips.front * s, tips.back * s);
+  const gw = B.girth ?? 1;
+  setMeasured(T.id, tips.side * s * gw, tips.front * s * gw, tips.back * s * gw);
   Object.assign(T, {
-    ready: true, scene, clips, scale: s,
+    ready: true, scene, clips, scale: s, girth: gw,
     offset: new THREE.Vector3(-cx, -yMin, -cz),
-    height: (yTop - yMin) * s, fullHeight: (ys[ys.length - 1] - yMin) * s, width: tips.side * 2 * s, depth: (tips.front + tips.back) * s,
+    height: (yTop - yMin) * s, fullHeight: (ys[ys.length - 1] - yMin) * s, width: tips.side * 2 * s * gw, depth: (tips.front + tips.back) * s * gw,
   });
 }
 
@@ -146,7 +147,7 @@ export function makeModelFigure(T) {
   const model = cloneSkinned(T.scene);
   model.position.copy(T.offset);
   const scaled = new THREE.Group();
-  scaled.scale.setScalar(T.scale);
+  scaled.scale.set(T.scale * (T.girth ?? 1), T.scale, T.scale * (T.girth ?? 1));
   scaled.add(model);
   const pivot = new THREE.Group();
   pivot.add(scaled);
@@ -242,8 +243,14 @@ function buildRig(model) {
     }
     out.push({
       bone: b, n: I.n, part: I.part, depth, side, front: tmp.z > ctr.z, y: tmp.y,
-      rest, lat: axisIn(b.parent, X), up: axisIn(b.parent, Y), fwd: axisIn(b.parent, Z),
+      rest, lat: axisIn(b.parent, X), up: axisIn(b.parent, Y), fwd: axisIn(b.parent, Z), kid: b.children.find((c) => c.isBone) ?? null,
     });
+  }
+  // The upper arm of each side, the bone hangArms aims: past a clavicle or shoulder bone.
+  for (const e of out) {
+    if (e.part !== 'arm' || !e.kid || !e.side || /hand|wrist|palm/.test(e.n)) continue;
+    const collar = /clavicle|shoulder/.test(e.n);
+    if (e.depth === 0 ? !collar || !out.some((o) => o.part === 'arm' && o.depth === 1 && o.bone.parent === e.bone) : out.some((o) => o.bone === e.bone.parent && /clavicle|shoulder/.test(o.n))) e.upper = true;
   }
   // Hands: the end of each arm chain, where the football sits.
   const hands = {};
@@ -315,6 +322,31 @@ export function poseLimbs(fig, q) {
       case 'tail': rot(e, e.lat, -q.crouch * 0.15); break;
       default: break;
     }
+  }
+}
+
+// Let the upper arms hang at the sides, whatever the clip or bind pose holds them at (many
+// models idle with arms spread wide, or are bound in a T-pose). Each upper arm is turned, by
+// weight w, toward pointing down and a little out and forward; the football poses then work
+// from there. Two-legged rigs only.
+const _m = new THREE.Quaternion(), _d = new THREE.Vector3(), _t = new THREE.Vector3(), _id = new THREE.Quaternion();
+export function hangArms(fig, w) {
+  const R = fig.rig;
+  if (!R || R.quad || w < 0.01) return;
+  const model = fig.root ?? null;
+  for (const e of R.bones) {
+    if (!e.upper) continue;
+    const b = e.bone, par = b.parent;
+    if (e.kid.position.lengthSq() < 1e-10) continue;
+    par.updateWorldMatrix(true, false);
+    // Parent frame -> model frame rotation.
+    par.getWorldQuaternion(_m);
+    if (model) { model.getWorldQuaternion(_q2); _m.premultiply(_q2.invert()); }
+    _d.copy(e.kid.position).applyQuaternion(b.quaternion).normalize();
+    _t.set(e.side * 0.32, -1, 0.18).normalize().applyQuaternion(_q2.copy(_m).invert());
+    _q.setFromUnitVectors(_d, _t);
+    _id.identity().slerp(_q, Math.min(1, w));
+    b.quaternion.premultiply(_id);
   }
 }
 

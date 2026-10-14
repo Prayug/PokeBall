@@ -14,7 +14,7 @@ import { PLAYERS } from './ratings.js';
 import { absSpot } from './engine.js';
 import { Stadium, HALF_W } from './stadium3d.js';
 import { template, upgradeTemplate, makeFigure, disposeFigure, placeholder, flies } from './figure3d.js';
-import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs, poseLimbs } from './model3d.js';
+import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs, poseLimbs, hangArms } from './model3d.js';
 import { Animator } from './anim3d.js';
 import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
@@ -362,6 +362,11 @@ export class Stage {
     const played = playClip(f, role, 0.18, speed);
     resetLimbs(f);
     f.mixer.update(dt);
+    // Arms hang naturally unless a clip is acting something out (celebrating, falling, hit);
+    // a run or walk clip keeps some of its own arm swing.
+    const hw = played === 'idle' || !played ? 0.9 : played === 'run' || played === 'walk' ? 0.5 : 0;
+    f.hangW = (f.hangW ?? hw) + (hw - (f.hangW ?? hw)) * (1 - Math.exp(-dt * 6));
+    hangArms(f, f.hangW);
     // The model's own legs: full procedural stride unless its run or walk clip is playing.
     const want = played === 'run' || played === 'walk' ? 0 : played === 'idle' || !played ? 1 : 0.4;
     f.limbW += (want - f.limbW) * (1 - Math.exp(-dt * 8));
@@ -725,7 +730,7 @@ export class Stage {
     const orient = (yaw, pitch, spin) => ball.rotation.set(spin, yaw, pitch, 'YZX');
     const simAt = (out) => this.world((b.px ?? b.x) + (b.x - (b.px ?? b.x)) * k, (b.py ?? b.y) + (b.y - (b.py ?? b.y)) * k, (b.pz ?? b.z) + (b.z - (b.pz ?? b.z)) * k, out);
     if (holder?.fig && b.state === 'held' && !b.xfer) {
-      const T = holder.fig.template, A = T.rig, dz = (T.depth / T.scale) * 0.5, M = holder.fig.model;
+      const T = holder.fig.template, A = T.rig, dz = (T.depth / (T.scale * (T.girth ?? 1))) * 0.5, M = holder.fig.model;
       const qbSet = lp.phase !== 'pre' && lp.kind === 'pass' && holder === this.actorOf(lp.off.QB) && !lp.carrierSet;
       if (lp.phase === 'pre') {
         // On the turf at the center's hands.

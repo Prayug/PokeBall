@@ -15,7 +15,7 @@ Games are played on a 3D field, Madden style: pick a play from the playbook, sna
 | `Space` | Snap the ball (pressed while players are still walking up, it hurries everyone to the line and snaps the moment they are set); juke when you carry it; go up for the ball while a pass is in the air to your receiver; dive to tackle on defense |
 | `W A S D` or arrows | Move your player (leave them alone and your player runs on autopilot) |
 | `Shift` | Sprint (a burst to 110% of top speed for about three seconds, then it recharges) |
-| `1` to `5` | Throw to that receiver (the numbers float over their heads): tap for a touch pass, hold for a bullet, `Shift` with the number for a lob. Hold a direction as you throw to place the ball: up leads him, down brings it back to him, sideways puts it away from the defender. Control switches to the receiver while the ball is in the air |
+| `1` to `5` | Throw to that receiver (the numbers float over their heads): tap for a touch pass, hold for a bullet, `Shift` with the number for a lob. Hold a direction as you throw to place the ball: up leads him, down brings it back to him, sideways puts it away from the defender. Control switches to the receiver while the ball is in the air; he runs to the ball on his own until you let go of the direction you threw with and press one again |
 | `T` | Throw it away |
 | `E` | Truck a tackler |
 | `R` | Spin move |

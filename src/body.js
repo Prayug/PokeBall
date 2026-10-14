@@ -34,8 +34,13 @@ export function sizeScore(m, kg) { return Math.log2(Math.max(0.1, m) / 0.4) + 0.
 export const CORE_SIDE = 1.1, CORE_DEPTH = 1.35;
 export const TIP_SIDE = 1.4, TIP_DEPTH = 1.85;
 // A model is never shrunk below this share of its class height to fit, so it stays
-// recognizable (scaling is always uniform: nothing is flattened or stretched).
+// recognizable (scaling is uniform, apart from the few GIRTH bodies below).
 export const MIN_FIT = 0.6;
+
+// Bodies the uniform fit draws far too thin: a serpent standing as tall as a lineman is a
+// rope. These are drawn wider and deeper than their height alone gives (sides and front to
+// back by this factor, the height unchanged).
+const GIRTH = { 497: 2.6 };
 
 export function bodyOf(id) {
   let b = cache.get(id);
@@ -51,7 +56,7 @@ export function bodyOf(id) {
   const height = C.height * (1 + u * 0.14);
   const r = C.r * (1 + u * 0.1);
   // Until the model is measured, the footprint is the most the fitter lets it reach.
-  b = { id, cls, height, r, kg, m, foot: { side: r * TIP_SIDE, front: r * TIP_DEPTH, back: r * TIP_DEPTH }, measured: false };
+  b = { id, cls, height, r, kg, m, foot: { side: r * TIP_SIDE, front: r * TIP_DEPTH, back: r * TIP_DEPTH }, girth: GIRTH[id] ?? 1, measured: false };
   cache.set(id, b);
   return b;
 }

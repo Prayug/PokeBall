@@ -632,7 +632,11 @@ function applyInput(lp, inp) {
   }
   if (!c) return;
   const mag = len(inp.mx ?? 0, inp.my ?? 0);
-  if (mag > 0.1) lp.manual = true;
+  // Control just moved to the receiver: a direction still held from the throw (moving the
+  // passer, placing the ball) is not steering him. He runs to the ball on his own until the
+  // keys are let go and pressed again.
+  if (lp.handoverLock) { if (mag <= 0.1) lp.handoverLock = false; else inp = { ...inp, mx: 0, my: 0 }; }
+  if (!lp.handoverLock && mag > 0.1) lp.manual = true;
   c.input = { mx: mag > 0.1 ? inp.mx / Math.max(1, mag) : 0, my: mag > 0.1 ? inp.my / Math.max(1, mag) : 0, sprint: !!inp.sprint };
   if (c.carrier) {
     if (inp.juke) startMove(lp, c, 'juke');
@@ -1639,7 +1643,7 @@ function release(lp, r, away, kind = 'touch', place = null) {
   const loft = kind !== 'touch' ? 1 : air > 18 ? 0.86 : air > 10 ? 0.94 : 1;
   launch(lp, { target: r, sx: rp.x, sy: rp.y, z0: rp.z, tx: px, ty: py, zc, v: v * loft, pressured, air: px, kind, catchMod: K.catch, placed: !!place });
   // The user takes over the receiver while the ball is in the air (and can attack it).
-  if (lp.user === lp.o && lp.control === qb && !lp.autoQB) { lp.control = r; lp.manual = false; }
+  if (lp.user === lp.o && lp.control === qb && !lp.autoQB) { lp.control = r; lp.manual = false; lp.handoverLock = true; }
   lp.stats.target = r;
   lp.stats.cov = nearestDef(lp, r);
   event(lp, 'throw', `${nm(qb.id)} throws for ${nm(r.id)}`, qb, r);
@@ -1785,10 +1789,10 @@ function arrival(lp) {
     const hawk = tInt.v;
     traitNotes(lp, tInt, { d: dfd, r }, dfd);
     const R = rep(dfd.id, dfd.a.cov, r.id, r.a.hndC);
-    const pI = (diff) => clamp(0.12 + hawk + diff * 0.006 + (T.pressured ? 0.04 : 0) + (dr > rReach ? 0.12 : 0) - dd * 0.05, 0.03, 0.42)
+    const pI = (diff) => clamp(0.08 + hawk + diff * 0.006 + (T.pressured ? 0.04 : 0) + (dr > rReach ? 0.12 : 0) - dd * 0.05, 0.03, 0.42)
       * (lp.offCall === 'screen' ? 0.4 : 1) + (userPlay && dfd === userDef ? 0.18 : 0);
     if (inBounds && contest(lp, pI(R.diff), pI(R.base), R, dfd, r, 'for the interception')) { interception(lp, dfd, spot); return; }
-    const pB = (diff) => clamp(0.45 + diff * 0.01 - dd * 0.15 + (userPlay ? 0.25 : 0), 0.15, 0.9);
+    const pB = (diff) => clamp(0.3 + diff * 0.01 - dd * 0.15 + (userPlay ? 0.25 : 0), 0.15, 0.9);
     if (dr > rReach || contest(lp, pB(R.diff), pB(R.base), R, dfd, r, 'at the catch point')) {
       st(g, lp.d, dfd.id).pd++;
       dropBall(lp, 0.12, 3.2);
@@ -1808,11 +1812,11 @@ function arrival(lp) {
   // Attacking the ball at its high point (Space while it is in the air to your receiver):
   // better in traffic, and he stops to make the catch.
   const aggro = !!lp.aggro && lp.control === r;
-  const base = 0.93 + (hands - 75) * 0.006 - dr * 0.1 - Math.max(0, thrown - 14) * 0.009 + (T.catchMod ?? 0) + (aggro ? (contested ? 0.1 : -0.02) : 0);
+  const base = 0.95 + (hands - 70) * 0.004 - Math.max(0, dr - 0.5) * 0.12 - Math.max(0, thrown - 18) * 0.006 + (T.catchMod ?? 0) + (aggro ? (contested ? 0.1 : -0.02) : 0);
   let caught;
   if (contested) {
     const R = rep(r.id, hands, dfd.id, dfd.a.cov);
-    const pc = (diff) => clamp(base - ((1.8 - dd) * 0.2 - diff * 0.006), 0.15, 0.98);
+    const pc = (diff) => clamp(base - ((1.8 - dd) * 0.12 - diff * 0.006), 0.15, 0.98);
     caught = contest(lp, pc(R.diff), pc(R.base), R, r, dfd, 'on the contested catch');
   } else caught = chance(g, clamp(base, 0.15, 0.98));
   if (caught) {
