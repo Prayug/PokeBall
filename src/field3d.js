@@ -7,6 +7,7 @@
 // z across the field. A live play's own frame (x downfield from the line, y across) maps to
 // the world through world(): x_w = los + dir * x, z_w = dir * y.
 import * as THREE from 'three';
+import { sfx, tickAudio } from './audio.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SPRITE_INDEX } from './sprites3d.js';
 import { PLAYERS } from './ratings.js';
@@ -86,6 +87,19 @@ export class Stage {
     this.losLine = new THREE.Mesh(lineGeo, lineMat('#4d8dff', 0.62));
     this.firstLine = new THREE.Mesh(lineGeo, lineMat('#ffd84a', 0.7));
     for (const l of [this.losLine, this.firstLine]) { l.rotation.x = -Math.PI / 2; l.position.y = 0.025; l.renderOrder = 2; S.add(l); }
+    // The chain crew on the far sideline: the down box at the line of scrimmage (its number is
+    // the down) and the stake at the line to gain.
+    const pole = (h) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, h, 8), new THREE.MeshStandardMaterial({ color: '#1d1f22', roughness: 0.6 })); m.position.y = h / 2; m.castShadow = true; return m; };
+    this.downBox = new THREE.Group();
+    this.downBox.add(pole(2.4));
+    this.downTex = new THREE.CanvasTexture(document.createElement('canvas'));
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.5), [0, 1, 2, 3, 4, 5].map((i) => (i === 2 || i === 3 ? new THREE.MeshStandardMaterial({ color: '#ff7a1a', roughness: 0.6 }) : new THREE.MeshStandardMaterial({ color: '#ffffff', map: this.downTex, roughness: 0.6 }))));
+    plate.position.y = 2.6; plate.castShadow = true; this.downBox.add(plate);
+    this.stake = new THREE.Group();
+    this.stake.add(pole(2.4));
+    const flag = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.4, 0.4), new THREE.MeshStandardMaterial({ color: '#ff7a1a', roughness: 0.6 }));
+    flag.position.y = 2.5; this.stake.add(flag);
+    for (const g of [this.downBox, this.stake]) { g.position.z = -(HALF_W + 1.6); S.add(g); }
     // Football
     this.ball = new THREE.Mesh(footballGeometry(), new THREE.MeshStandardMaterial({ map: footballTexture(), roughness: 0.5 }));
     this.ball.castShadow = true;
@@ -210,6 +224,17 @@ export class Stage {
     this.losLine.position.x = this.los;
     this.firstLine.visible = toGo != null;
     if (toGo != null) this.firstLine.position.x = toGo;
+    this.downBox.position.x = this.los;
+    this.stake.visible = toGo != null;
+    if (toGo != null) this.stake.position.x = toGo;
+    if (this.downShown !== g.down) {
+      this.downShown = g.down;
+      const c = this.downTex.image; c.width = 64; c.height = 64;
+      const x = c.getContext('2d'); x.fillStyle = '#ff7a1a'; x.fillRect(0, 0, 64, 64);
+      x.fillStyle = '#ffffff'; x.font = '800 52px "Barlow Condensed", Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.fillText(String(g.down ?? 1), 32, 35);
+      this.downTex.colorSpace = THREE.SRGBColorSpace; this.downTex.needsUpdate = true;
+    }
     const stamp = performance.now();
     this.kit = teamKit(g.teams);
     for (const p of lp.players) this.actorFor(p, { ...g.teams[p.ti], color: this.kit[p.ti] }).seen = stamp;
@@ -234,7 +259,7 @@ export class Stage {
     // under everyone; only your player and the ball carrier get one.
     const ring = new THREE.Sprite(new THREE.SpriteMaterial({ map: pipTexture(p.side === 'off'), color: team.color, depthTest: false, transparent: true, fog: false }));
     ring.renderOrder = 9; ring.scale.set(0.42, 0.42, 1);
-    const blob = new THREE.Mesh(BLOB_GEO, new THREE.MeshBasicMaterial({ map: blobTexture(), color: new THREE.Color(team.color).lerp(_c.set('#000000'), 0.15), transparent: true, depthWrite: false, opacity: 0.85 }));
+    const blob = new THREE.Mesh(BLOB_GEO, new THREE.MeshBasicMaterial({ map: blobTexture(), color: '#0b120d', transparent: true, depthWrite: false, opacity: 0.85 }));
     blob.rotation.x = -Math.PI / 2; blob.position.y = 0.02; blob.scale.setScalar(body.r * 1.5);
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: slotTexture(p.slot, team.color), depthTest: false, transparent: true, fog: false }));
     tag.renderOrder = 12; tag.visible = false; tag.scale.set(1.3, 0.55, 1);
@@ -273,6 +298,7 @@ export class Stage {
         a.fig = makeModelFigure(M);
         a.root.add(a.fig.group);
         a.anim.setFigure(a.fig);
+        a.anim.style = a.style = this.styleOf(a);
         a.version = -1;
         return;
       }
@@ -292,6 +318,21 @@ export class Stage {
     a.root.add(a.fig.group);
     a.anim.setFigure(a.fig);
     a.version = T.version;
+  }
+
+  // How a species moves, from its model: four legs, two, or none (and then whether it flies,
+  // floats, slithers or hops), and Flying types or levitating Pokémon in the air.
+  styleOf(a) {
+    const R = a.fig?.rig, T = a.fig?.template, P = PLAYERS[a.id];
+    const types = P?.types ?? [];
+    const wings = !!R?.bones?.some((e) => e.part === 'wing');
+    if (a.flier && (wings || !R?.legs)) return 'flyer';
+    if (R?.quad) return 'quad';
+    if (R?.legs >= 2) return 'biped';
+    if (a.flier || types.includes('Ghost') || P?.ability === 'Levitate') return 'floater';
+    if (T && T.depth > T.height * 1.6) return 'serpent';
+    if (types.includes('Psychic') && T && T.height > T.width) return 'floater';
+    return 'hopper';
   }
 
   dropFigure(a) {
@@ -388,13 +429,16 @@ export class Stage {
       const e = lp.events[this.evSeen++];
       const a = this.actorOf(e.who), b = this.actorOf(e.other);
       switch (e.kind) {
+        case 'snap': sfx('snap'); break;
         case 'throw':
+          sfx('throw');
           // The ball leaves from where it is drawn right now: the passer's hand.
           if (a) { this.releasePos = this.ball.position.clone(); this.airOff = null; }
           break;
         case 'catch': case 'int':
           if (a) { a.act = { kind: 'secure', t0: t, dur: 0.45 }; a.flash = 0.5; this.burst(a.pos, e.kind === 'int' ? '#ff7a59' : '#ffffff', 0.8); }
-          if (e.kind === 'int') { this.stadium.cheer(0.7); this.rig.shake = Math.max(this.rig.shake, 0.15); }
+          sfx('catch');
+          if (e.kind === 'int') { sfx('groan'); this.stadium.cheer(0.7); this.rig.shake = Math.max(this.rig.shake, 0.15); }
           break;
         case 'handoff': if (a) a.act = { kind: 'secure', t0: t, dur: 0.35 }; break;
         case 'broken':
@@ -404,6 +448,7 @@ export class Stage {
             b.fallDir = this.localDir(b, a ? b.pos.x - a.pos.x : 1, a ? b.pos.z - a.pos.z : 0, hard ? 1 : -1);
             b.flash = hard ? 0.5 : 0.2;
             if (hard) this.rig.shake = Math.max(this.rig.shake, 0.3);
+            sfx(hard ? 'bighit' : 'hit');
             if (a) this.burst(a.pos.clone().lerp(b.pos, 0.5), hard ? '#ffd23f' : '#ffffff', hard ? 1.1 : 0.7);
           }
           break;
@@ -412,14 +457,15 @@ export class Stage {
           if (b) { const dx = a ? b.pos.x - a.pos.x : 1, dz = a ? b.pos.z - a.pos.z : 0; b.fallDir = this.localDir(b, dx, dz, 1); b.flash = 0.35; }
           if (a && b) this.burst(b.pos.clone().lerp(a.pos, 0.4), '#ffffff', 0.8);
           this.rig.shake = Math.max(this.rig.shake, 0.12);
+          sfx('hit');
           break;
         case 'tackle': case 'sack':
           // The whistle: the pair is on the turf.
           if (a && b && e.kind === 'sack') this.burst(b.pos.clone().lerp(a.pos, 0.4), '#ff7a59', 1.1);
           this.rig.shake = Math.max(this.rig.shake, e.kind === 'sack' ? 0.22 : 0.1);
-          if (e.kind === 'sack') this.stadium.cheer(0.6);
+          if (e.kind === 'sack') { this.stadium.cheer(0.6); sfx('bighit'); }
           break;
-        case 'incomplete': if (a) a.act = { kind: 'miss', t0: t, dur: 0.7 }; break;
+        case 'incomplete': if (a) a.act = { kind: 'miss', t0: t, dur: 0.7 }; sfx('groan'); break;
         default: break;
       }
     }
@@ -448,12 +494,15 @@ export class Stage {
     const t = now / 1000;
     const lp = this.lp;
     this.updateFx(t, dt);
+    tickAudio(dt);
     if (!lp) { this.stadium.update(t, dt, this.rig.look); this.renderer.render(this.scene, this.camera); return; }
     const pre = lp.phase === 'pre';
     this.art.visible = pre;
     this.readEvents(lp, t);
+    // Every dead ball gets the whistle, however it ended.
+    if (lp.phase === 'dead' && this.whistled !== lp) { this.whistled = lp; sfx('whistle'); }
     const td = lp.phase === 'dead' && lp.end?.how === 'td';
-    if (td && !this.celebrate) { this.celebrate = t; this.confetti(this.actorOf(lp.carrier)?.pos, lp.g.teams[lp.carrier.ti].color); this.stadium.cheer(1); }
+    if (td && !this.celebrate) { this.celebrate = t; this.confetti(this.actorOf(lp.carrier)?.pos, lp.g.teams[lp.carrier.ti].color); this.stadium.cheer(1); sfx('cheer'); }
     let held = null;
     const obstacles = this.obstacles ?? (this.obstacles = []);
     obstacles.length = 0;
@@ -502,7 +551,7 @@ export class Stage {
         const name = positionName(lp, p);
         if (name !== a.tagText) { a.tagText = name; a.tag.material.map?.dispose(); a.tag.material.map = slotTexture(name, a.color); a.tag.material.needsUpdate = true; }
         a.tag.position.set(a.pos.x, top + 0.75, a.pos.z);
-        const ts = clampN(this.camera.position.distanceTo(a.tag.position) * (tactical ? 0.011 : 0.013), 0.32, 0.8);
+        const ts = clampN(this.camera.position.distanceTo(a.tag.position) * (tactical ? 0.022 : 0.013), 0.32, tactical ? 1.6 : 0.8);
         a.tag.scale.set(ts * 2.3, ts, 1);
       }
       // Team rings on the turf: before the snap, in the tactical view, or always if chosen.
@@ -1065,7 +1114,7 @@ function blobTexture() {
   if (blobTex) return blobTex;
   const c = document.createElement('canvas'); c.width = c.height = 64;
   const x = c.getContext('2d'); const g = x.createRadialGradient(32, 32, 2, 32, 32, 32);
-  g.addColorStop(0, 'rgba(0,0,0,0.55)'); g.addColorStop(0.6, 'rgba(0,0,0,0.25)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  g.addColorStop(0, 'rgba(0,0,0,0.72)'); g.addColorStop(0.45, 'rgba(0,0,0,0.42)'); g.addColorStop(1, 'rgba(0,0,0,0)');
   x.fillStyle = g; x.fillRect(0, 0, 64, 64);
   blobTex = new THREE.CanvasTexture(c);
   return blobTex;

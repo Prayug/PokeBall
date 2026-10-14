@@ -8,6 +8,7 @@ import { createLivePlay, snap, step as stepLive, playSeconds, worldSpots, playSt
 import { formationsFor } from './formations.js';
 import { measureVersion } from './body.js';
 import { Stage, webglAvailable } from './field3d.js';
+import { initAudio, setSound } from './audio.js';
 import { CAMERA_MODES, CAMERA_SHOTS, CAMERA_LIMITS, CAMERA_ALIASES, cameraDefaults } from './camera3d.js';
 import { diagram, formationName } from './playbook.js';
 import * as LG from './league.js';
@@ -24,6 +25,7 @@ const S = {
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
   menuOpen: false, cam: 'gameplay', weatherFx: true, quality: 'auto',
   names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
+  sound: true, seenHelp: false, helpOpen: false,
 };
 let timers = { draft: null, clock: null, auto: null, banner: null };
 
@@ -85,12 +87,14 @@ function loadPrefs() {
       if (['auto', 'high', 'low'].includes(p.quality)) S.quality = p.quality;
       if (p.names != null) S.names = !!p.names;
       if (p.pips != null) S.pips = !!p.pips;
+      if (p.sound != null) S.sound = !!p.sound;
+      if (p.seenHelp) S.seenHelp = true;
       if (p.camShots && p.camV === 2) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
     }
   } catch { /* ignore */ }
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 2, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 2, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, camShots: S.cal })); } catch { /* ignore */ }
 }
 
 // ---------- small view helpers ----------
@@ -1000,11 +1004,12 @@ function menuHtml(g, simBtns, coachBox) {
     <h4>Skip ahead</h4><div class="gm-row">${simOff ? simBtns.replaceAll('data-act="sim"', 'data-act="sim" disabled') : simBtns}</div>
     <h4>Camera <kbd>C</kbd></h4><div class="gm-row seg">${CAMERA_MODES.map(([k, l]) => `<button class="btn tiny ${S.cam === k ? 'on' : ''}" data-act="cam" data-cam="${k}" aria-pressed="${S.cam === k}">${l}</button>`).join('')}</div>
     <h4>Graphics</h4><div class="gm-row seg">${[['auto', 'Auto'], ['high', 'High'], ['low', 'Fast']].map(([k, l]) => `<button class="btn tiny ${S.quality === k ? 'on' : ''}" data-act="quality" data-q="${k}" aria-pressed="${S.quality === k}">${l}</button>`).join('')}</div>
+    <label class="check"><input type="checkbox" id="g-sound" ${S.sound ? 'checked' : ''}> Sound: crowd, whistle and hits</label>
     <label class="check"><input type="checkbox" id="g-wx" ${S.weatherFx ? 'checked' : ''}> Weather effects (${WEATHER[g.weather].name})</label>
     <label class="check"><input type="checkbox" id="g-names" ${S.names ? 'checked' : ''}> Name and position over your player</label>
     <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}> Team markers under every player</label>
     <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}> Debug view: position labels, formation check, camera calibration <kbd>\`</kbd></label>
-    ${keysHelp()}
+    <div class="gm-row"><button class="btn tiny" data-act="help">Controls <kbd>?</kbd></button><button class="btn tiny" data-act="replay" ${replayReady() ? '' : 'disabled'}>Replay last play <kbd>Y</kbd></button></div>
     <button class="btn tiny" data-act="details">Box score and play-by-play</button>
   </div>`;
 }
@@ -1101,9 +1106,9 @@ function lineupHtml(g) {
 }
 
 function keysHelp() {
-  return `<details class="keys"><summary>Controls</summary><div class="keygrid">
+  return `<div class="keygrid">
     <span><kbd>1</kbd>-<kbd>9</kbd> <kbd>0</kbd> <kbd>-</kbd> between plays: call the play on that card</span>
-    <span><kbd>C</kbd> change camera · <kbd>M</kbd> menu · <kbd>Esc</kbd> change the play</span>
+    <span><kbd>C</kbd> change camera (gameplay, tactical, broadcast, player) · <kbd>M</kbd> menu · <kbd>Esc</kbd> change the play</span>
     <span><kbd>Space</kbd> snap, juke with the ball, dive to tackle</span>
     <span><kbd>W A S D</kbd> or arrows: move your player</span>
     <span><kbd>Shift</kbd> sprint</span>
@@ -1112,8 +1117,9 @@ function keysHelp() {
     <span><kbd>E</kbd> truck through a tackler</span>
     <span><kbd>R</kbd> spin move</span>
     <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
+    <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
-  </div></details>`;
+  </div>`;
 }
 
 function logHtml(g) {
@@ -1261,7 +1267,7 @@ function ensureStage() {
   if (stage || !webglAvailable()) return;
   try {
     stage = new Stage();
-  } catch { stage = null; return; }
+  } catch (e) { console.error("stage", e); stage = null; return; }
   stage.setCameraMode(S.cam);
   stage.setWeatherFx(S.weatherFx);
   stage.rig.setCalibration(S.cal);
@@ -1271,6 +1277,10 @@ function ensureStage() {
   stageWrap.className = 'stagewrap';
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
     <div class="lower3" id="lower3" aria-live="polite"></div>
+    <div class="ov-badge" id="replay-badge" hidden>Replay</div>
+    <button class="hud-replay" id="replay-btn" data-act="replay" hidden>Replay <kbd>Y</kbd></button>
+    <div class="ov-pause" id="pause-ov" hidden><div><b>Paused</b><span>Press <kbd>P</kbd> or <kbd>Esc</kbd> to resume</span><button class="btn" data-act="resume">Resume</button></div></div>
+    <div class="ov-help" id="help-ov" hidden><div class="card"><h3>Controls</h3>${keysHelp()}<button class="btn primary" data-act="helpok">Got it</button></div></div>
     <div class="dbg-hud" id="dbg-hud"></div>
     <div class="touch" id="touch" aria-hidden="true"><div class="stick" id="stick"><span></span></div>
       <div class="tbtns"><button data-key="Space">Snap / Juke / Dive</button><button data-key="KeyE">Truck</button><button data-key="KeyR">Spin</button><button data-key="KeyQ">Switch</button>
@@ -1325,7 +1335,12 @@ function startLive(off, def, opts) {
   // Line up from wherever the players are standing in the preview.
   const from = L3.preview?.lp ? worldSpots(L3.preview.lp) : L3.spots ?? undefined;
   L3.before = { poss: g.poss, down: g.down, toGo: g.toGo, spot: g.spot, score: [...g.score] };
+  if (L3.replay) stopReplay();
+  // The replay recording: the game as it was before the play (its random seed included) and
+  // every simulation step's input, so the play can be run again exactly, step for step.
+  L3.rec = { g: structuredClone(g), off, def, opts: { ...opts, from }, log: [], done: false };
   L3.lp = createLivePlay(g, off, def, { ...opts, from });
+  L3.paused = false;
   L3.off = off; L3.def = def; L3.acc = 0; L3.deadT = 0; L3.ev = 0; L3.committed = null;
   L3.autoSnap = opts.autoSnap ?? null;
   L3.pclock = Math.max(L3.pclock, 10);
@@ -1340,6 +1355,7 @@ function startLive(off, def, opts) {
 function doSnap() {
   const lp = L3.lp;
   if (!lp || lp.phase !== 'pre') return;
+  L3.rec?.log.push({ snap: true, control: lp.control ? [lp.control.side, lp.control.slot] : null });
   snap(lp);
   L3.autoSnap = null;
   render();
@@ -1351,6 +1367,7 @@ function commitPlay() {
   const lp = L3.lp, g = S.game, b = L3.before;
   const entry = runLivePlay(g, L3.off, L3.def, lp.result, playSeconds(lp));
   L3.committed = entry;
+  if (L3.rec) { L3.rec.done = true; L3.rec.end = endKey(lp); }
   const big = entry.highlight === 'td' || entry.kind === 'score' || entry.turnover || entry.kind === 'turnover';
   L3.hold = lp.end?.how === 'td' ? 3.2 : big ? 2.6 : lp.end?.how === 'incomplete' ? 1.6 : 2.0;
   L3.tickerUntil = performance.now() + 6500;
@@ -1380,6 +1397,7 @@ function endResult() {
 // For plays resolved without the live field (punts, field goals): the same result beat.
 function afterLivePlay(entry) {
   const g = S.game, b = L3.before;
+  L3.rec = null;
   L3.before = null;
   L3.pclock = 40;
   const now = performance.now();
@@ -1500,12 +1518,17 @@ function loop(now) {
   const lp = L3.lp;
   const g = S.game;
   let sim = null;
-  if (lp) {
+  const hold = isPaused();
+  if (lp && hold) {
+    // Paused: the play stands still (the clocks with it) until it is resumed.
+    sim = lp;
+    L3.acc = 0;
+  } else if (lp) {
     sim = lp;
     if (lp.phase === 'pre') {
       // Fixed-step the walk to the line, like the live play.
       L3.acc += dt;
-      while (L3.acc >= DT) { stepLive(lp, null); L3.acc -= DT; }
+      while (L3.acc >= DT) { stepLive(lp, null); L3.rec?.log.push(null); L3.acc -= DT; }
       if (lp.phase !== 'pre') render();
       // Snap only once set, and only on a press made in this state (no carried-over keys).
       // A press while the line is still settling is kept and snaps the moment it is set.
@@ -1525,7 +1548,9 @@ function loop(now) {
     } else {
       L3.acc += dt;
       while (L3.acc >= DT) {
-        stepLive(lp, lp.phase === 'live' ? readInput(lp) : null);
+        const inp = lp.phase === 'live' ? readInput(lp) : null;
+        stepLive(lp, inp);
+        L3.rec?.log.push(inp);
         L3.acc -= DT;
       }
       if (lp.phase === 'dead') {
@@ -1537,6 +1562,18 @@ function loop(now) {
   } else if (L3.resultUntil > now) {
     // A kick or field goal result: hold the field for a beat.
     L3.acc = 0;
+  } else if (L3.replay) {
+    // The replay: the recorded steps again, at half speed, from the broadcast camera.
+    const R = L3.replay, log = L3.rec.log;
+    sim = R.lp;
+    R.acc += dt * 0.5;
+    while (R.acc >= DT && R.i < log.length) { stepLive(R.lp, log[R.i++]); R.acc -= DT; }
+    if (R.i >= log.length) {
+      R.end = (R.end ?? 0) + dt;
+      // The tests check the replay ends exactly where the play did.
+      if (R.end > 1.6) { L3.lastReplay = { end: endKey(R.lp), want: L3.rec.end }; stopReplay(); sim = null; }
+    }
+    L3.acc = R.acc;
   } else if (L3.preview?.lp) {
     if (L3.resultUntil) { L3.resultUntil = 0; render(); }
     // Between plays: the teams get up and walk to the new spot.
@@ -1553,7 +1590,7 @@ function loop(now) {
       showPreview();
       if (L3.preview) { L3.preview.mv = mv; L3.preview.rebuilt = now; }
     }
-    if (g && !g.final && needsUser(g) && !S.busy && L3.flow === 'PLAY_SELECTION') L3.pclock = Math.max(0, L3.pclock - dt);
+    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && L3.flow === 'PLAY_SELECTION') L3.pclock = Math.max(0, L3.pclock - dt);
   }
   if (g && !g.final) setFlow(flowNow(now));
   // The game clock runs during the play and stops on the whistle.
@@ -1577,8 +1614,56 @@ function loop(now) {
   const ct = L3.lp && L3.lp.phase === 'live' ? `${OFF_PLAYS[L3.off].name} vs ${DEF_PLAYS[L3.def].name}` : '';
   if (call && call.textContent !== ct) call.textContent = ct;
   if (L3.flashT && now > L3.flashT) { L3.flashT = 0; const f = document.getElementById('hud-flash'); if (f) f.className = 'hud-flash'; }
-  stage.frame(now, sim && sim.phase !== undefined ? L3.acc / DT : 1);
+  syncOverlays();
+  stage.frame(now, sim && sim.phase !== undefined && !hold ? Math.min(1, L3.acc / DT) : 1);
   if (S.debug) debugHud();
+}
+
+// ---------- pause, replay and the controls card ----------
+function endKey(lp) { return `${lp.end?.how ?? lp.phase}@${(lp.spotX ?? lp.ball.x).toFixed(2)},${lp.ball.y.toFixed(2)}`; }
+function isPaused() { return !!L3.lp && L3.lp.phase !== 'dead' && (L3.paused || S.helpOpen || (S.menuOpen && L3.lp.phase === 'live')); }
+function togglePause() {
+  if (!L3.lp || L3.lp.phase === 'dead') return;
+  L3.paused = !L3.paused;
+  L3.keys.clear(); L3.edges.clear();
+}
+function replayReady() { return !!(stage && L3.rec?.done && !L3.lp && !L3.replay && L3.rec.log.some((e) => e?.snap)); }
+function startReplay() {
+  if (!replayReady()) return;
+  const r = L3.rec;
+  const lp = createLivePlay(structuredClone(r.g), r.off, r.def, r.opts);
+  lp.preview = true;
+  // Walk to the line instantly; the replay starts at the snap.
+  let i = 0;
+  for (; i < r.log.length && !r.log[i]?.snap; i++) stepLive(lp, null);
+  const m = r.log[i++];
+  lp.control = m?.control ? lp[m.control[0]]?.[m.control[1]] ?? null : null;
+  snap(lp);
+  L3.replay = { lp, i, acc: 0 };
+  S.menuOpen = false;
+  document.body.classList.add('pb-replay');
+  stage.setPlay(lp);
+  stage.setCameraMode('broadcast');
+  stage.snapCamera();
+  render();
+  syncOverlays();
+}
+function stopReplay() {
+  if (!L3.replay) return;
+  L3.replay = null;
+  document.body.classList.remove('pb-replay');
+  stage.setCameraMode(S.cam);
+  if (L3.preview?.lp) stage.setPlay(L3.preview.lp); else showPreview();
+  stage.snapCamera();
+  render();
+}
+function closeHelp() { S.helpOpen = false; S.seenHelp = true; savePrefs(); syncOverlays(); }
+function syncOverlays() {
+  const set = (id, show) => { const el = document.getElementById(id); if (el && el.hidden === show) el.hidden = !show; };
+  set('pause-ov', !!L3.lp && L3.paused && L3.lp.phase !== 'dead');
+  set('replay-badge', !!L3.replay);
+  set('replay-btn', replayReady() && L3.flow === 'PLAY_SELECTION');
+  set('help-ov', !!S.helpOpen);
 }
 
 // Developer-only diagnostics, drawn over the field while the debug view is on: the flow
@@ -1633,12 +1718,21 @@ function onKey(e, down) {
   if (e.target.closest?.('input, select, textarea')) return;
   const code = e.code;
   if (down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (S.helpOpen) {
+      if (code === 'Escape' || code === 'Enter' || code === 'Space' || code === 'Slash') { e.preventDefault(); closeHelp(); }
+      return;
+    }
+    if (code === 'Slash') { e.preventDefault(); S.helpOpen = true; syncOverlays(); return; }
+    if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
+    if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
+    if (code === 'KeyP') { e.preventDefault(); togglePause(); return; }
     if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
     if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; render(); return; }
     if (code === 'Escape') {
       if (S.menuOpen) { S.menuOpen = false; render(); return; }
+      if (L3.paused || L3.lp?.phase === 'live') { e.preventDefault(); togglePause(); return; }
       if (L3.lp?.phase === 'pre' && !S.coachDown) { recall(); return; }
     }
   }
@@ -1655,6 +1749,7 @@ function onKey(e, down) {
   const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'Tab',
     'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(code);
   if (!game) return;
+  if (isPaused()) { e.preventDefault(); return; }
   if (!L3.lp) { if (code === 'Space' && down && e.target === document.body) e.preventDefault(); return; }
   e.preventDefault();
   if (down) { if (!L3.keys.has(code) || !e.repeat) L3.edges.add(code); L3.keys.add(code); }
@@ -1677,7 +1772,10 @@ function bindTouch(root) {
 
 function startGame(game, meta) {
   S.game = game; S.gameMeta = meta; S.gameTab = 'log'; S.busy = false; S.subSel = null;
-  L3.lp = null; L3.preview = null; L3.spots = null; L3.pclock = 40;
+  L3.lp = null; L3.preview = null; L3.spots = null; L3.pclock = 40; L3.rec = null; L3.paused = false;
+  if (L3.replay) stopReplay();
+  // The first game shows the controls once.
+  if (!S.seenHelp) S.helpOpen = true;
   setScreen('game');
   autoAdvance();
 }
@@ -1807,6 +1905,10 @@ function onClick(e) {
     case 'recall': recall(); break;
     case 'menu': S.menuOpen = !S.menuOpen; render(); break;
     case 'cam': setCamera(el.dataset.cam); break;
+    case 'help': S.menuOpen = false; S.helpOpen = true; render(); break;
+    case 'helpok': closeHelp(); break;
+    case 'resume': L3.paused = false; syncOverlays(); break;
+    case 'replay': startReplay(); break;
     case 'mode': setMode(el.dataset.mode); break;
     case 'csfold': S.csFold = !S.csFold; render(); break;
     case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
@@ -1873,6 +1975,7 @@ function onChange(e) {
   if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
+  if (t.id === 'g-sound') { S.sound = t.checked; setSound(S.sound); savePrefs(); }
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
   if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }
   if (t.id === 'g-pips') { S.pips = t.checked; if (stage) stage.showPips = S.pips; savePrefs(); }
@@ -1932,6 +2035,8 @@ function render() {
 
 function start(data) {
   loadPrefs();
+  initAudio();
+  setSound(S.sound);
   try { if (/[?&#]debug\b/.test(location.search + location.hash)) S.debug = true; } catch { /* no location */ }
   const snap = data?.state;
   if (snap?.league || snap?.game) {

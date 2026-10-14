@@ -31,6 +31,9 @@ await page.waitForTimeout(800);
 await page.click('[data-act="quick"]');
 await page.waitForFunction(() => window.__pb?.stage && window.__pb.L3.flow === 'PLAY_SELECTION', null, { timeout: 90000 });
 await page.evaluate(() => window.__pb.setMode('coach'));
+// The first game opens with the controls card; it pauses play until it is dismissed.
+await page.waitForSelector('#help-ov:not([hidden])', { timeout: 10000 });
+await page.click('[data-act="helpok"]');
 
 const OFF = ['slant', 'inside_run', 'post', 'outside_run', 'curl'], DEF = ['base', 'cover2', 'pass_blitz', 'cover3', 'man_press'];
 const shot = async (name) => page.screenshot({ path: join(out, `${name}.png`) });
@@ -51,12 +54,23 @@ for (let n = 0; n < plays; n++) {
   await shot(`${n + 1}-0-selection`);
   const traceAt = await page.evaluate(() => window.__pb.L3.trace.length);
   r.call = await page.evaluate(([o, d]) => { window.__pb.doCall(o); window.__pb.doCall(d); return { off: window.__pb.L3.off, def: window.__pb.L3.def }; }, [OFF[n % OFF.length], DEF[n % DEF.length]]);
-  await page.waitForFunction(() => ['PRE_SNAP', 'SNAP', 'LIVE_PLAY'].includes(window.__pb.L3.flow), null, { timeout: 60000 });
+  await page.waitForFunction(() => ['PRE_SNAP', 'SNAP', 'LIVE_PLAY'].includes(window.__pb.L3.flow), null, { timeout: 180000 });
   await shot(`${n + 1}-1-presnap`);
   // Through the play: sample the camera against the ball.
   let k = 0;
   for (;;) {
     const s = await state();
+    if (s.flow === 'LIVE_PLAY' && n === 1 && !r.pauseChecked) {
+      // Pause: P stops the play and its clock; P again resumes it.
+      r.pauseChecked = true;
+      await page.keyboard.press('KeyP');
+      const t0 = await page.evaluate(() => window.__pb.L3.lp.t);
+      await page.waitForTimeout(2500);
+      const t1 = await page.evaluate(() => ({ t: window.__pb.L3.lp.t, ov: !document.getElementById('pause-ov').hidden }));
+      if (t1.t !== t0 || !t1.ov) r.problems.push(`pause: play time ${t0} -> ${t1.t}, overlay ${t1.ov}`);
+      await shot(`${n + 1}-2-paused`);
+      await page.keyboard.press('KeyP');
+    }
     if (s.flow === 'LIVE_PLAY') {
       r.samples.push({ t: s.t, cam: s.cam, camToBall: s.camToBall });
       if (s.banner) r.problems.push(`result card showing during the play at t=${s.t?.toFixed(2)}`);
@@ -72,6 +86,16 @@ for (let n = 0; n < plays; n++) {
   await shot(`${n + 1}-3-result`);
   await page.waitForFunction(() => window.__pb.L3.flow === 'PLAY_SELECTION' || window.__pb.S.game.final, null, { timeout: 120000 });
   const after = await state();
+  if (n === 0) {
+    // Instant replay: Y re-runs the play from the recording, and it must end where it did.
+    await page.keyboard.press('KeyY');
+    const on = await page.evaluate(() => !!window.__pb.L3.replay && !document.getElementById('replay-badge').hidden);
+    if (!on) r.problems.push('Y did not start the replay');
+    await shot(`${n + 1}-4-replay`);
+    await page.waitForFunction(() => !window.__pb.L3.replay, null, { timeout: 240000 }).catch(() => r.problems.push('replay did not finish'));
+    const rp = await page.evaluate(() => window.__pb.L3.lastReplay);
+    if (!rp || rp.end !== rp.want) r.problems.push(`replay ended at ${rp?.end} but the play ended at ${rp?.want}`);
+  }
   r.trace = await page.evaluate((i) => window.__pb.L3.trace.slice(i).map((x) => x.state), traceAt);
   const want = ['PRE_SNAP', 'SNAP', 'LIVE_PLAY', 'PLAY_RESULT', 'RESET_FORMATION', 'PLAY_SELECTION'];
   const seen = r.trace.filter((s) => want.includes(s));

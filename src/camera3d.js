@@ -33,7 +33,7 @@ export const CAMERA_SHOTS = CAMERA_MODES;
 export const CAMERA_DEFAULTS = {
   gameplay: { pitch: 31, fov: 44, zoom: 1 },
   tactical: { pitch: 56, fov: 42, zoom: 1 },
-  broadcast: { pitch: 30, fov: 34, zoom: 1 },
+  broadcast: { pitch: 26, fov: 32, zoom: 1 },
   player: { pitch: 23, fov: 52, zoom: 1 },
 };
 export const CAMERA_LIMITS = { pitch: [10, 75], fov: [25, 75], zoom: [0.6, 1.8] };

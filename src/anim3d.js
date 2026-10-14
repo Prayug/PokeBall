@@ -37,6 +37,14 @@ export class Animator {
     this.accel = 0;
     this.sprK = 0; // eased 0..1 while sprinting
     this.moving = false;
+    // How this body moves (set by the stage from the model; see Stage.styleOf):
+    //   biped      strides on two legs, arms swinging
+    //   quad       four legs in a diagonal gait that turns into a bounding gallop at a sprint
+    //   flyer      hovers, wings beating, pitched into the direction of flight and banking
+    //   floater    levitates with a slow bob, leaning a little into its drift (no legs)
+    //   serpent    keeps low and slithers, the body yawing in an S as it goes (no legs)
+    //   hopper     bounds, one hop a step, squashing as it lands (no legs to stride with)
+    this.style = 'biped';
   }
 
   setFigure(fig) { this.fig = fig; }
@@ -129,6 +137,9 @@ export class Animator {
     // Leaning into turns.
     o[ROLL] += clamp(-(s.turn ?? 0) * s.speed * 0.035, -0.4, 0.4);
     if (s.hover) { o[LIFT] += H * 0.18 + Math.sin(t * 3 + this.gait) * H * 0.03; o[bi.legL] += 0.25; o[bi.legR] += 0.25; o[bi.armL + 2] -= 0.35 * Math.sin(t * (moving ? 12 : 7)); o[bi.armR + 2] += 0.35 * Math.sin(t * (moving ? 12 : 7)); }
+    // Fliers pitch into their flight and bank harder; floaters drift on a slow bob.
+    if (this.style === 'flyer' && s.hover) { o[PITCH] += 0.28 * Math.min(1, sf) * this.w.run; o[ROLL] += clamp(-(s.turn ?? 0) * s.speed * 0.03, -0.3, 0.3); }
+    if (this.style === 'floater' && !(s.fall > 0.3)) o[LIFT] += H * 0.1 + Math.sin(t * 2.1 + this.gait * 0.2) * H * 0.04;
 
     // ----- overlays -----
     const blendIn = (name, want, rate = 12) => {
@@ -250,11 +261,17 @@ export class Animator {
       // clip would glide: they bound instead, one hop a step with a forward rock and a
       // side-to-side waddle, squashing as they land and stretching as they push off.
       const clipRun = f.cur && (f.cur === f.actions.run || f.cur === f.actions.walk);
-      const m = (!f.rig?.legs && !clipRun ? this.w.run : 0) * (1 - hard);
+      const legless = !f.rig?.legs && !clipRun;
+      const st = this.style, run = this.w.run * (1 - hard);
+      const m = legless && st === 'hopper' ? run : 0;
+      // Slithering: the body yaws in an S and rolls a touch with each wave.
+      const sl = legless && st === 'serpent' ? run : 0;
+      // A four-legged sprint bounds: the body rises and rocks with each gallop stride.
+      const gal = st === 'quad' ? this.sprK * run : 0;
       const H = this.H ?? 2, sf = Math.min(1, this.sf ?? 0), ph = this.gait, hs = Math.abs(Math.sin(ph));
-      const hop = m * hs * H * (0.05 + 0.06 * sf + 0.04 * this.sprK);
-      const pitch = o[PITCH] * k + (f.rig ? 0 : clamp(this.fb.lean - o[PITCH] * 0.3, -0.2, 0.35) * (1 - hard)) + m * Math.sin(ph * 2) * 0.08;
-      f.pivot.rotation.set(pitch, f.rig ? 0 : this.fb.twist * 0.8, o[ROLL] * k + m * Math.sin(ph) * 0.1, 'XZY');
+      const hop = m * hs * H * (0.05 + 0.06 * sf + 0.04 * this.sprK) + gal * hs * H * 0.05;
+      const pitch = o[PITCH] * k + (f.rig ? 0 : clamp(this.fb.lean - o[PITCH] * 0.3, -0.2, 0.35) * (1 - hard)) + m * Math.sin(ph * 2) * 0.08 + gal * Math.sin(ph * 2) * 0.07;
+      f.pivot.rotation.set(pitch, (f.rig ? 0 : this.fb.twist * 0.8) + sl * Math.sin(ph) * 0.32, o[ROLL] * k + m * Math.sin(ph) * 0.1 + sl * Math.sin(ph + 0.8) * 0.06, 'XZY');
       // A crouch lowers the hips, so the feet stay on the turf.
       const c = this.fb.crouch, drop = f.rig ? (f.hipH ?? 0) * (1 - 0.5 * (Math.cos(0.55 * c) + Math.cos(0.3 * c))) : 0;
       f.pivot.position.y = Math.max(0, o[LIFT]) - drop + hop;
