@@ -16,6 +16,9 @@ export const OFF_PLAYS = {
   dive: { name: 'HB Dive', kind: 'run', dir: 'dive', sim: 'inside_run', blurb: 'Quick hit straight ahead' },
   draw: { name: 'HB Draw', kind: 'run', dir: 'draw', blurb: 'Show pass, hand off late' },
   qb_sneak: { name: 'QB Sneak', kind: 'run', dir: 'sneak', blurb: 'Push for a yard' },
+  qb_draw: { name: 'QB Draw', kind: 'run', dir: 'qbdraw', sim: 'draw', qb: true, blurb: 'Drop like a pass, then the QB takes off' },
+  qb_power: { name: 'QB Power', kind: 'run', dir: 'qbpower', sim: 'inside_run', qb: true, blurb: 'Guard pulls, back leads, QB carries' },
+  read_option: { name: 'Zone Read', kind: 'run', dir: 'read', sim: 'inside_run', qb: 0.4, blurb: 'Read the end: give it or pull it' },
   screen: { name: 'HB Screen', kind: 'pass', depth: 'screen', air: [-2, 1], targets: { RB: 1 }, blurb: 'Let the rush in, dump to the back' },
   bubble: { name: 'WR Bubble', kind: 'pass', depth: 'screen', air: [-2, 1], sim: 'screen', targets: { WR3: 1 }, blurb: 'Slot catches it behind blockers' },
   slant: { name: 'Slants', kind: 'pass', depth: 'short', air: [3, 7], targets: { WR1: 0.35, WR2: 0.3, WR3: 0.35 }, blurb: 'Quick inside breaks, 3 to 7 yards' },
@@ -35,7 +38,10 @@ export const OFF_PLAYS = {
   pa_boot: { name: 'PA Bootleg', kind: 'pass', depth: 'mid', pa: true, boot: true, air: [3, 18], sim: 'pa_deep', targets: { TE: 0.4, WR2: 0.35, RB: 0.25 }, blurb: 'Fake the run, QB rolls out' },
   pa_deep: { name: 'PA Shot', kind: 'pass', depth: 'deep', pa: true, air: [18, 34], targets: { WR1: 0.45, WR2: 0.35, TE: 0.2 }, blurb: 'Sell the run, go long' },
   punt: { name: 'Punt', kind: 'punt', blurb: 'Flip the field' },
+  coffin_punt: { name: 'Coffin Corner', kind: 'punt', aim: 'coffin', blurb: 'Shorter, angled out inside the 10' },
+  fake_punt: { name: 'Fake Punt', kind: 'punt', fake: true, blurb: 'Punter takes off, needs surprise' },
   fg: { name: 'Field goal', kind: 'fg', blurb: '' },
+  fake_fg: { name: 'Fake FG', kind: 'fg', fake: true, blurb: 'Holder throws to the tight end' },
 };
 
 // Defensive calls. `sim` is the original call the fast simulator resolves a newer one as.
@@ -301,18 +307,36 @@ function applyFatigue(g) {
 }
 
 // ---------- special teams ----------
+// The team's kicker or punter: the one at that slot, or (an older roster without one) whoever
+// on the roster has the best rating there.
+export function specialist(g, ti, slot) {
+  const t = g.teams[ti];
+  if (t.lineup[slot] != null) return t.lineup[slot];
+  const pool = [...Object.values(t.lineup), ...(t.bench ?? [])].filter((id) => id != null && PLAYERS[id]);
+  return pool.sort((a, b) => PLAYERS[b].ovr[slot] - PLAYERS[a].ovr[slot])[0] ?? null;
+}
+const kick = (g, ti, slot, attr) => eff(g, ti, specialist(g, ti, slot), attr);
+// The distance a kick plays like for this kicker: accuracy moves the whole curve, leg power
+// adds range on the long ones.
+function kickerDistance(g, ti, dist) {
+  const pw = kick(g, ti, 'K', 'kpw'), ac = kick(g, ti, 'K', 'kac');
+  return dist - (ac - 60) * 0.18 - Math.max(0, dist - 40) * (pw - 60) * 0.012;
+}
+export function fgOdds(g) { return fgChance(kickerDistance(g, g.poss, fgDistance(g))); }
+
 function kickoff(g, kicker, freeKick = false) {
   const rec = 1 - kicker;
+  const leg = kick(g, kicker, 'K', 'kpw');
   g.poss = rec; g.down = 1; g.toGo = 10; g.phase = 'play';
   let text;
-  if (!freeKick && chance(g, 0.62)) {
+  if (!freeKick && chance(g, clamp(0.62 + (leg - 60) * 0.008, 0.25, 0.92))) {
     g.spot = 25;
     text = `${g.teams[kicker].name} kick off. Touchback.`;
   } else if (chance(g, 0.004)) {
     g.spot = 100;
     text = `${g.teams[kicker].name} kick off and ${g.teams[rec].name} return it all the way!`;
   } else {
-    g.spot = Math.round(clamp((freeKick ? 32 : 23) + 7 * randn(g), 5, 50));
+    g.spot = Math.round(clamp((freeKick ? 32 : 23) - (leg - 60) * 0.08 + 7 * randn(g), 5, 50));
     g.clock = Math.max(0, g.clock - 6);
     text = `${g.teams[kicker].name} kick off. Returned to the ${spotText(g)}.`;
   }
@@ -372,7 +396,7 @@ export function runPlay(g, offCall, defCall) {
   let r;
   if (play.kind === 'punt') r = doPunt(g, base);
   else if (play.kind === 'fg') r = doFieldGoal(g, base);
-  else if (play.kind === 'run') r = doRun(g, simOff(offCall), simDef(defCall));
+  else if (play.kind === 'run') r = doRun(g, simOff(offCall), simDef(defCall), play.qb === true || (play.qb > 0 && chance(g, play.qb)));
   else r = doPass(g, simOff(offCall), simDef(defCall));
   return finishPlay(g, r, base, offCall, defCall, between(g, 4, 8));
 }
@@ -498,17 +522,28 @@ function endQuarter(g) {
 
 function doPunt(g, base) {
   const o = g.poss, d = 1 - o;
+  const call = OFF_PLAYS[base.off] ?? OFF_PLAYS.punt;
+  const P = specialist(g, o, 'P'), pnm = P != null ? nm(P) : g.teams[o].name;
+  if (call.fake) return fakeKick(g, base, P, 'punt');
   endDrive(g, 'Punt');
-  const net = Math.round(41 + 6 * randn(g));
+  const pw = kick(g, o, 'P', 'kpw'), ac = kick(g, o, 'P', 'kac');
+  // Net yards from the punter's leg; a coffin-corner kick gives up distance to angle it out
+  // short of the goal line, and the punter's accuracy decides how close he gets.
+  const room = 100 - g.spot;
+  let net, text, highlight = null;
+  if (call.aim === 'coffin' && room < 55) {
+    const target = room - 6;
+    net = Math.round(clamp(target + (6 - (ac - 60) * 0.12) * randn(g) * 0.8, 15, room + 5));
+  } else net = Math.round(41 + (pw - 60) * 0.18 + (5.5 - (ac - 60) * 0.03) * randn(g));
   const land = g.spot + net;
-  let text, highlight = null;
   g.poss = d; g.down = 1; g.toGo = 10;
   if (chance(g, 0.005)) {
     g.spot = clamp(100 - (base.spotBefore - 8), 1, 99); g.toGo = Math.min(10, 100 - g.spot);
-    text = `${g.teams[o].name} punt is BLOCKED! ${g.teams[d].name} take over at the ${spotText(g)}.`;
+    text = `${pnm}'s punt is BLOCKED! ${g.teams[d].name} take over at the ${spotText(g)}.`;
     highlight = 'turnover';
-  } else if (land >= 100) { g.spot = 20; text = `${g.teams[o].name} punt into the end zone. Touchback.`; }
-  else { g.spot = 100 - land; text = `${g.teams[o].name} punt ${net} net yards. ${g.teams[d].name} take over at the ${spotText(g)}.`; }
+  } else if (land >= 100) { g.spot = 20; text = `${pnm} punts into the end zone. Touchback.`; }
+  else { g.spot = 100 - land; text = `${pnm} punts ${net} net yards${call.aim === 'coffin' && land >= 90 ? ', out of bounds inside the 10' : ''}. ${g.teams[d].name} take over at the ${spotText(g)}.`; }
+  if (P != null) { const s = st(g, o, P); s.punts = (s.punts ?? 0) + 1; s.puntYds = (s.puntYds ?? 0) + net; }
   const entry = addLog(g, { ...base, text, highlight, to: absSpot(g.poss, g.spot) });
   startDrive(g);
   return { special: true, entry, clockStop: true };
@@ -516,19 +551,51 @@ function doPunt(g, base) {
 
 function doFieldGoal(g, base) {
   const o = g.poss, d = 1 - o;
+  const call = OFF_PLAYS[base.off] ?? OFF_PLAYS.fg;
+  const K = specialist(g, o, 'K'), knm = K != null ? nm(K) : 'The';
+  if (call.fake) return fakeKick(g, base, K, 'fg');
   const dist = fgDistance(g);
-  if (chance(g, fgChance(dist))) {
+  // Accuracy moves the whole curve; leg power adds range on the long ones.
+  const eff = kickerDistance(g, o, dist);
+  const s = K != null ? st(g, o, K) : {};
+  s.fga = (s.fga ?? 0) + 1;
+  if (chance(g, fgChance(eff))) {
+    s.fgm = (s.fgm ?? 0) + 1;
     addScore(g, o, 3);
     endDrive(g, 'Field goal');
-    const entry = addLog(g, { ...base, kind: 'score', highlight: 'fg', text: `${dist}-yard field goal is GOOD. ${scoreLine(g)}`, to: absSpot(o, 100) });
+    const entry = addLog(g, { ...base, kind: 'score', highlight: 'fg', text: `${K != null ? `${knm}'s ` : ''}${dist}-yard field goal is GOOD. ${scoreLine(g)}`, to: absSpot(o, 100) });
     if (!otOver(g)) kickoff(g, o);
     return { special: true, entry, clockStop: true };
   }
   endDrive(g, 'Missed FG');
   g.poss = d; g.spot = Math.max(20, 100 - (base.spotBefore - 7)); g.down = 1; g.toGo = 10;
-  const entry = addLog(g, { ...base, highlight: 'miss', text: `${dist}-yard field goal is NO GOOD.`, to: absSpot(o, 100) });
+  const entry = addLog(g, { ...base, highlight: 'miss', text: `${K != null ? `${knm}'s ` : ''}${dist}-yard field goal is NO GOOD.`, to: absSpot(o, 100) });
   startDrive(g);
   return { special: true, entry, clockStop: true };
+}
+
+// A fake: the punter runs it, or the holder throws to the tight end. It works when the
+// defense is not ready for it (more often on a kicking down they expect to be routine), and
+// the down and distance still have to be made.
+function fakeKick(g, base, kicker, kind) {
+  const o = g.poss, d = 1 - o;
+  const L = g.teams[o].lineup;
+  const surprise = chance(g, 0.55);
+  let yards, text, carrier;
+  if (kind === 'punt') {
+    carrier = kicker ?? L.RB;
+    const sp = eff(g, o, carrier, 'spd');
+    yards = Math.round((surprise ? 5 + (sp - 60) * 0.08 : -1) + 4 * randn(g));
+    text = `Fake punt! ${nm(carrier)} takes off ${yards > 0 ? `for ${yards} yard${yards === 1 ? '' : 's'}` : yards === 0 ? 'and is stopped for no gain' : `and is dropped for a loss of ${-yards}`}.`;
+  } else {
+    carrier = L.TE ?? L.WR1;
+    const hit = surprise ? chance(g, 0.7) : chance(g, 0.25);
+    yards = hit ? Math.round(clamp(8 + 5 * randn(g), 2, 30)) : 0;
+    base.qb = kicker ?? L.QB;
+    text = hit ? `Fake field goal! ${nm(kicker ?? L.QB)} pops up and finds ${nm(carrier)} for ${yards} yards.` : `Fake field goal! ${nm(kicker ?? L.QB)}'s pass falls incomplete.`;
+  }
+  yards = Math.min(yards, 100 - g.spot);
+  return { kind: kind === 'punt' ? 'run' : 'pass', yards, carrier, scorer: carrier, qb: base.qb ?? carrier, text, clockStop: true, highlight: yards >= base.toGo ? 'big' : null };
 }
 
 function pickTackler(g, d, weights) {
@@ -549,11 +616,11 @@ export function fumbleCheck(g, o, d, carrier, tackler) {
 
 function seNote(flag) { return flag ? " It's super effective!" : ''; }
 
-function doRun(g, call, defCall) {
+function doRun(g, call, defCall, qbRun = false) {
   const o = g.poss, d = 1 - o;
   const O = (s) => g.teams[o].lineup[s], D = (s) => g.teams[d].lineup[s];
   const dir = OFF_PLAYS[call].dir;
-  const carrier = dir === 'sneak' ? O('QB') : O('RB');
+  const carrier = dir === 'sneak' || qbRun ? O('QB') : O('RB');
   const pairs = dir === 'outside'
     ? [['LT', 'LE', 1.2], ['RT', 'DE', 1.2], ['TE', 'OLB', 1.2], ['LG', 'DT1', 0.6], ['RG', 'DT2', 0.6], ['C', 'MLB', 0.5]]
     : [['LG', 'DT1', 1.2], ['C', 'MLB', 1.0], ['RG', 'DT2', 1.2], ['LT', 'LE', 0.6], ['RT', 'DE', 0.6], ['TE', 'OLB', 0.4]];
@@ -853,6 +920,12 @@ export function offenseLean(g) {
 
 export function aiOffenseCall(g) {
   const lean = offenseLean(g);
+  if (lean === 'punt') {
+    // Near midfield the punter angles it for the corner; once in a while a fake on 4th and short.
+    if (g.toGo <= 3 && g.spot >= 35 && g.spot <= 60 && chance(g, 0.05)) return 'fake_punt';
+    if (g.spot >= 55) return 'coffin_punt';
+  }
+  if (lean === 'fg' && g.down === 4 && g.toGo <= 3 && chance(g, 0.03)) return 'fake_fg';
   return typeof lean === 'string' ? lean : passOrRun(g, lean);
 }
 
@@ -896,6 +969,11 @@ export function runWeights(g) {
   if (g.toGo <= 1) w.qb_sneak = 0.6 + Math.max(0, A(o, L.QB, 'str') - 65) / 30;
   if (t.coach === 'trench') w.inside_run *= 1.5;
   spread(w, 'run');
+  // Designed quarterback runs, more for a quarterback who can run.
+  const legs = (A(o, L.QB, 'spd') - 60) / 40;
+  w.qb_draw = Math.max(0.05, 0.25 * legs) * (g.toGo >= 6 ? 1.4 : 0.8);
+  w.qb_power = Math.max(0.05, 0.3 * legs) * (g.toGo <= 3 ? 1.5 : 1);
+  w.read_option = Math.max(0.1, 0.45 * legs + 0.1);
   if (g.toGo <= 2) { w.dive = (w.dive ?? 0) * 1.6; w.power = (w.power ?? 0) * 1.4; }
   if (g.toGo >= 7) w.toss = (w.toss ?? 0) * 1.2;
   return w;

@@ -5,6 +5,7 @@ import { pickAbility, TYPE_TRAITS, ABILITIES } from './types.js';
 export const ATTRS = {
   spd: 'Speed', acl: 'Acceleration', agi: 'Agility', str: 'Strength', blk: 'Blocking', rush: 'Pass rush',
   arm: 'Throwing', acc: 'Accuracy', hnd: 'Catching', cov: 'Coverage', tkl: 'Tackling', awr: 'Awareness', sta: 'Stamina',
+  kpw: 'Kick power', kac: 'Kick accuracy',
 };
 
 // Formation spots: x = yards from the line of scrimmage (offense negative),
@@ -32,11 +33,15 @@ export const SLOTS = [
   { key: 'DE', side: 'def', group: 'DL', w: { rush: 0.5, str: 0.35, tkl: 0.15 }, value: 1.05, x: 1, y: -5.5 },
   { key: 'DT1', side: 'def', group: 'DL', w: { str: 0.55, tkl: 0.25, blk: 0.2 }, value: 0.95, x: 1, y: 1.4 },
   { key: 'DT2', side: 'def', group: 'DL', w: { str: 0.5, tkl: 0.4, blk: 0.1 }, value: 0.9, x: 1, y: -1.4 },
+  // Special teams: the kicker (field goals, extra points, kickoffs) and the punter.
+  { key: 'K', side: 'st', group: 'K', w: { kac: 0.55, kpw: 0.45 }, value: 0.6, x: -7, y: 0 },
+  { key: 'P', side: 'st', group: 'P', w: { kpw: 0.6, kac: 0.4 }, value: 0.45, x: -14, y: 0 },
 ];
 export const SLOT = Object.fromEntries(SLOTS.map((s) => [s.key, s]));
 export const SLOT_KEYS = SLOTS.map((s) => s.key);
 export const OFF_SLOTS = SLOTS.filter((s) => s.side === 'off').map((s) => s.key);
 export const DEF_SLOTS = SLOTS.filter((s) => s.side === 'def').map((s) => s.key);
+export const ST_SLOTS = SLOTS.filter((s) => s.side === 'st').map((s) => s.key);
 
 // Percentile of v within a sorted array (ties count half).
 function percentile(sorted, v) {
@@ -112,6 +117,9 @@ function buildPlayers() {
       acl: 0.6 * q.spe + 0.25 * (1 - w) + 0.15 * q.atk + 0.1 * bst,
       agi: 0.55 * q.spe + 0.3 * (1 - w) + 0.15 * (1 - h) + 0.1 * bst,
       awr: 0.45 * q.spd + 0.35 * q.spa + 0.2 * q.def + 0.1 * bst,
+      // Kicking: leg power from Attack and Sp. Atk, accuracy from composure (Sp. Def) and touch.
+      kpw: 0.5 * q.atk + 0.35 * q.spa + 0.15 * q.spe + 0.1 * bst,
+      kac: 0.5 * q.spd + 0.3 * q.spa + 0.2 * (1 - w) + 0.1 * bst,
     });
   }
   const rawDist = Object.fromEntries(Object.keys(ATTRS).map((k) => [k, base.map((p) => raws.get(p.id)[k]).sort((a, b) => a - b)]));

@@ -19,7 +19,7 @@ export function diagram(g, call, side, form = null) {
   const key = `${side}:${call}:${form}:${g.poss}:${lk(0)}|${lk(1)}`;
   let svg = cache.get(key);
   if (svg) return svg;
-  if (side === 'off' && !['run', 'pass'].includes(OFF_PLAYS[call]?.kind)) { svg = kickArt(OFF_PLAYS[call]?.kind); cache.set(key, svg); return svg; }
+  if (side === 'off' && !['run', 'pass'].includes(OFF_PLAYS[call]?.kind)) { svg = kickArt(OFF_PLAYS[call]?.kind, OFF_PLAYS[call]); cache.set(key, svg); return svg; }
   const saved = g.rng;
   // Deep in the opponent's end the routes are cut short; draw them from midfield.
   const spot = g.spot;
@@ -63,7 +63,13 @@ export function diagram(g, call, side, form = null) {
       const lane = dir === 'counter' ? [c?.home, { x: (c?.home.x ?? -5) + 0.5, y: -Math.sign(hole) * 2 }, { x: -3, y: hole * 0.4 }, { x: 1.5, y: hole }, { x: 7, y: hole * 1.05 }]
         : dir === 'toss' || dir === 'outside' ? [c?.home, { x: -3.5, y: hole * 0.6 }, { x: 0, y: hole }, { x: 7, y: hole * 1.05 }]
           : [c?.home, { x: -3.5, y: hole * 0.35 }, { x: 1.5, y: hole }, { x: 7, y: hole * 1.05 }];
+      if (dir === 'qbdraw' && c) lane.splice(1, 0, { x: c.home.x - 1.6, y: c.home.y });
       if (c) parts.push(path(lane, '#ffd23f', 1.3, 'arrow'));
+      // Read option: the give (dashed) and the keep to the side of the unblocked end.
+      if (dir === 'read' && O.QB) {
+        parts.push(path([O.QB.home, { x: O.QB.home.x + 0.5, y: -Math.sign(hole || 1) * 4 }, { x: 1, y: -Math.sign(hole || 1) * 8.5 }, { x: 6, y: -Math.sign(hole || 1) * 9 }], '#ffd23f', 0.8, 'arrow', '1 0.7'));
+        if (lp.readEnd) parts.push(`<circle cx="${X(lp.readEnd.home)}" cy="${Y(lp.readEnd.home)}" r="1.6" fill="none" stroke="#ff5a4f" stroke-width="0.4"/>`);
+      }
       for (const b of Object.values(O)) {
         if (b.pull) parts.push(path([b.home, b.pull.via, { x: 2, y: hole * 0.95 }], '#ffffff', 0.6, 'bar'));
         else if (b.role === 'lead') parts.push(path([b.home, { x: 1, y: hole * 0.85 }], '#ffffff', 0.6, 'bar'));
@@ -100,9 +106,13 @@ export function diagram(g, call, side, form = null) {
   return svg;
 }
 
-function kickArt(kind) {
-  const arc = kind === 'punt' ? 'M0 9 Q0 -40 0 -24' : 'M0 9 Q0 -30 0 -25';
+function kickArt(kind, P = {}) {
+  // Punt: a high arc downfield (a coffin-corner kick angles out short of the goal line).
+  // Field goal: the uprights. A fake shows the run or the throw instead, the kick dashed.
+  const arc = kind === 'punt' ? (P.aim === 'coffin' ? 'M0 9 Q4 -34 17 -20' : 'M0 9 Q0 -40 0 -24') : 'M0 9 Q0 -30 0 -25';
+  const fake = !P.fake ? '' : kind === 'punt' ? '<path d="M0 9 L-6 4 L-9 -8" fill="none" stroke="#ffd23f" stroke-width="1.2"/><polygon points="-9.3,-10 -10.6,-7 -7.6,-7.4" fill="#ffd23f"/>'
+    : '<path d="M0 7 L9 -9" fill="none" stroke="#ffd23f" stroke-width="1"/><polygon points="9.8,-10.6 7.4,-9.4 9.6,-7.6" fill="#ffd23f"/>';
   return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>
     ${kind === 'fg' ? '<path d="M-3.1 -24 L-3.1 -18 M3.1 -24 L3.1 -18 M-3.1 -21 L3.1 -21 M0 -21 L0 -17" stroke="#ffd23f" stroke-width="0.7" fill="none"/>' : ''}
-    <path d="${arc}" fill="none" stroke="#ffffff" stroke-width="0.6" stroke-dasharray="1 0.8"/><circle cx="0" cy="9" r="1.05" class="o on"/></svg>`;
+    <path d="${arc}" fill="none" stroke="#ffffff" stroke-width="0.6" stroke-dasharray="1 0.8" ${P.fake ? 'opacity="0.35"' : ''}/>${fake}<circle cx="0" cy="9" r="1.05" class="o on"/></svg>`;
 }

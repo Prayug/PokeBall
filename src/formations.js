@@ -26,7 +26,7 @@ const AIR = 0.3;                // the least air between any two bodies before t
 // so the five offensive linemen and the front four read as separate bodies. Everyone else
 // keeps his full size. Scaling is uniform, so proportions never change.
 export const LINE_SLOTS = new Set(['LT', 'LG', 'C', 'RG', 'RT', 'LE', 'DE', 'DT1', 'DT2']);
-const LINE_HALF = 0.8, LINE_DEPTH = 1.0, LINE_MIN_FIT = 0.7;
+const LINE_HALF = 0.95, LINE_DEPTH = 1.2, LINE_MIN_FIT = 0.85;
 export function slotFit(id, slot) {
   // The tight end sets on the line or next to it too, with a little more room.
   const wide = slot === 'TE' ? 1.15 : LINE_SLOTS.has(slot) ? 1 : 0;
@@ -54,12 +54,15 @@ export const PLAY_FORMATION = {
   inside_run: 'iform', outside_run: 'singleback', qb_sneak: 'singleback', draw: 'gun_spread',
   screen: 'gun_spread', slant: 'gun_spread', out: 'gun_trips', curl: 'gun_spread', te_seam: 'pistol', post: 'gun_trips', pa_deep: 'singleback',
   power: 'iform', counter: 'singleback', toss: 'singleback', dive: 'iform',
+  qb_draw: 'gun_spread', qb_power: 'pistol', read_option: 'pistol',
   bubble: 'gun_trips', stick: 'gun_spread', curl_flat: 'gun_spread', mesh: 'gun_spread', smash: 'gun_spread', dagger: 'gun_trips',
   levels: 'gun_trips', flood: 'singleback', y_cross: 'gun_spread', four_verts: 'gun_spread', pa_boot: 'singleback',
 };
 export function formationsFor(call) {
   if (!PLAY_FORMATION[call]) return [];
   if (call === 'qb_sneak') return ['singleback', 'iform'];
+  // The quarterback's own runs and the read come from the shotgun or pistol.
+  if (['qb_draw', 'qb_power', 'read_option'].includes(call)) return Object.keys(OFF_FORMATIONS).filter((f) => isGun(f));
   return Object.keys(OFF_FORMATIONS);
 }
 export const isGun = (form) => (OFF_FORMATIONS[form]?.qb ?? 0) > 0;

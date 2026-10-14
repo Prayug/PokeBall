@@ -29,7 +29,7 @@ export function makeRng(seed) {
   return f;
 }
 
-export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', rounds = 22, legendaries = false,
+export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', rounds = 24, legendaries = false,
   typeCap = true, numTeams = 8, seed = Date.now(), userColor = '#C8102E', userPick = null } = {}) {
   const rng = makeRng(seed);
   const pool = AI_TEAMS.slice();
@@ -614,7 +614,7 @@ export function finishOffseason(L, userCuts) {
 
 // Quick game: two AI-drafted rosters.
 export function quickRosters(seed, legendaries = false) {
-  const L = createLeague({ seed, numTeams: 2, rounds: 26, legendaries });
+  const L = createLeague({ seed, numTeams: 2, rounds: 28, legendaries });
   L.teams[0].user = false; L.teams[0].coach = 'balanced';
   while (L.phase === 'draft') {
     const c = aiChoosePick(L);

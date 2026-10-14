@@ -1,9 +1,9 @@
 // PokeBall UI: home, draft room, grades, depth chart, season hub and game screen.
-import { PLAYERS, SLOTS, SLOT, SLOT_KEYS, OFF_SLOTS, DEF_SLOTS, ATTRS, BASELINE, autoDepthChart, unitRatings, applyGrowth } from './ratings.js';
+import { PLAYERS, SLOTS, SLOT, SLOT_KEYS, OFF_SLOTS, DEF_SLOTS, ST_SLOTS, ATTRS, BASELINE, autoDepthChart, unitRatings, applyGrowth } from './ratings.js';
 import { SPRITES } from './sprites.js';
 import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER, effectLabel, bestMultiplier } from './types.js';
 import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
-  quarterText, fgDistance, fgChance, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights, manualSub } from './engine.js';
+  quarterText, fgDistance, fgChance, fgOdds, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights, manualSub } from './engine.js';
 import { createLivePlay, snap, hurry, step as stepLive, playSeconds, worldSpots, playState, DT, FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT } from './live.js';
 import { formationsFor } from './formations.js';
 import { measureVersion } from './body.js';
@@ -21,7 +21,7 @@ const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').mat
 const S = {
   screen: 'home', league: null, game: null, gameMeta: null,
   draft: { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false },
-  depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 22, legendaries: false, typeCap: true, clock: true },
+  depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 24, legendaries: false, typeCap: true, clock: true },
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
   menuOpen: false, cam: 'gameplay', weatherFx: true, quality: 'auto',
   names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
@@ -90,18 +90,18 @@ function loadPrefs() {
       if (p.sound != null) S.sound = !!p.sound;
       if (p.seenHelp) S.seenHelp = true;
       // Lens settings saved before version 3 belong to the older framing and are dropped.
-      if (p.camShots && p.camV === 3) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
+      if (p.camShots && p.camV === 4) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
     }
   } catch { /* ignore */ }
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 3, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 4, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, camShots: S.cal })); } catch { /* ignore */ }
 }
 
 // ---------- small view helpers ----------
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const P = (id) => PLAYERS[id];
-const ATTR_SHORT = { spd: 'SPD', acl: 'ACL', agi: 'AGI', str: 'STR', blk: 'BLK', rush: 'RSH', arm: 'THR', acc: 'ACC', hnd: 'CTH', cov: 'COV', tkl: 'TKL', awr: 'AWR', sta: 'STA' };
+const ATTR_SHORT = { spd: 'SPD', acl: 'ACL', agi: 'AGI', str: 'STR', blk: 'BLK', rush: 'RSH', arm: 'THR', acc: 'ACC', hnd: 'CTH', cov: 'COV', tkl: 'TKL', awr: 'AWR', sta: 'STA', kpw: 'KPW', kac: 'KAC' };
 function sprite(id, cls = '') {
   return `<img class="spr ${cls}" src="${SPRITES[id]}" alt="${esc(P(id).name)}" loading="lazy" draggable="false">`;
 }
@@ -164,8 +164,8 @@ function renderHome() {
           <label class="short">Abbreviation<input id="f-abbr" maxlength="3" value="${esc(st.abbr)}"></label>
         </div>
         <fieldset><legend>Draft length</legend>
-          <label class="pill"><input type="radio" name="rounds" value="22" ${st.rounds === 22 ? 'checked' : ''}> 22 rounds, starters only</label>
-          <label class="pill"><input type="radio" name="rounds" value="26" ${st.rounds === 26 ? 'checked' : ''}> 26 rounds, with 4 bench</label>
+          <label class="pill"><input type="radio" name="rounds" value="24" ${st.rounds === 24 ? 'checked' : ''}> 24 rounds, starters, kicker and punter</label>
+          <label class="pill"><input type="radio" name="rounds" value="28" ${st.rounds === 28 ? 'checked' : ''}> 28 rounds, with 4 bench</label>
         </fieldset>
         <label class="check"><input type="checkbox" id="f-typecap" ${st.typeCap ? 'checked' : ''}> At most 4 Pokémon of one primary type</label>
         <label class="check"><input type="checkbox" id="f-legend" ${st.legendaries ? 'checked' : ''}> Include legendaries, Ultra Beasts and Paradox Pokémon</label>
@@ -294,7 +294,7 @@ function rosterSlotsHtml(team) {
     const id = team.slots[k];
     return `<li><span class="slot">${k}</span>${id ? `${sprite(id, 'xs')}<span>${esc(P(id).name)}</span>${ovr(P(id).ovr[k])}` : '<span class="muted">Open</span>'}</li>`;
   }).join('');
-  return `<div class="slots"><ul>${col(OFF_SLOTS)}</ul><ul>${col(DEF_SLOTS)}</ul></div>
+  return `<div class="slots"><ul>${col(OFF_SLOTS)}</ul><ul>${col(DEF_SLOTS)}${col(ST_SLOTS)}</ul></div>
     ${team.bench.length ? `<p class="muted small">Bench: ${team.bench.map((id) => esc(P(id).name)).join(', ')}</p>` : ''}`;
 }
 
@@ -419,13 +419,14 @@ const FORMATION = [
   ['DE', 3, 3], ['DT2', 5, 3], ['DT1', 7, 3], ['LE', 9, 3],
   ['WR1', 1, 5], ['LT', 4, 5], ['LG', 5, 5], ['C', 6, 5], ['RG', 7, 5], ['RT', 8, 5], ['TE', 9, 5], ['WR2', 11, 5],
   ['WR3', 2, 6], ['QB', 6, 6],
-  ['RB', 6, 7],
+  ['RB', 6, 7], ['K', 3, 7], ['P', 9, 7],
 ];
 function renderDepth() {
   const me = user();
   const u = unitRatings(me.lineup);
   const cell = ([k, col, row]) => {
     const id = me.lineup[k];
+    if (id == null) return `<button class="dslot ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}"><span class="slot">${k}</span><span class="dn muted">Open</span></button>`;
     const p = P(id);
     const misfit = p.best[0] !== k && p.ovr[p.best[0]] - p.ovr[k] >= 6;
     return `<button class="dslot ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}">
@@ -444,7 +445,7 @@ function renderDepth() {
       ${FORMATION.map(cell).join('')}
     </div></div>
     <div class="card"><h3>Bench</h3><div class="benchrow">${me.bench.length ? me.bench.map((id) => `<button class="dslot bench" data-act="dbench" data-id="${id}">${sprite(id, 'md')}<span class="dn">${esc(P(id).name)}</span>
-      ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 26 rounds to carry 4 backups.</p>'}</div></div>
+      ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 28 rounds to carry 4 backups.</p>'}</div></div>
     ${Object.keys(S.league.condition ?? {}).length ? '<p class="small muted">Sore Pokémon start the next game below full energy, and the bench subs in as they tire. A Pokémon who is out sits the next game when the bench can cover him; with no bench he plays hurt.</p>' : ''}
     <div class="actions"><button class="btn" data-act="autodepth">Auto-arrange for best overall</button>
     <button class="btn primary" data-act="go" data-to="${S.league.phase === 'grades' ? 'grades' : 'season'}">Done</button></div>
@@ -524,6 +525,7 @@ function scoutHtml(L, myId, oppId) {
     <p class="small muted">${esc(R.coachNote)}</p>
     <div class="opprow"><span class="muted small">Their offense</span>${lineupRow(OFF_SLOTS)}</div>
     <div class="opprow"><span class="muted small">Their defense</span>${lineupRow(DEF_SLOTS)}</div>
+    <div class="opprow"><span class="muted small">Their kickers</span>${lineupRow(ST_SLOTS)}</div>
     <div class="edges"><div><h4>Your best type edges</h4>${R.best.length ? `<ul>${R.best.map(edgeRow).join('')}</ul>` : '<p class="muted small">None this week.</p>'}</div>
     <div><h4>Where they have the edge</h4>${R.worst.length ? `<ul>${R.worst.map(edgeRow).join('')}</ul>` : '<p class="muted small">Nothing to worry about.</p>'}</div></div>
     <h4>Weather</h4><ul class="weather">${weather}</ul>
@@ -740,7 +742,7 @@ const DEF_GROUPS = [['front', 'Man', ['base', 'cover1_robber', 'cover2_man', 'ma
 // Number keys for the visible calls in order; kicks get letters.
 const CALL_KEYS = [['Digit1', '1'], ['Digit2', '2'], ['Digit3', '3'], ['Digit4', '4'], ['Digit5', '5'], ['Digit6', '6'],
   ['Digit7', '7'], ['Digit8', '8'], ['Digit9', '9'], ['Digit0', '0'], ['Minus', '-']];
-const KICK_KEYS = { punt: ['KeyP', 'P'], fg: ['KeyF', 'F'] };
+const KICK_KEYS = { punt: ['KeyP', 'P'], fg: ['KeyF', 'F'] };  // the other kicks take number keys on their page
 
 // The calls on the sheet right now, grouped, each with its key. Also marks the one that fits
 // the down: the heaviest weight in the AI's own tables, read without rolling g.rng.
@@ -750,8 +752,8 @@ function callSheet(g) {
   let groups, fit;
   if (onOff) {
     const fg = fgDistance(g);
-    const shown = Object.keys(OFF_PLAYS).filter((k) => (k !== 'punt' && k !== 'fg') || g.down === 4 || (k === 'fg' && fg <= 60));
     const kind = (k) => OFF_PLAYS[k].kind;
+    const shown = Object.keys(OFF_PLAYS).filter((k) => (kind(k) !== 'punt' && kind(k) !== 'fg') || g.down === 4 || (kind(k) === 'fg' && fg <= 60));
     groups = [['run', 'Run', shown.filter((k) => kind(k) === 'run')], ['pass', 'Pass', shown.filter((k) => kind(k) === 'pass')],
       ['kick', 'Kicking', shown.filter((k) => kind(k) === 'punt' || kind(k) === 'fg')]];
     const lean = offenseLean(g);
@@ -809,10 +811,11 @@ function cycleForm(onOff) {
 // move between them, so each card has room for readable play art, the name, one line on
 // what it does, run or pass, and its key. Every call keeps its number key from any tab, and
 // the panel opens on the category of the call that fits the down.
-const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'power', 'counter', 'toss', 'dive', 'draw', 'qb_sneak']],
+const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'power', 'counter', 'toss', 'dive', 'draw']],
+  ['qbrun', 'QB runs', ['read_option', 'qb_power', 'qb_draw', 'qb_sneak']],
   ['short', 'Quick', ['slant', 'out', 'stick', 'curl_flat', 'mesh', 'screen', 'bubble']],
   ['mid', 'Intermediate', ['curl', 'smash', 'dagger', 'levels', 'flood', 'y_cross', 'te_seam']],
-  ['deep', 'Shots', ['four_verts', 'post', 'pa_boot', 'pa_deep']], ['kick', 'Special teams', ['punt', 'fg']]];
+  ['deep', 'Shots', ['four_verts', 'post', 'pa_boot', 'pa_deep']], ['kick', 'Special teams', ['punt', 'coffin_punt', 'fake_punt', 'fg', 'fake_fg']]];
 function csTabs(g) {
   const { onOff, groups, fit } = callSheet(g);
   const byCall = new Map(groups.flatMap(([fam, , cs]) => cs.map((c) => [c.call, { ...c, fam }])));
@@ -839,7 +842,7 @@ function callSheetHtml(g) {
     const label = curCalls.has(call) || KICK_KEYS[call] ? key : null;
     const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
     const kind = onOff ? p.kind : fam;
-    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
+    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgOdds(g) * 100)}%` : p.blurb;
     const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick' }[kind] : { front: 'Man', blitz: 'Blitz', cover: 'Zone' }[kind];
     const form = onOff ? formationName(call, formFor(call)) : DEF_FORMATIONS[frontFor(call)]?.short ?? '';
     return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" title="${esc(extra)}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
@@ -883,7 +886,7 @@ function playCards(g, { keys = false } = {}) {
   const fg = fgDistance(g);
   const card = ({ call, label }, fam) => {
     const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
-    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
+    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgOdds(g) * 100)}%` : p.blurb;
     return `<button class="play f-${fam} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}">
       <b>${p.name}</b><span>${extra}</span>${call === fit ? '<em class="fittag">Fits this down</em>' : ''}${keys && label ? `<kbd>${label}</kbd>` : ''}</button>`;
   };
@@ -989,7 +992,7 @@ function broadcastBar(g) {
   const [H, A] = g.teams;
   const scored = (i) => (L3.scoreFlash?.[i] ?? 0) > performance.now() ? 'scored' : '';
   const team = (t, i) => `<div class="bc-team ${g.poss === i && !g.final ? 'has' : ''} ${scored(i)}" style="--team:${t.color}"><span class="bc-abbr">${esc(t.abbr)}</span><span class="bc-score">${g.score[i]}</span>${g.poss === i && !g.final ? '<span class="bc-poss" title="Has the ball" aria-label="Has the ball"></span>' : ''}</div>`;
-  const info = g.final ? `<div class="bc-cell bc-down">FINAL</div>` : `<div class="bc-cell bc-q">${quarterText(g.quarter)}</div><div class="bc-cell bc-clock" id="gclock">${clockText(g.clock)}</div>
+  const info = g.final ? `<div class="bc-cell bc-down">FINAL</div>` : `<div class="bc-cell bc-q" title="Quarter">${g.quarter <= 4 ? `${['1st', '2nd', '3rd', '4th'][g.quarter - 1].toUpperCase()}<small>QTR</small>` : quarterText(g.quarter)}</div><div class="bc-cell bc-clock" id="gclock">${clockText(g.clock)}</div>
     <div class="bc-cell bc-down">${downText(g)}</div><div class="bc-cell bc-pc" id="pclock" title="Play clock">:${String(Math.ceil(L3.pclock ?? 40)).padStart(2, '0')}</div>
     <div class="bc-cell bc-spot">${spotText(g)}</div>`;
   return `<div class="bcast" id="bcast">${team(A, 1)}${team(H, 0)}${info}</div>`;
@@ -1117,12 +1120,12 @@ function lineupHtml(g) {
         const lbl = effectLabel(m);
         return `<li><button class="subslot" data-act="subin" data-id="${id}" ${can ? '' : 'disabled'}>${sprite(id, 'xs')}<span class="cn">${esc(P(id).name)}</span><span class="types">${typeChips(P(id).types)}</span>${ovr(P(id).ovr[sel])}
           <span class="en">${Math.round(t.energy[id] ?? 100)}%</span>${lbl ? `<span class="eff ${m > 1 ? 'se' : m === 0 ? 'ne' : 'nve'}">${lbl}</span>` : ''}</button></li>`;
-      }).join('')}</ul>` : '<p class="muted small">Nobody on the bench. A 26-round league carries four backups.</p>'}
+      }).join('')}</ul>` : '<p class="muted small">Nobody on the bench. A 28-round league carries four backups.</p>'}
       <button class="btn tiny" data-act="subcancel">Cancel</button></div>`;
   }
   return `<p class="small muted">Pick a slot, then a bench Pokémon. Your subs stay in until you send the starter back, and the auto-sub leaves those slots alone.${can ? '' : ' Subs wait until the play is over.'}</p>
     <div class="subgrid"><div><h4>Offense</h4><ul class="sublist">${OFF_SLOTS.map(slotRow).join('')}</ul></div>
-    <div><h4>Defense</h4><ul class="sublist">${DEF_SLOTS.map(slotRow).join('')}</ul></div></div>${pickList}`;
+    <div><h4>Defense</h4><ul class="sublist">${DEF_SLOTS.map(slotRow).join('')}</ul><h4>Special teams</h4><ul class="sublist">${ST_SLOTS.map(slotRow).join('')}</ul></div></div>${pickList}`;
 }
 
 function keysHelp() {
@@ -2048,7 +2051,7 @@ function onSubmit(e) {
   S.setup = {
     name: f.querySelector('#f-name').value.trim() || 'Pallet Starters',
     abbr: (f.querySelector('#f-abbr').value.trim() || 'PAL').toUpperCase().slice(0, 3),
-    rounds: Number(f.querySelector('input[name="rounds"]:checked')?.value ?? 22),
+    rounds: Number(f.querySelector('input[name="rounds"]:checked')?.value ?? 24),
     typeCap: f.querySelector('#f-typecap').checked,
     legendaries: f.querySelector('#f-legend').checked,
     clock: f.querySelector('#f-clock').checked,

@@ -25,6 +25,8 @@ const TACKLE_T = 0.5;
 const WINDUP_T = 0.24;
 // The handoff exchange: the ball travels from the quarterback's hands to the back's belly.
 const EXCHANGE_T = 0.2;
+// Run directions where the quarterback is the designed ball carrier ('read' decides at the mesh).
+const QB_RUNS = new Set(['sneak', 'qbdraw', 'qbpower']);
 
 // Route shapes: [downfield, across] legs from the receiver's start; 'in' and 'out' are
 // relative to the middle of the field. A trailing 'stop' settles the receiver.
@@ -241,20 +243,22 @@ function setupOffense(lp) {
   for (const k of ['LT', 'LG', 'C', 'RG', 'RT']) if (O[k]) O[k].role = lp.kind === 'run' ? 'runblock' : 'passblock';
   if (lp.kind === 'run') {
     const dir = play.dir;
-    lp.carrier = dir === 'sneak' ? O.QB : O.RB;
+    // Designed quarterback runs: he keeps it (a read option decides at the mesh).
+    lp.qbRun = QB_RUNS.has(dir);
+    lp.carrier = lp.qbRun ? O.QB : O.RB;
     // Inside runs hit the A or B gap between the actual linemen, outside runs the edge.
     const gap = (a, b) => (O[a] && O[b] ? (O[a].y + O[b].y) / 2 : null);
     const side = chance(lp.g, 0.5) ? -1 : 1;
     const inside = (k) => (side < 0 ? gap(...[['LG', 'C'], ['LT', 'LG']][k]) : gap(...[['C', 'RG'], ['RG', 'RT']][k])) ?? side * (k ? 2.7 : 0.9);
     lp.holeY = dir === 'outside' ? side * 9 : dir === 'sneak' ? 0 : inside(chance(lp.g, 0.55) ? 0 : 1);
     if (dir === 'draw') lp.holeY = inside(1);
-    if (dir === 'dive') lp.holeY = inside(0);
+    if (dir === 'dive' || dir === 'qbdraw' || dir === 'read') lp.holeY = inside(0);
     if (dir === 'counter') lp.holeY = inside(1);
     // Toss: pitched to the back, who races the edge.
     if (dir === 'toss') lp.holeY = side * 9.5;
     // Power: off tackle to the tight end's side, behind a pulling guard.
     lp.runSide = side;
-    if (dir === 'power') {
+    if (dir === 'power' || dir === 'qbpower') {
       const s2 = O.TE && O.TE.x > -3 ? sgn(O.TE.y) : side;
       lp.runSide = s2;
       const t = s2 > 0 ? O.RT : O.LT;
@@ -287,7 +291,7 @@ function setupOffense(lp) {
     }
     // Power and counter pull the backside guard: he runs flat behind the line and leads
     // through the hole onto the first linebacker.
-    if (dir === 'power' || dir === 'counter') {
+    if (dir === 'power' || dir === 'counter' || dir === 'qbpower') {
       const hs = sgn(lp.holeY || lp.runSide);
       const g2 = hs > 0 ? O.LG : O.RG;
       const lbs = ['OLB', 'MLB', 'CB3'].map((k) => lp.def[k]).filter(Boolean);
@@ -301,9 +305,22 @@ function setupOffense(lp) {
     }
     // A fullback (the I-form's tight end) leads through the hole instead of blocking a man.
     if (O.TE && lp.formation === 'iform' && dir !== 'sneak') O.TE.role = 'lead';
-    if (O.QB) O.QB.role = dir === 'sneak' ? 'carrier' : 'handoff';
-    if (O.RB) O.RB.role = dir === 'sneak' ? 'runblock' : 'runner';
-    lp.handAt = { draw: 0.95, sneak: 0, dive: 0.26, power: 0.5, counter: 0.55, toss: 0.3 }[dir] ?? 0.42;
+    if (O.QB) O.QB.role = dir === 'sneak' ? 'carrier' : lp.qbRun ? 'qbkeep' : 'handoff';
+    // The back leads for the quarterback on his designed runs, and takes the fake on a read.
+    if (O.RB) O.RB.role = dir === 'sneak' ? 'runblock' : dir === 'qbpower' || dir === 'qbdraw' ? 'lead' : 'runner';
+    if (O.TE?.role === 'lead' && O.RB?.role === 'lead') O.TE.role = 'runblock';
+    lp.handAt = { draw: 0.95, sneak: 0, dive: 0.26, power: 0.5, counter: 0.55, toss: 0.3, qbdraw: 0.85, qbpower: 0.8, read: 0.45 }[dir] ?? 0.42;
+    // Read option: the backside end is left unblocked on purpose; the quarterback reads him.
+    if (dir === 'read') {
+      const s2 = -sgn(lp.holeY || 1);
+      const ends = Object.values(lp.def).filter((q) => ['LE', 'DE'].includes(q.slot) && sgn(q.y) === s2);
+      const end = ends.sort((a, b) => Math.abs(b.y) - Math.abs(a.y))[0];
+      if (end) {
+        lp.readEnd = end;
+        end.crash = chance(lp.g, ['run_blitz', 'goal_line', 'mug', 'cover0'].includes(lp.defCall) ? 0.65 : 0.45);
+        for (const b of bl) if (b.assign === end) b.assign = null;
+      }
+    }
     return;
   }
   const routes = PLAY_ROUTES[lp.offCall];
@@ -462,7 +479,7 @@ export function snap(lp) {
   } else {
     // Under center: the ball comes up from the center's hands into the quarterback's.
     lp.ball.holder = qb;
-    if (c && qb) lp.ball.xfer = { from: c, to: qb, t0: 0, T: 0.12, snap: true, at: { x: lp.ball.x, y: lp.ball.y, z: lp.ball.z ?? 0.17 } };
+    if (c && qb) lp.ball.xfer = { from: c, to: qb, t0: 0, T: clamp(dist(lp.ball, qb) * 0.075, 0.12, 0.3), snap: true, at: { x: lp.ball.x, y: lp.ball.y, z: lp.ball.z ?? 0.17 } };
   }
   if (lp.kind === 'run' && lp.play.dir === 'sneak') setCarrier(lp, qb);
   // Front responsibilities: each down lineman owns the gap he is shaded toward; the widest
@@ -516,9 +533,20 @@ export function step(lp, input = null) {
   // Run play handoff: the exchange starts when the quarterback and the back actually meet.
   if (lp.kind === 'run' && !lp.carrierSet && lp.t >= lp.handAt && qbHas(lp)) {
     const rb = lp.carrier, qb = lp.off.QB;
-    if (lp.play.dir === 'toss' && rb && dist(rb, qb) < 7) startExchange(lp, qb, rb, 0.4);
+    if (lp.qbRun) setCarrier(lp, qb);
+    else if (lp.play.dir === 'read' && rb && dist(rb, qb) < rb.r + qb.r + 0.9) {
+      // Pull it if the end crashed down on the back, give it if he stayed home.
+      const e = lp.readEnd;
+      const right = chance(lp.g, clamp(0.72 + (qb.a.awr - 70) * 0.006, 0.55, 0.95));
+      if (e && !e.eng && e.crash === right) {
+        lp.kept = true; lp.holeY = sgn(e.y || 1) * 8.5; lp.carrier = qb; setCarrier(lp, qb); rb.role = 'escort';
+        event(lp, 'keep', '', qb, e);
+      } else startExchange(lp, qb, rb);
+    }
+    else if (lp.play.dir === 'toss' && rb && dist(rb, qb) < 7) startExchange(lp, qb, rb, 0.4);
     else if (rb && dist(rb, qb) < rb.r + qb.r + 0.75) startExchange(lp, qb, rb);
   }
+  if (lp.kind === 'run' && !lp.carrierSet && lp.t >= lp.handAt + 1.2 && qbHas(lp)) { lp.carrier = lp.off.QB; setCarrier(lp, lp.off.QB); }
   // AI quarterback, then the throwing motion
   if (lp.kind === 'pass' && !lp.thrown && !lp.windup) coverageRead(lp);
   if (lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'done') qbBrain(lp);
@@ -635,8 +663,11 @@ function applyInput(lp, inp) {
   // Control just moved to the receiver: a direction still held from the throw (moving the
   // passer, placing the ball) is not steering him. He runs to the ball on his own until the
   // keys are let go and pressed again.
+  // A called run: the handoff (or the quarterback's own run) happens on its own; the stick
+  // takes over once someone is carrying it.
+  if (lp.kind === 'run' && !lp.carrierSet && c === lp.off.QB) { inp = { ...inp, mx: 0, my: 0 }; lp.manual = false; }
   if (lp.handoverLock) { if (mag <= 0.1) lp.handoverLock = false; else inp = { ...inp, mx: 0, my: 0 }; }
-  if (!lp.handoverLock && mag > 0.1) lp.manual = true;
+  if (!lp.handoverLock && len(inp.mx ?? 0, inp.my ?? 0) > 0.1) lp.manual = true;
   c.input = { mx: mag > 0.1 ? inp.mx / Math.max(1, mag) : 0, my: mag > 0.1 ? inp.my / Math.max(1, mag) : 0, sprint: !!inp.sprint };
   if (c.carrier) {
     if (inp.juke) startMove(lp, c, 'juke');
@@ -696,6 +727,10 @@ function think(lp, p) {
       return seek(p, lp.carrierSet ? { x: -6, y: -lp.holeY * 0.3 } : mesh, 0.6);
     }
     case 'fake': return seek(p, { x: -7, y: -sgn(lp.holeY) * 4 }, 0.5);
+    case 'qbkeep':
+      // QB draw: drop as if to pass, then go. QB power: a step to the hole side.
+      if (lp.play.dir === 'qbdraw') return seek(p, { x: Math.min(p.home.x - 1.6, p.x), y: p.home.y }, 0.35);
+      return seek(p, { x: p.x, y: p.y + sgn(lp.holeY) * 0.6 }, 0.4);
     case 'runner': {
       // Before the handoff: head for the mesh point, then aim at the hole.
       const dir = lp.play.dir;
@@ -940,7 +975,7 @@ function runBlockWant(lp, p) {
   if (!tgt || dist(tgt, p) > 7) {
     tgt = null;
     let bd = 6;
-    for (const q of lp.players) if (q.side === 'def' && !q.eng && dist(q, p) < bd) { bd = dist(q, p); tgt = q; }
+    for (const q of lp.players) if (q.side === 'def' && !q.eng && q !== lp.readEnd && dist(q, p) < bd) { bd = dist(q, p); tgt = q; }
   }
   if (!tgt) { seek(p, { x: p.x + 3, y: p.y + (p.y - lp.holeY > 0 ? 0.6 : -0.6) }, 0.5); return; }
   p.aim = tgt;
@@ -982,6 +1017,9 @@ function rushWant(lp, p) {
   if (p.eng) return;
   const c = lp.carrierSet ? lp.carrier : lp.off.QB;
   if (!c) return;
+  // The unblocked end on a read: he either crashes down on the back or stays home for the
+  // quarterback, and the quarterback reads which.
+  if (p === lp.readEnd && !lp.carrierSet) return p.crash ? seek(p, { x: -2.5, y: lp.holeY * 0.5 }, 0.9) : seek(p, { x: 0.3, y: p.home.y * 1.05 }, 0.4);
   // Draws and play-action freeze the front for a beat.
   const fooled = ((lp.play.dir === 'draw' && !lp.carrierSet) || lp.play.pa) && lp.t < (lp.play.dir === 'draw' ? 0.9 : 0.5);
   // Against a run each lineman fills his own gap until the ball declares itself: he plays his
@@ -1057,7 +1095,7 @@ function coverWant(lp, p) {
     // A counter's jab step pulls them the wrong way for a beat.
     const fooled = lp.play.dir === 'counter' && lp.t < 0.55 ? -1 : 1;
     // A draw shows pass: they drop to their coverage depth until the handoff.
-    if (lp.play.dir === 'draw') return seek(p, { x: p.home.x + 2.5, y: p.home.y }, 0.55);
+    if (lp.play.dir === 'draw' || lp.play.dir === 'qbdraw') return seek(p, { x: p.home.x + 2.5, y: p.home.y }, 0.55);
     return seek(p, { x: Math.max(1.5, p.x - 1), y: lp.holeY * 0.5 * fooled }, 0.5);
   }
   if (lp.play.pa && lp.t < 0.6 && ['MLB', 'OLB', 'SS'].includes(p.slot)) return seek(p, { x: 1.5, y: p.y }, 0.6);
@@ -1174,14 +1212,15 @@ function carrierWant(lp, p) {
   // Designed runs hit the hole first.
   // Designed runs hit the hole first. An outside run stretches to the edge, then reads it: if
   // a defender has set the edge outside him, he bounces back inside instead of running into it.
-  if (lp.kind === 'run' && p.slot === 'RB' && p.x < 0.5) {
+  if (lp.kind === 'run' && (p.slot === 'RB' || (p.slot === 'QB' && (lp.qbRun || lp.kept) && lp.play.dir !== 'sneak')) && p.x < 0.5) {
     const e = lp.t - (lp.carrierAt ?? 0);
-    if ((lp.play.dir === 'outside' || lp.play.dir === 'toss') && e < 1.1 && !lp.bounced) {
+    const wide = lp.play.dir === 'outside' || lp.play.dir === 'toss' || lp.kept;
+    if (wide && e < 1.1 && !lp.bounced) {
       const out = sgn(lp.holeY);
       const edge = lp.players.find((q) => q.side !== p.side && !q.eng && q.stun <= 0 && (q.y - p.y) * out > 0.3 && Math.abs(q.x - p.x) < 3 && dist(q, p) < 3.4);
       if (edge && e > 0.35) { lp.bounced = true; event(lp, 'bounce', '', p, edge); }
       else return seek(p, { x: Math.min(1.5, -1 + e * (lp.play.dir === 'toss' ? 4.5 : 3)), y: lp.holeY }, 1, 0.05);
-    } else if (e < (lp.play.dir === 'power' ? 0.8 : 0.55) && lp.play.dir !== 'outside' && lp.play.dir !== 'toss') return seek(p, { x: 1.5, y: lp.holeY }, 1, 0.05);
+    } else if (e < (lp.play.dir === 'power' || lp.play.dir === 'qbpower' ? 0.8 : 0.55) && !wide) return seek(p, { x: 1.5, y: lp.holeY }, 1, 0.05);
   }
   let best = null;
   for (let a = -90; a <= 90; a += 15) {
@@ -2004,7 +2043,8 @@ function wrapHold(lp) {
   const { c, q } = T, need = (c.r + q.r) * 0.82;
   const dx = q.x - c.x, dy = q.y - c.y, d = len(dx, dy);
   if (d >= need || d < 1e-6) return;
-  const k = Math.min(need - d, SEP_MAX) / d;
+  // (Bigger bodies get crowded harder, so it may move a little further per step.)
+  const k = Math.min(need - d, SEP_MAX * 2) / d;
   q.x += dx * k; q.y += dy * k;
 }
 
@@ -2097,7 +2137,9 @@ function buildResult(lp, end) {
     if (stats.target) st(g, o, stats.target.id).tg++;
     return { kind: 'pass', yards: 0, carrier: qb.id, qb: qb.id, text: end.text, clockStop: true };
   }
-  const c = lp.carrier ?? qb;
+  // Whoever actually has the ball is the runner the play is scored from.
+  const hb = lp.ball.holder;
+  const c = (!lp.intercepted && hb && hb.side === 'off' ? hb : null) ?? lp.carrier ?? qb;
   // Interception return
   if (lp.intercepted) {
     st(g, o, qb.id).pa++; st(g, o, qb.id).pint++;
@@ -2157,7 +2199,7 @@ function buildResult(lp, end) {
   // Runs and scrambles
   const s = st(g, o, c.id);
   s.ra++; s.ry += Math.min(yards, 100 - lp.spot); s.rlong = Math.max(s.rlong, yards);
-  const how = lp.scramble ? 'scrambles' : { inside: 'runs up the middle', outside: c.y < 0 ? 'runs around the left end' : 'runs around the right end', draw: 'runs the draw', sneak: 'sneaks ahead' }[lp.play.dir] ?? 'runs';
+  const how = lp.scramble ? 'scrambles' : { inside: 'runs up the middle', outside: c.y < 0 ? 'runs around the left end' : 'runs around the right end', draw: 'runs the draw', sneak: 'sneaks ahead', qbdraw: 'takes off on the QB draw', qbpower: 'keeps it on QB power', read: c.slot === 'QB' ? 'pulls it on the read and runs' : 'takes the give on the read' }[lp.play.dir] ?? 'runs';
   let text = `${nm(c.id)} ${how}${extras} for ${yardsWord(yards)}.${tk}`;
   if (se) text += " It's super effective!";
   const r = { kind: 'run', yards, carrier: c.id, scorer: c.id, text, clockStop: stop, highlight: yards >= 20 ? 'big' : yards < 0 ? 'loss' : null, se };

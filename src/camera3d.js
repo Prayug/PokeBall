@@ -31,10 +31,10 @@ export const CAMERA_ALIASES = { sideline: 'broadcast', qb: 'player' };
 // down (pitch), its vertical field of view, and an extra zoom factor on the fitted distance.
 export const CAMERA_SHOTS = CAMERA_MODES;
 export const CAMERA_DEFAULTS = {
-  gameplay: { pitch: 21, fov: 50, zoom: 1 },
+  gameplay: { pitch: 27, fov: 48, zoom: 1 },
   tactical: { pitch: 60, fov: 40, zoom: 1 },
-  broadcast: { pitch: 22, fov: 30, zoom: 1 },
-  player: { pitch: 23, fov: 52, zoom: 1 },
+  broadcast: { pitch: 25, fov: 30, zoom: 1.12 },
+  player: { pitch: 26, fov: 52, zoom: 1 },
 };
 export const CAMERA_LIMITS = { pitch: [10, 75], fov: [25, 75], zoom: [0.6, 1.8] };
 export const cameraDefaults = () => JSON.parse(JSON.stringify(CAMERA_DEFAULTS));

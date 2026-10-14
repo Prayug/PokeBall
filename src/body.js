@@ -3,10 +3,10 @@
 //   cls:    the size class (small, medium, large, xl), from the Pokédex height and weight. A
 //           football game needs readable bodies, not Pokédex scale: a Wailord is not drawn
 //           fifteen yards long, it is an extra-large lineman.
-//   height: how tall the model is drawn: about 1.35 yards for small, 1.6 medium, 1.85 large,
-//           2.1 extra-large (close enough that a small Pokémon still reads on the field, far
-//           enough apart that a Snorlax still stands over a Pikachu), with a little spread inside each class so two large Pokémon are
-//           not identical. A football player is about 2 yards tall.
+//   height: how tall the model is drawn: about 1.15 yards for small, 1.6 medium, 2.15 large,
+//           2.75 extra-large, so a Snorlax stands well over a Pikachu (size is the point of
+//           the game), with a little spread inside each class. Formations space players by
+//           what is drawn, so bigger bodies widen the line instead of piling into it.
 //   r:      the gameplay collision capsule's radius. It is the body, not the wings or the tail:
 //           the simulation spaces, blocks, tackles and separates bodies with it.
 //   foot:   the drawn footprint, half extents to the side, the front and the back. The model
@@ -18,10 +18,10 @@ import { PLAYERS } from './ratings.js';
 const cache = new Map();
 
 export const SIZE_CLASSES = {
-  small: { name: 'Small', height: 1.35, r: 0.42 },
+  small: { name: 'Small', height: 1.15, r: 0.38 },
   medium: { name: 'Medium', height: 1.6, r: 0.47 },
-  large: { name: 'Large', height: 1.85, r: 0.53 },
-  xl: { name: 'Extra large', height: 2.1, r: 0.58 },
+  large: { name: 'Large', height: 2.15, r: 0.58 },
+  xl: { name: 'Extra large', height: 2.75, r: 0.72 },
 };
 const ORDER = ['small', 'medium', 'large', 'xl'];
 // Size score: doubling the height counts one, doubling the weight about a third of that.
@@ -31,11 +31,11 @@ export function sizeScore(m, kg) { return Math.log2(Math.max(0.1, m) / 0.4) + 0.
 
 // How far the drawn model may reach past the capsule: the core of the body (the middle of its
 // mass, see fitModel) to the sides and front to back, and the tips of wings, arms and tails.
-export const CORE_SIDE = 1.1, CORE_DEPTH = 1.35;
-export const TIP_SIDE = 1.4, TIP_DEPTH = 1.85;
+export const CORE_SIDE = 1.35, CORE_DEPTH = 1.6;
+export const TIP_SIDE = 1.9, TIP_DEPTH = 2.3;
 // A model is never shrunk below this share of its class height to fit, so it stays
 // recognizable (scaling is uniform, apart from the few GIRTH bodies below).
-export const MIN_FIT = 0.6;
+export const MIN_FIT = 0.8;
 
 // Bodies the uniform fit draws far too thin: a serpent standing as tall as a lineman is a
 // rope. These are drawn wider and deeper than their height alone gives (sides and front to
@@ -53,7 +53,7 @@ export function bodyOf(id) {
   // Position inside the class (-0.5 .. 0.5), for a little spread.
   const lo = i ? EDGES[i - 1] : EDGES[0] - 1.6, hi = i < 3 ? EDGES[i] : EDGES[2] + 1.8;
   const u = Math.max(-0.5, Math.min(0.5, (score - lo) / (hi - lo) - 0.5));
-  const height = C.height * (1 + u * 0.14);
+  const height = C.height * (1 + u * 0.18);
   const r = C.r * (1 + u * 0.1);
   // Until the model is measured, the footprint is the most the fitter lets it reach.
   b = { id, cls, height, r, kg, m, foot: { side: r * TIP_SIDE, front: r * TIP_DEPTH, back: r * TIP_DEPTH }, girth: GIRTH[id] ?? 1, measured: false };
