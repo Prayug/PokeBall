@@ -7,6 +7,7 @@
 // z across the field. A live play's own frame (x downfield from the line, y across) maps to
 // the world through world(): x_w = los + dir * x, z_w = dir * y.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SPRITE_INDEX } from './sprites3d.js';
 import { PLAYERS } from './ratings.js';
 import { absSpot } from './engine.js';
@@ -16,7 +17,8 @@ import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel,
 import { Animator } from './anim3d.js';
 import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
-import { flightAt, SIDE as SIDE_W } from './live.js';
+import { positionName } from './formations.js';
+import { flightAt, SIDE as SIDE_W, isGun } from './live.js';
 
 const reduceMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const RECEIVER_KEYS = ['WR1', 'WR2', 'WR3', 'TE', 'RB'];
@@ -78,10 +80,11 @@ export class Stage {
   buildOverlays() {
     const S = this.scene;
     // Line of scrimmage (blue) and line to gain (yellow): thin glowing strips on the turf.
-    const lineGeo = new THREE.PlaneGeometry(0.32, HALF_W * 2 - 0.2);
+    // Thin and a little translucent, so they mark the spots without painting over the field.
+    const lineGeo = new THREE.PlaneGeometry(0.2, HALF_W * 2 - 0.2);
     const lineMat = (c, o) => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: o, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, fog: false });
-    this.losLine = new THREE.Mesh(lineGeo, lineMat('#2f7bff', 0.9));
-    this.firstLine = new THREE.Mesh(lineGeo, lineMat('#ffd21f', 0.92));
+    this.losLine = new THREE.Mesh(lineGeo, lineMat('#4d8dff', 0.62));
+    this.firstLine = new THREE.Mesh(lineGeo, lineMat('#ffd84a', 0.7));
     for (const l of [this.losLine, this.firstLine]) { l.rotation.x = -Math.PI / 2; l.position.y = 0.025; l.renderOrder = 2; S.add(l); }
     // Football
     this.ball = new THREE.Mesh(footballGeometry(), new THREE.MeshStandardMaterial({ map: footballTexture(), roughness: 0.5 }));
@@ -89,7 +92,7 @@ export class Stage {
     this.ballSpin = 0;
     S.add(this.ball);
     // Selection ring under your player and a halo under the ball carrier.
-    this.selRing = new THREE.Mesh(new THREE.RingGeometry(0.92, 1.12, 48), new THREE.MeshBasicMaterial({ color: '#ffe14d', transparent: true, opacity: 0.95, depthWrite: false, fog: false }));
+    this.selRing = new THREE.Mesh(new THREE.RingGeometry(0.84, 1.12, 48), new THREE.MeshBasicMaterial({ color: '#ffe14d', transparent: true, opacity: 0.95, depthWrite: false, fog: false }));
     this.selRing.rotation.x = -Math.PI / 2; this.selRing.renderOrder = 3; S.add(this.selRing);
     this.selArrow = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 3), new THREE.MeshBasicMaterial({ color: '#ffe14d', fog: false }));
     this.selArrow.rotation.x = Math.PI; S.add(this.selArrow);
@@ -114,6 +117,11 @@ export class Stage {
       sp.scale.set(1.1, 1.1, 1); sp.renderOrder = 10; sp.visible = false;
       this.icons[k] = sp; S.add(sp);
     });
+    // A "QB" tag over the quarterback before the snap, and a football over whoever carries it.
+    this.qbMark = new THREE.Sprite(new THREE.SpriteMaterial({ map: markTexture('QB'), depthTest: false, transparent: true, fog: false }));
+    this.qbMark.renderOrder = 11; this.qbMark.visible = false; S.add(this.qbMark);
+    this.ballMark = new THREE.Sprite(new THREE.SpriteMaterial({ map: markTexture('ball'), depthTest: false, transparent: true, fog: false }));
+    this.ballMark.renderOrder = 11; this.ballMark.visible = false; S.add(this.ballMark);
     this.label = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, fog: false, transparent: true }));
     this.label.renderOrder = 11; this.label.visible = false; this.labelKey = '';
     S.add(this.label);
@@ -230,8 +238,12 @@ export class Stage {
     blob.rotation.x = -Math.PI / 2; blob.position.y = 0.02; blob.scale.setScalar(body.r * 1.5);
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: slotTexture(p.slot, team.color), depthTest: false, transparent: true, fog: false }));
     tag.renderOrder = 12; tag.visible = false; tag.scale.set(1.3, 0.55, 1);
-    this.scene.add(root, ring, blob, tag);
-    const a = { key, id: p.id, root, ring, blob, tag, body, color: team.color, fig: null, ph: null, version: -1,
+    // A thin team-colored ring on the turf: whole for the offense, broken into dashes for the
+    // defense, so the two sides read apart even when their Pokémon share colors.
+    const base = new THREE.Mesh(p.side === 'off' ? BASE_OFF_GEO : BASE_DEF_GEO, new THREE.MeshBasicMaterial({ color: team.color, transparent: true, opacity: 0.6, depthWrite: false, fog: false }));
+    base.rotation.x = -Math.PI / 2; base.position.y = 0.035; base.renderOrder = 2; base.visible = false;
+    this.scene.add(root, ring, blob, tag, base);
+    const a = { key, id: p.id, root, ring, blob, tag, base, tagText: p.slot, side: p.side, body, color: team.color, fig: null, ph: null, version: -1,
       anim: null, yaw: p.side === 'off' ? Math.PI / 2 * this.dirOr(1) : -Math.PI / 2 * this.dirOr(1), yawInit: false, turn: 0,
       act: null, fallWant: 0, fallDir: null, flash: 0, flier: flies(p.id), seen: 0, pos: new THREE.Vector3() };
     a.anim = new Animator(null, (p.id * 0.618) % 1);
@@ -245,7 +257,7 @@ export class Stage {
     const a = this.actors.get(key);
     if (!a) return;
     this.dropFigure(a);
-    for (const o of [a.root, a.ring, a.blob, a.tag]) { this.scene.remove(o); o.material?.map?.dispose?.(); o.material?.dispose?.(); }
+    for (const o of [a.root, a.ring, a.blob, a.tag, a.base]) { this.scene.remove(o); o.material?.map?.dispose?.(); o.material?.dispose?.(); }
     this.actors.delete(key);
   }
 
@@ -482,13 +494,25 @@ export class Stage {
       a.ring.position.set(a.pos.x, top + 0.45, a.pos.z);
       const ps = clampN(this.camera.position.distanceTo(a.ring.position) * 0.011, 0.26, 0.6);
       a.ring.scale.set(ps, ps, 1);
-      a.tag.visible = this.debug;
-      if (this.debug) { a.tag.position.set(a.pos.x, top + 0.75, a.pos.z); const ts = clampN(this.camera.position.distanceTo(a.tag.position) * 0.013, 0.32, 0.85); a.tag.scale.set(ts * 2.3, ts, 1); }
+      // Position labels: in the tactical view (where they read like a coaching diagram) and
+      // in the debug view, named by what the formation has the player doing.
+      const tactical = this.rig.mode === 'tactical';
+      a.tag.visible = this.debug || (tactical && !(lp.phase === 'dead' && a.fallWant));
+      if (a.tag.visible) {
+        const name = positionName(lp, p);
+        if (name !== a.tagText) { a.tagText = name; a.tag.material.map?.dispose(); a.tag.material.map = slotTexture(name, a.color); a.tag.material.needsUpdate = true; }
+        a.tag.position.set(a.pos.x, top + 0.75, a.pos.z);
+        const ts = clampN(this.camera.position.distanceTo(a.tag.position) * (tactical ? 0.011 : 0.013), 0.32, 0.8);
+        a.tag.scale.set(ts * 2.3, ts, 1);
+      }
+      // Team rings on the turf: before the snap, in the tactical view, or always if chosen.
+      a.base.visible = !!a.fig && (pre || tactical || this.showPips) && !(lp.phase === 'dead' && a.fallWant) && lp.control !== p;
+      if (a.base.visible) { a.base.position.set(a.pos.x, 0.035, a.pos.z); a.base.scale.setScalar(a.body.r * 1.55); a.base.material.opacity = pre ? 0.6 : 0.4; }
       a.blob.position.set(a.pos.x, 0.02, a.pos.z);
       const sh = 1 / (1 + lift * 0.9);
       a.blob.scale.setScalar(a.body.r * 1.6 * (0.7 + sh * 0.3));
       a.blob.material.opacity = 0.85 * sh;
-      a.ring.visible = !(lp.phase === 'dead' && a.fallWant) && this.showPips && lp.control !== p && !(lp.ball.state === 'held' && lp.ball.holder === p && lp.phase === 'live');
+      a.ring.visible = false;
       if (lp.ball.state === 'held' && lp.ball.holder === p) held = a;
       obstacles.push({ x: a.pos.x, z: a.pos.z, r: a.body.r, h: s.height + lift });
     }
@@ -517,7 +541,7 @@ export class Stage {
     if (lp.phase === 'pre') {
       s.set = p.act === 'READY';
       s.stance = STANCE[p.slot] ?? 'skill';
-      if (p.slot === 'QB' && lp.formation !== 'shotgun') s.stance = 'qbUnder';
+      if (p.slot === 'QB' && !isGun(lp.formation)) s.stance = 'qbUnder';
     }
     s.engaged = !!p.eng && lp.phase === 'live';
     if (p.eng) {
@@ -709,7 +733,7 @@ export class Stage {
     if (sel) {
       const k = 1 + Math.sin(now / 220) * 0.05;
       this.selRing.position.set(sel.pos.x, 0.045, sel.pos.z);
-      this.selRing.scale.setScalar(sel.body.r * 1.25 * k);
+      this.selRing.scale.setScalar(sel.body.r * 1.75 * k);
       const h = (sel.fig?.template.height ?? 2) + (sel.fig ? sel.anim.lift : 0);
       this.selArrow.position.set(sel.pos.x, h + 0.75 + Math.sin(now / 180) * 0.1, sel.pos.z);
       this.selArrow.rotation.y += dt * 2.5;
@@ -718,6 +742,21 @@ export class Stage {
     const showCarry = holder && !(lp.kind === 'pass' && lp.ball.holder === lp.off.QB && !lp.thrown && lp.qbState !== 'run');
     this.carryRing.visible = !!showCarry;
     if (showCarry) { this.carryRing.position.set(holder.pos.x, 0.04, holder.pos.z); this.carryRing.scale.setScalar(holder.body.r * 1.35); this.carryRing.material.color.set(this.kit?.[lp.ball.holder.ti] ?? lp.g.teams[lp.ball.holder.ti].color).lerp(_c.set('#ffffff'), 0.55); }
+    // The quarterback before the snap; the football over the carrier once the play is on.
+    const top = (a) => (a.fig?.template.height ?? a.body.height) + Math.max(0, a.fig ? a.anim.lift : 0);
+    const qbA = lp.phase === 'pre' ? this.actorOf(lp.off.QB) : null;
+    this.qbMark.visible = !!qbA?.fig && sel !== qbA;
+    if (this.qbMark.visible) {
+      this.qbMark.position.set(qbA.pos.x, top(qbA) + 0.55, qbA.pos.z);
+      const s = clampN(this.camera.position.distanceTo(this.qbMark.position) * 0.022, 0.5, 1.1);
+      this.qbMark.scale.set(s * 1.5, s, 1);
+    }
+    this.ballMark.visible = !!showCarry && holder !== sel;
+    if (this.ballMark.visible) {
+      this.ballMark.position.set(holder.pos.x, top(holder) + 0.6 + Math.sin(now / 200) * 0.06, holder.pos.z);
+      const s = clampN(this.camera.position.distanceTo(this.ballMark.position) * 0.024, 0.55, 1.2);
+      this.ballMark.scale.set(s * 1.5, s, 1);
+    }
     const icons = !lp.preview && lp.user === lp.o && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run' && lp.phase !== 'dead';
     for (const [k, sp] of Object.entries(this.icons)) {
       const p = lp.off[k];
@@ -763,76 +802,114 @@ export class Stage {
     }
   }
 
-  // What the camera should frame this frame.
-  // The camera's state machine. Each frame the play decides which shot it is in, and the shot
-  // decides what must be in frame:
-  //   PRE_SNAP     the whole formation, low behind the deepest back
-  //   DROPBACK     the pocket and the first yards of the routes
-  //   PASS_FLIGHT  the ball, leaning toward where it comes down and widening for deep balls
-  //   CATCH        the catch point, a beat tighter
-  //   RUN          the carrier, led by where he is going
-  //   TACKLE       the pile, tight
+  // What the camera should frame this frame. The camera's state machine: each frame the play
+  // decides which shot it is in, and the shot decides which players must be in view (their
+  // feet and the tops of their heads, as world points), where the action is, and who the
+  // player-focus view follows. The rig (camera3d.js) fits its lens to those points.
+  //   PRE_SNAP     both teams' whole formation and the ball
+  //   DROPBACK     the pocket, both lines and the receivers' routes
+  //   PASS_FLIGHT  the ball, where it comes down, the target and the defenders near him
+  //   CATCH        the catch point
+  //   RUN          the ball carrier, where he is heading and everyone near him
+  //   TACKLE       the pile
   //   POST_PLAY    held where the play ended through the result
-  // The rig springs toward each shot (critically damped), so changes never snap.
   framing(lp) {
-    const f = this.frm ?? (this.frm = { focus: new THREE.Vector3(), fwd: 1, spread: 10, pre: true, deep: 0, tight: false, qb: new THREE.Vector3(), state: 'PRE_SNAP' });
+    const f = this.frm ?? (this.frm = { focus: new THREE.Vector3(), fwd: 1, pre: true, qb: new THREE.Vector3(), state: 'PRE_SNAP', pts: [], pool: [], control: null, controlDir: 1, ctl: new THREE.Vector3() });
     const set = (st) => { if (f.state !== st) { f.state = st; f.since = lp.t; } this.rig.shot = st; };
-    if (this.gameState === 'PLAY_RESULT' && this.frmInit) { f.tight = true; f.pre = false; f.shot = 'post'; set('POST_PLAY'); return f; }
+    f.fwd = this.dir;
+    f.pts.length = 0;
+    let np = 0;
+    const pt = (x, y, z) => { const v = f.pool[np] ?? (f.pool[np] = new THREE.Vector3()); np++; v.set(x, y, z); f.pts.push(v); return v; };
+    // A player as two points: his feet and the top of his head, where he is drawn.
+    const body = (p, clampX = null) => {
+      const a = this.actorOf(p);
+      if (!a) return;
+      let x = a.pos.x;
+      if (clampX != null) x = this.dir > 0 ? Math.min(x, clampX) : Math.max(x, clampX);
+      const h = (a.fig?.template.height ?? a.body.height) + 0.3;
+      pt(x, 0, a.pos.z); pt(x, h, a.pos.z);
+    };
+    const near = (c, R, clampX = null) => { for (const p of lp.players) if (Math.hypot(p.x - c.x, p.y - c.y) < R) body(p, clampX); };
+    // Who the player-focus view follows: your Pokémon, else the ball carrier, else the passer.
+    const ctl = lp.control ?? (lp.carrierSet ? lp.carrier : null) ?? lp.ball.holder ?? lp.off.QB;
+    const ca = this.actorOf(ctl);
+    f.control = ca ? f.ctl.copy(ca.pos) : null;
+    f.controlDir = ctl && ctl.side === 'def' ? -this.dir : this.dir;
+    if (this.gameState === 'PLAY_RESULT' && this.frmInit && f.held) {
+      for (const v of f.held) pt(v.x, v.y, v.z);
+      f.pre = false; f.shot = 'post'; set('POST_PLAY'); return f;
+    }
     this.frmInit = true;
-    f.fwd = this.dir; f.pre = lp.phase === 'pre'; f.deep = 0; f.tight = false;
+    f.pre = lp.phase === 'pre';
     const qb = this.actorOf(lp.off.QB);
     if (qb) f.qb.copy(qb.pos); else f.qb.copy(this.world(-5, 0));
     const b = lp.ball;
     const caught = lp.caught && lp.catchAt != null && lp.t - lp.catchAt < 0.7;
+    const los = this.world(0, 0);
     if (f.pre) {
-      // The whole formation: from the deepest back to a few yards past the line, wider for
-      // spread sets.
-      let back = 0, wide = 0;
-      for (const p of lp.players) if (p.side === 'off') { back = Math.min(back, p.home?.x ?? p.x); wide = Math.max(wide, Math.abs(p.home?.y ?? p.y)); }
-      this.world(back + 3.5, 0, 0, f.focus);
-      f.spread = clampN(10 + Math.max(0, wide - 15) * 0.25, 10, 18);
+      // Both formations: everyone, with the deep safeties counted at most a dozen yards off
+      // the ball (they sit at the top of the frame, not decide its size).
+      for (const p of lp.players) body(p, p.side === 'def' ? los.x + this.dir * 11 : null);
+      this.world(-2, 0, 0, f.focus);
       f.shot = 'pre';
       set('PRE_SNAP');
     } else if (lp.phase === 'dead') {
       const c = lp.carrier ?? lp.ball.holder;
-      if (c) this.world(lp.spotX ?? c.x, c.y, 0, f.focus); else this.world(b.x, b.y, 0, f.focus);
-      f.spread = 10; f.tight = true; f.shot = 'post';
+      const at = c ? { x: lp.spotX ?? c.x, y: c.y } : { x: b.x, y: b.y };
+      this.world(at.x, at.y, 0, f.focus);
+      near(at, 5);
+      pt(f.focus.x, 0, f.focus.z);
+      f.shot = 'post';
       set('POST_PLAY');
     } else if (lp.tackle) {
       const k = lp.tackle.c;
       this.world(k.x, k.y, 0, f.focus);
-      f.spread = 9; f.tight = true; f.shot = 'run';
+      near(k, 5);
+      f.shot = 'run';
       set('TACKLE');
     } else if (b.state === 'air' && lp.thrown) {
       const T = lp.thrown;
       const u = clampN((lp.t - T.t0) / T.T, 0, 1);
-      // Pan with the ball, leaning toward where it will come down.
       this.world(T.sx + (T.tx - T.sx) * (0.35 + u * 0.65), T.sy + (T.ty - T.sy) * (0.35 + u * 0.65), 0, f.focus);
-      f.deep = Math.hypot(T.tx - T.sx, T.ty - T.sy);
-      f.spread = 12 + Math.min(14, f.deep * 0.3);
+      // The ball, where it comes down, and the receiver and defenders around that spot.
+      const bw = this.world(b.x, b.y, b.z);
+      pt(bw.x, bw.y, bw.z);
+      const land = this.world(T.tx, T.ty);
+      pt(land.x, 0, land.z);
+      near({ x: T.tx, y: T.ty }, 6);
+      if (u < 0.35) body(lp.off.QB);
       f.shot = 'pass';
       set('PASS_FLIGHT');
     } else if (caught && lp.carrier) {
       const c = lp.carrier;
       this.world(c.x + c.vx * 0.2, c.y + c.vy * 0.2, 0, f.focus);
-      f.spread = 10; f.shot = 'run';
+      near(c, 7);
+      f.shot = 'run';
       set('CATCH');
     } else if (lp.carrierSet) {
-      // Lead the carrier: where he will be in half a second, so open field ahead is in frame.
+      // Lead the carrier: where he will be in a moment, and everyone around him.
       const c = lp.carrier ?? lp.ball.holder;
-      if (c) this.world(c.x + c.vx * 0.5, c.y + c.vy * 0.35, 0, f.focus); else this.world(b.x, b.y, 0, f.focus);
-      f.spread = 10;
+      if (c) {
+        this.world(c.x + c.vx * 0.5, c.y + c.vy * 0.35, 0, f.focus);
+        near(c, 8);
+        const lead = this.world(c.x + c.vx * 0.9 + this.dir * 0, c.y + c.vy * 0.6);
+        pt(lead.x, 0, lead.z);
+      } else { this.world(b.x, b.y, 0, f.focus); pt(f.focus.x, 0, f.focus.z); }
       f.shot = 'run';
       set('RUN');
     } else {
-      // Pocket: between the quarterback and the line, so the drop, the rush and the first
-      // yards of the routes all stay in view.
+      // The pocket: the passer, both lines and the routes (the deep ones counted at most
+      // eighteen yards out, so the shot widens with them without leaving the pocket).
       const q = lp.off.QB ?? b;
       this.world(Math.max(q.x, -9) + 3, q.y * 0.4, 0, f.focus);
-      f.spread = 12;
+      for (const p of lp.players) {
+        if (p.side === 'off' || Math.abs(p.y) < 9 && p.x < 8) body(p, los.x + this.dir * 18);
+      }
       f.shot = lp.kind === 'pass' ? 'pass' : 'run';
       set(lp.kind === 'pass' ? 'DROPBACK' : 'RUN');
     }
+    // Remember the last live framing: the result holds on it.
+    if (!f.pre) { f.held ??= []; f.held.length = f.pts.length; f.pts.forEach((v, i) => { f.held[i] = (f.held[i] && f.held[i] !== v ? f.held[i] : new THREE.Vector3()).copy(v); }); }
     return f;
   }
 
@@ -972,6 +1049,13 @@ function teamKit(teams) {
 
 const SLOT_LABEL = { LE: 'DE', DT1: 'DT', DT2: 'DT', OLB: 'LB', MLB: 'LB', FS: 'S', SS: 'S', CB1: 'CB', CB2: 'CB', CB3: 'CB', WR1: 'WR', WR2: 'WR', WR3: 'WR' };
 const BLOB_GEO = new THREE.PlaneGeometry(2, 2);
+const BASE_OFF_GEO = new THREE.RingGeometry(0.86, 1, 40);
+const BASE_DEF_GEO = (() => {
+  // Eight dashes around the ring.
+  const parts = [];
+  for (let i = 0; i < 8; i++) parts.push(new THREE.RingGeometry(0.86, 1, 6, 1, (i / 8) * Math.PI * 2 + 0.12, Math.PI / 4 - 0.24));
+  return mergeGeometries(parts);
+})();
 const BURST_GEO = new THREE.RingGeometry(0.5, 0.7, 32);
 const DUST_GEO = new THREE.SphereGeometry(0.22, 7, 5);
 const CONFETTI_GEO = new THREE.PlaneGeometry(0.22, 0.12);
@@ -1013,7 +1097,7 @@ function slotTexture(slot, color) {
   x.fillStyle = 'rgba(8,16,12,0.85)'; x.beginPath(); x.roundRect(4, 4, 120, 48, 8); x.fill();
   x.fillStyle = color; x.fillRect(4, 44, 120, 8);
   x.fillStyle = '#ffffff'; x.font = '700 32px "Barlow Condensed", Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
-  x.fillText(SLOT_LABEL[slot] ?? slot, 64, 26);
+  x.fillText(SLOT_LABEL[slot] ?? slot, 64, 26, 112);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
@@ -1027,6 +1111,25 @@ function badgeTexture(label, color, st = null) {
   x.lineWidth = st ? 3 : 4; x.strokeStyle = 'rgba(10,20,15,0.85)'; x.stroke();
   x.fillStyle = '#0d1a14'; x.font = (st ? '700 30px' : '700 36px') + ' "Barlow Condensed", Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
   x.fillText(label, 32, 34);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
+// Small marker badges: 'QB' in gold, or a football.
+function markTexture(kind) {
+  const c = document.createElement('canvas'); c.width = 96; c.height = 64;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgba(10,22,16,0.85)'; x.beginPath(); x.roundRect(6, 8, 84, 48, 12); x.fill();
+  x.beginPath(); x.moveTo(40, 56); x.lineTo(48, 63); x.lineTo(56, 56); x.fill();
+  if (kind === 'QB') {
+    x.fillStyle = '#ffd23f'; x.font = '700 34px "Barlow Condensed", Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.fillText('QB', 48, 33);
+  } else {
+    x.save(); x.translate(48, 32); x.rotate(-0.35);
+    x.fillStyle = '#8a4b23'; x.beginPath(); x.ellipse(0, 0, 26, 15, 0, 0, Math.PI * 2); x.fill();
+    x.strokeStyle = '#ffffff'; x.lineWidth = 3; x.beginPath(); x.moveTo(-11, 0); x.lineTo(11, 0); x.stroke();
+    for (let i = -8; i <= 8; i += 4) { x.beginPath(); x.moveTo(i, -4); x.lineTo(i, 4); x.stroke(); }
+    x.restore();
+  }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 

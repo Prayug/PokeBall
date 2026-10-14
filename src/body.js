@@ -1,49 +1,90 @@
-// Physical size of each species on the field. Two separate things, kept apart on purpose:
-//   r:      the gameplay collision capsule's radius in yards. The simulation spaces, blocks,
-//           tackles and separates bodies with it, so it stays in a football range (a small
-//           Pokémon is a slot receiver, a Snorlax a nose tackle, never three linemen wide).
-//   height: how tall the model is drawn, from the Pokédex height, compressed so a Snorlax
-//           towers over a Raichu without a Wailord covering half the field.
-// The model is then scaled to that height, but never wider than its capsule (fitScale), so
-// what you see is what collides and two players who do not touch never look merged.
+// Physical size of each species on the field, in yards. One place decides it, and the
+// simulation, the formations, the renderer and the camera all read it:
+//   cls:    the size class (small, medium, large, xl), from the Pokédex height and weight. A
+//           football game needs readable bodies, not Pokédex scale: a Wailord is not drawn
+//           fifteen yards long, it is an extra-large lineman.
+//   height: how tall the model is drawn: about 1.2 yards for small, 1.55 medium, 1.9 large,
+//           2.3 extra-large, with a little spread inside each class so two large Pokémon are
+//           not identical. A football player is about 2 yards tall.
+//   r:      the gameplay collision capsule's radius. It is the body, not the wings or the tail:
+//           the simulation spaces, blocks, tackles and separates bodies with it.
+//   foot:   the drawn footprint, half extents to the side, the front and the back. The model
+//           fitter (fitModel) guarantees the drawn model stays inside it, and once a model has
+//           loaded its real measured extents replace the estimate (setMeasured), so formations
+//           space players by what is actually drawn.
 import { PLAYERS } from './ratings.js';
 
 const cache = new Map();
 
-// The drawn body may spill a little past the capsule (arms, ears, tails): to the sides by 30%,
-// front and back by 60% (lines face each other across the neutral zone, which leaves room for
-// a snout or a tail). Formations space players by these same footprints.
-export const FOOT_SIDE = 1.3;
-export const FOOT_DEPTH = 1.6;
-export const MIN_R = 0.38, MAX_R = 0.8;
+export const SIZE_CLASSES = {
+  small: { name: 'Small', height: 1.2, r: 0.4 },
+  medium: { name: 'Medium', height: 1.55, r: 0.46 },
+  large: { name: 'Large', height: 1.9, r: 0.54 },
+  xl: { name: 'Extra large', height: 2.3, r: 0.62 },
+};
+const ORDER = ['small', 'medium', 'large', 'xl'];
+// Size score: doubling the height counts one, doubling the weight about a third of that.
+// The thresholds split the playable pool about 25 / 35 / 25 / 15.
+const EDGES = [1.3, 2.6, 3.7];
+export function sizeScore(m, kg) { return Math.log2(Math.max(0.1, m) / 0.4) + 0.35 * Math.log2(Math.max(0.1, kg) / 20); }
+
+// How far the drawn model may reach past the capsule: the core of the body (the middle of its
+// mass, see fitModel) to the sides and front to back, and the tips of wings, arms and tails.
+export const CORE_SIDE = 1.15, CORE_DEPTH = 1.4;
+export const TIP_SIDE = 1.6, TIP_DEPTH = 2.1;
+// A model is never shrunk below this share of its class height to fit, so it stays
+// recognizable (scaling is always uniform: nothing is flattened or stretched).
+export const MIN_FIT = 0.6;
 
 export function bodyOf(id) {
   let b = cache.get(id);
   if (b) return b;
   const P = PLAYERS[id];
   const m = P ? P.height / 10 : 1.2, kg = P ? P.weight / 10 : 60;
-  // Square root of the Pokédex height: about 1.6 yards for a Pikachu, 3 for a Greninja, 3.5
-  // for a Mewtwo or a Snorlax, 4.6 for a Groudon, 5.5 at most. Big Pokémon stand well over the
-  // small ones, small ones stay big enough to read from the broadcast camera.
-  const height = Math.min(5.5, Math.max(1.35, 1.75 * Math.sqrt(m / 0.5)));
-  // Collision radius in yards: heavier is wider, but a football body: a 0.4 yard skill player
-  // up to a 0.8 yard nose tackle (a lineman is about 1.3 yards shoulder to shoulder).
-  const r = Math.min(MAX_R, Math.max(MIN_R, 0.33 + 0.09 * Math.log2(1 + kg / 10)));
-  b = { height, r, kg, m };
+  const score = sizeScore(m, kg);
+  const i = score < EDGES[0] ? 0 : score < EDGES[1] ? 1 : score < EDGES[2] ? 2 : 3;
+  const cls = ORDER[i], C = SIZE_CLASSES[cls];
+  // Position inside the class (-0.5 .. 0.5), for a little spread.
+  const lo = i ? EDGES[i - 1] : EDGES[0] - 1.6, hi = i < 3 ? EDGES[i] : EDGES[2] + 1.8;
+  const u = Math.max(-0.5, Math.min(0.5, (score - lo) / (hi - lo) - 0.5));
+  const height = C.height * (1 + u * 0.14);
+  const r = C.r * (1 + u * 0.1);
+  // Until the model is measured, the footprint is the most the fitter lets it reach.
+  b = { id, cls, height, r, kg, m, foot: { side: r * TIP_SIDE, front: r * TIP_DEPTH, back: r * TIP_DEPTH }, measured: false };
   cache.set(id, b);
   return b;
 }
 
-// Scale for a model whose rest-pose bounds are w (across), h (up), d (front to back), so it
-// stands at the species height. A body much wider or longer than its footprint (wings spread,
-// arms out in a T-pose, a serpent) is drawn smaller, but keeps at least 80% of its height:
-// a Mewtwo or a Charizard reads as big even if its tail or wings reach over a neighbor.
-export const MIN_FIT = 0.8;
-export function fitScale(B, w, h, d) {
+// The renderer reports a model's real drawn extents once it has loaded (half extents in
+// yards: to the side, in front of the body center and behind it).
+export let measureVersion = 0;
+export function setMeasured(id, side, front, back) {
+  const b = bodyOf(id);
+  b.foot = { side, front, back };
+  if (!b.measured) measureVersion++;
+  b.measured = true;
+}
+
+// Fit a model to its body. Takes the model's rest-pose extents (in model units):
+//   h:     height of the body (feet to the top of the head, ignoring the last few percent of
+//          spikes, antennae and wing tips above it)
+//   core:  half extents of the middle of the mass { side, front, back }
+//   tips:  half extents of everything { side, front, back }
+// and returns the uniform scale: the class height, shrunk if the core would spill past the
+// capsule or the wings and tail past their allowance, never below MIN_FIT of the height.
+export function fitModel(B, h, core, tips) {
   const full = B.height / Math.max(1e-6, h);
   let s = full;
-  const maxW = B.r * 2 * FOOT_SIDE * 1.6, maxD = B.r * 2 * FOOT_DEPTH * 1.6;
-  if (d * s > maxD) s = Math.max(maxD / d, full * MIN_FIT);
-  if (w * s > maxW) s = Math.max(maxW / w, full * MIN_FIT);
-  return s;
+  const lim = (ext, max) => { if (ext * s > max) s = max / ext; };
+  lim(core.side, B.r * CORE_SIDE);
+  lim(Math.max(core.front, core.back), B.r * CORE_DEPTH);
+  lim(tips.side, B.r * TIP_SIDE);
+  lim(Math.max(tips.front, tips.back), B.r * TIP_DEPTH);
+  return Math.max(s, full * MIN_FIT);
+}
+
+// The older box-only fit, for the generated figures (their sprite bodies have no appendages
+// to tell apart): w across, h up, d front to back.
+export function fitScale(B, w, h, d) {
+  return fitModel(B, h, { side: w / 2, front: d / 2, back: d / 2 }, { side: w / 2, front: d / 2, back: d / 2 });
 }

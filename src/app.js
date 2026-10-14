@@ -4,9 +4,11 @@ import { SPRITES } from './sprites.js';
 import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER, effectLabel, bestMultiplier } from './types.js';
 import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
   quarterText, fgDistance, fgChance, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights, manualSub } from './engine.js';
-import { createLivePlay, snap, step as stepLive, playSeconds, worldSpots, playState, DT } from './live.js';
+import { createLivePlay, snap, step as stepLive, playSeconds, worldSpots, playState, DT, FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT } from './live.js';
+import { formationsFor } from './formations.js';
+import { measureVersion } from './body.js';
 import { Stage, webglAvailable } from './field3d.js';
-import { CAMERA_MODES, CAMERA_SHOTS, CAMERA_LIMITS, cameraDefaults } from './camera3d.js';
+import { CAMERA_MODES, CAMERA_SHOTS, CAMERA_LIMITS, CAMERA_ALIASES, cameraDefaults } from './camera3d.js';
 import { diagram, formationName } from './playbook.js';
 import * as LG from './league.js';
 
@@ -20,8 +22,8 @@ const S = {
   draft: { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false },
   depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 22, legendaries: false, typeCap: true, clock: true },
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
-  menuOpen: false, cam: 'broadcast', weatherFx: true, quality: 'auto',
-  names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'pre',
+  menuOpen: false, cam: 'gameplay', weatherFx: true, quality: 'auto',
+  names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
 };
 let timers = { draft: null, clock: null, auto: null, banner: null };
 
@@ -75,17 +77,20 @@ function loadPrefs() {
     const p = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
     if (p) {
       S.coach = !!p.coach; S.watch = p.watch ?? S.coach; Object.assign(S.setup, p.setup ?? {});
-      if (CAMERA_MODES.some(([k]) => k === p.cam)) S.cam = p.cam;
+      // Version 2 cameras: the old behind-the-offense "broadcast" is now "gameplay", the old
+      // sideline shot is "broadcast" and behind-the-QB is "player focus".
+      const cam = p.camV === 2 ? p.cam : p.cam === 'broadcast' ? 'gameplay' : CAMERA_ALIASES[p.cam] ?? p.cam;
+      if (CAMERA_MODES.some(([k]) => k === cam)) S.cam = cam;
       if (p.weatherFx != null) S.weatherFx = !!p.weatherFx;
       if (['auto', 'high', 'low'].includes(p.quality)) S.quality = p.quality;
       if (p.names != null) S.names = !!p.names;
       if (p.pips != null) S.pips = !!p.pips;
-      if (p.camShots) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
+      if (p.camShots && p.camV === 2) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
     }
   } catch { /* ignore */ }
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 2, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, camShots: S.cal })); } catch { /* ignore */ }
 }
 
 // ---------- small view helpers ----------
@@ -758,6 +763,36 @@ function callSheet(g) {
   return { onOff, groups: keyed, fit };
 }
 
+// Formations: the offense picks one for its call (or leaves it to the play's own), the defense
+// picks its front (or leaves it to the call's). An AI side mixes its looks.
+function formFor(call) {
+  const ok = formationsFor(call);
+  if (!ok.length) return null;
+  return S.formPick && ok.includes(S.formPick) ? S.formPick : PLAY_FORMATION[call];
+}
+function frontFor(call) { return S.frontPick ?? CALL_FRONT[call] ?? '43'; }
+function aiFormation(call) {
+  const ok = formationsFor(call);
+  if (!ok.length) return null;
+  return Math.random() < 0.6 ? PLAY_FORMATION[call] : ok[Math.floor(Math.random() * ok.length)];
+}
+function aiFront(call) {
+  if (call === 'goal_line') return 'goal';
+  return Math.random() < 0.7 ? CALL_FRONT[call] : ['43', 'nickel'][Math.floor(Math.random() * 2)];
+}
+function formChips(onOff) {
+  const opts = onOff ? Object.entries(FORMATIONS).map(([k, f]) => [k, f.short]) : Object.entries(DEF_FORMATIONS).map(([k, f]) => [k, f.short]);
+  const cur = onOff ? S.formPick : S.frontPick;
+  const chip = (k, label) => `<button class="cs-form ${cur === k ? 'on' : ''}" data-act="formpick" data-k="${k ?? ''}" aria-pressed="${cur === k}">${label}</button>`;
+  return `<div class="cs-forms" role="group" aria-label="${onOff ? 'Formation' : 'Front'}"><span>${onOff ? 'Formation' : 'Front'} <kbd>Z</kbd></span>${chip(null, 'Play default')}${opts.map(([k, l]) => chip(k, l)).join('')}</div>`;
+}
+function cycleForm(onOff) {
+  const keys = [null, ...Object.keys(onOff ? FORMATIONS : DEF_FORMATIONS)];
+  const k = onOff ? 'formPick' : 'frontPick';
+  S[k] = keys[(keys.indexOf(S[k] ?? null) + 1) % keys.length];
+  render();
+}
+
 // The 3D game's play-call panel: a few big cards at a time. Plays sit in categories (runs,
 // short passes, deep passes, kicks; on defense fronts, blitzes and coverages) with tabs to
 // move between them, so each card has room for readable play art, the name, one line on
@@ -791,9 +826,9 @@ function callSheetHtml(g) {
     const kind = onOff ? p.kind : fam;
     const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
     const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick' }[kind] : { front: 'Front', blitz: 'Blitz', cover: 'Coverage' }[kind];
-    const form = onOff ? formationName(call) : '';
+    const form = onOff ? formationName(call, formFor(call)) : DEF_FORMATIONS[frontFor(call)]?.name ?? '';
     return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
-      <span class="pc-art">${diagram(g, call, side)}</span>
+      <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call))}</span>
       <span class="pc-top"><em class="pc-kind">${tag}</em>${form ? `<span class="pc-form">${esc(form)}</span>` : ''}${label ? `<kbd>${label}</kbd>` : ''}</span>
       <span class="pname">${p.name}</span><span class="pblurb">${esc(extra)}</span>
       ${call === fit ? '<em class="fittag">Fits the down</em>' : ''}</button>`;
@@ -804,6 +839,7 @@ function callSheetHtml(g) {
       <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
       <span class="cs-keys"><kbd>←</kbd><kbd>→</kbd> category · number keys call · <kbd>H</kbd> hide</span>
       <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>
+    ${formChips(onOff)}
     <div class="cs-cards">${shown.map(card).join('')}</div>
     ${pages > 1 ? `<div class="cs-pages"><button class="btn tiny" data-act="cspage" data-d="-1" ${page ? '' : 'disabled'}>Previous</button><span>${page + 1} / ${pages}</span><button class="btn tiny" data-act="cspage" data-d="1" ${page < pages - 1 ? '' : 'disabled'}>Next</button></div>` : ''}
   </div>`;
@@ -886,8 +922,10 @@ function renderGame() {
     if (g.final) overlay = controls.replace('class="card ', 'class="card ov-final ');
     else if (L3.lp) {
       const lp = L3.lp;
-      const mine = lp.user === lp.o ? `${formationName(L3.off)} · ${OFF_PLAYS[L3.off].name}` : DEF_PLAYS[L3.def].name;
-      if (lp.phase === 'pre') overlay = `<div class="pill lined"><span class="pl-play">${esc(mine)}</span>
+      const offTxt = `${FORMATIONS[lp.formation]?.name ?? ''}`, defTxt = `${DEF_FORMATIONS[lp.defFormation]?.name ?? ''}`;
+      const mine = lp.user === lp.o ? `${offTxt} · ${OFF_PLAYS[L3.off].name}` : `${defTxt} · ${DEF_PLAYS[L3.def].name}`;
+      const theirs = lp.user === lp.o ? `vs ${defTxt}` : `vs ${offTxt}`;
+      if (lp.phase === 'pre') overlay = `<div class="pill lined"><span class="pl-play">${esc(mine)}<small>${esc(theirs)}</small></span>
         <button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap' : 'Start'} <kbd>Space</kbd></button>
         ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change <kbd>Esc</kbd></button>'}</div>`;
     } else if (decide) overlay = callSheetHtml(g);
@@ -980,14 +1018,14 @@ function debugHtml() {
   const slider = (k, label, unit) => {
     const [lo, hi] = CAMERA_LIMITS[k];
     const v = S.cal[S.calShot][k];
-    return `<label class="cal"><span>${label}</span><input type="range" id="cal-${k}" min="${lo}" max="${hi}" step="0.5" value="${v}"><output id="calv-${k}">${v}${unit}</output></label>`;
+    return `<label class="cal"><span>${label}</span><input type="range" id="cal-${k}" min="${lo}" max="${hi}" step="${k === 'zoom' ? 0.05 : 0.5}" value="${v}"><output id="calv-${k}">${v}${unit}</output></label>`;
   };
   return `<div class="dbg card" aria-label="Debug view">
     <h4>Debug <span class="muted" id="dbg-state">${L3.flow ?? ''}</span></h4>
     <p class="small ${issues.length ? 'bad' : 'good'}">${lp ? (issues.length ? `Formation: ${issues.length} problem${issues.length === 1 ? '' : 's'}: ${esc(issues.slice(0, 3).join('; '))}` : 'Formation check passed: 11 on 11, 7 on the line, no overlaps') : 'No formation on the field'}</p>
-    <h4>Broadcast camera</h4>
+    <h4>Camera lenses</h4>
     <div class="gm-row">${CAMERA_SHOTS.map(([k, n]) => `<button class="btn tiny${S.calShot === k ? ' on' : ''}" data-act="calshot" data-k="${k}">${n}</button>`).join('')}</div>
-    ${slider('distance', 'Distance', ' yd')}${slider('height', 'Height', ' yd')}${slider('pitch', 'Pitch', '°')}${slider('fov', 'Field of view', '°')}
+    ${slider('pitch', 'Pitch', '°')}${slider('fov', 'Field of view', '°')}${slider('zoom', 'Zoom out', '×')}
     <button class="btn tiny" data-act="calreset">Reset camera</button>
   </div>`;
 }
@@ -1152,7 +1190,8 @@ function doCall(call) {
   S.coachDown = false;
   S.csTab = null; S.csPage = 0;
   // Coach mode: you call it, the AI plays it (and snaps it after a beat).
-  if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) { startLive(off, def, { userSide: us, watch: !!S.watch, autoQB: !!S.watch, autoSnap: S.watch || g.poss !== us ? 1.6 : null }); return; }
+  const formation = g.poss === us ? formFor(off) : aiFormation(off), defFormation = g.poss === us ? aiFront(def) : frontFor(def);
+  if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) { startLive(off, def, { userSide: us, watch: !!S.watch, autoQB: !!S.watch, autoSnap: S.watch || g.poss !== us ? 1.6 : null, formation, defFormation }); return; }
   S.busy = true;
   if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
   const entry = runPlay(g, off, def);
@@ -1171,7 +1210,7 @@ function autoAdvance() {
     const off = aiOffenseCall(g), def = aiDefenseCall(g);
     if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) {
       S.coachDown = true;
-      startLive(off, def, { userSide: userSide(), watch: true, autoQB: true, autoSnap: 1.4 });
+      startLive(off, def, { userSide: userSide(), watch: true, autoQB: true, autoSnap: 1.4, formation: aiFormation(off), defFormation: aiFront(def) });
       return;
     }
     S.busy = true;
@@ -1275,7 +1314,7 @@ function showPreview() {
   const lp = createLivePlay(g, g.poss === us ? 'slant' : 'inside_run', 'base', { userSide: us, from: L3.spots ?? undefined });
   g.rng = saved;
   lp.control = null; lp.preview = true;
-  L3.preview = { key, lp, g };
+  L3.preview = { key, lp, g, mv: measureVersion };
   L3.spots = null;
   stage.setPlay(lp);
   if (first) stage.snapCamera();
@@ -1506,6 +1545,14 @@ function loop(now) {
     L3.acc += dt;
     while (L3.acc >= DT) { stepLive(pv, null); L3.acc -= DT; }
     if (L3.resetUntil && (pv.set || now > L3.resetUntil)) { L3.resetUntil = 0; render(); }
+    // Models that finished loading report their real size: line the preview up again by it
+    // (they walk the last steps over), so the spacing is by what is actually drawn.
+    if (L3.preview.mv !== measureVersion && L3.flow === 'PLAY_SELECTION' && now - (L3.preview.rebuilt ?? 0) > 1500) {
+      const spots = worldSpots(pv), mv = measureVersion;
+      L3.preview = null; L3.spots = spots;
+      showPreview();
+      if (L3.preview) { L3.preview.mv = mv; L3.preview.rebuilt = now; }
+    }
     if (g && !g.final && needsUser(g) && !S.busy && L3.flow === 'PLAY_SELECTION') L3.pclock = Math.max(0, L3.pclock - dt);
   }
   if (g && !g.final) setFlow(flowNow(now));
@@ -1602,6 +1649,7 @@ function onKey(e, down) {
       const hit = callSheet(g).groups.flatMap(([, , cs]) => cs).find((c) => c.code === code);
       if (hit) { e.preventDefault(); doCall(hit.call); return; }
       if (code === 'ArrowLeft' || code === 'ArrowRight') { e.preventDefault(); csMove(code === 'ArrowLeft' ? -1 : 1); return; }
+      if (code === 'KeyZ') { e.preventDefault(); cycleForm(g.poss === userSide()); return; }
     }
   }
   const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'Tab',
@@ -1761,6 +1809,7 @@ function onClick(e) {
     case 'cam': setCamera(el.dataset.cam); break;
     case 'mode': setMode(el.dataset.mode); break;
     case 'csfold': S.csFold = !S.csFold; render(); break;
+    case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
     case 'quality': S.quality = el.dataset.q; stage?.setQuality(S.quality); savePrefs(); render(); break;
     case 'details': S.menuOpen = false; render(); document.querySelector('.game.g3d .below')?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' }); break;
     case 'sim': {
@@ -1814,7 +1863,7 @@ function onInput(e) {
     S.cal[S.calShot][k] = Number(t.value);
     stage?.rig.setCalibration(S.cal);
     const o = document.getElementById(`calv-${k}`);
-    if (o) o.textContent = `${S.cal[S.calShot][k]}${k === 'pitch' || k === 'fov' ? '°' : ' yd'}`;
+    if (o) o.textContent = `${S.cal[S.calShot][k]}${k === 'pitch' || k === 'fov' ? '°' : '×'}`;
     savePrefs();
   }
 }

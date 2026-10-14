@@ -7,7 +7,9 @@ import { traitMod } from './traits.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
 import { OFF_PLAYS, rand, randn, chance, clamp, sigmoid, eff, rep, nm, st, fumbleCheck } from './engine.js';
 import { WEATHER } from './types.js';
-import { bodyOf, FOOT_DEPTH, FOOT_SIDE } from './body.js';
+import { bodyOf } from './body.js';
+import { OFF_FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT, NEUTRAL, alignFormation, resolveSpacing, overlapIssues, lineX, frontX, foot, isGun, formationsFor } from './formations.js';
+export { OFF_FORMATIONS as FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT, NEUTRAL, isGun };
 
 export const SIDE = 26.65;
 export const DT = 1 / 60;
@@ -50,16 +52,6 @@ const PLAY_ROUTES = {
   post: { WR1: 'post', WR2: 'post', WR3: 'curl', TE: 'drag', RB: 'check' },
   pa_deep: { WR1: 'go', WR2: 'post', WR3: 'curl', TE: 'seam', RB: 'block' },
 };
-// Formations: where the quarterback and the back line up. Every other spot comes from the
-// slot table, then line splits are spread to fit each Pokémon's body (see alignLines()).
-export const FORMATIONS = {
-  shotgun: { name: 'Shotgun', QB: [-5, 0], RB: [-5, 2.3] },
-  singleback: { name: 'Singleback', QB: null, RB: [-7, 0] }, // QB under center
-};
-export const PLAY_FORMATION = {
-  inside_run: 'singleback', outside_run: 'singleback', qb_sneak: 'singleback', pa_deep: 'singleback',
-  draw: 'shotgun', screen: 'shotgun', slant: 'shotgun', out: 'shotgun', curl: 'shotgun', te_seam: 'shotgun', post: 'shotgun',
-};
 export { ROUTES, PLAY_ROUTES };
 const DROP = { screen: -6, short: -6.5, mid: -7.5, deep: -8.5 };
 const READ_AT = { screen: 0.55, short: 0.95, mid: 1.55, deep: 2.1 };
@@ -83,7 +75,9 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
     zone: ['cover2', 'cover3', 'prevent'].includes(defCall),
     qbState: 'drop', pressure: false, thrown: null, caught: false, crossed: false, carrierTeam: 'off',
     stats: { tackler: null, cov: null, target: null, se: false, extras: [] }, readTick: 0, notes: [], tackle: null, windup: null,
-    formation: PLAY_FORMATION[offCall] ?? 'shotgun', set: true, snapQueued: false, setT: 0,
+    formation: formationsFor(offCall).includes(opts.formation) ? opts.formation : PLAY_FORMATION[offCall] ?? 'gun_spread',
+    defFormation: DEF_FORMATIONS[opts.defFormation] ? opts.defFormation : CALL_FRONT[defCall] ?? '43',
+    set: true, snapQueued: false, setT: 0,
   };
   const deepCap = lp.goalX + 9;
   const backCap = lp.ownGoalX - 9;
@@ -99,10 +93,9 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
       lp[side][s.key] = p;
     }
   }
-  alignOffense(lp);
-  alignDefense(lp);
+  alignFormation(lp);
   setupDefense(lp);
-  alignLines(lp);
+  resolveSpacing(lp);
   setupOffense(lp);
   for (const p of lp.players) p.home = { x: p.x, y: p.y };
   lp.formationIssues = validateFormation(lp);
@@ -146,12 +139,7 @@ function makePlayer(g, ti, side, slot, id, lp) {
 function setupDefense(lp) {
   const D = lp.def, call = lp.defCall;
   const cap = (x) => Math.min(x, lp.goalX + 8);
-  if (call === 'goal_line') {
-    for (const k of ['OLB', 'MLB']) if (D[k]) D[k].x = 2.5;
-    for (const k of ['CB1', 'CB2', 'CB3']) if (D[k]) D[k].x = 3.5;
-    if (D.SS) D.SS.x = 5; if (D.FS) D.FS.x = 7;
-  }
-  if (call === 'man_press') for (const k of ['CB1', 'CB2', 'CB3']) if (D[k]) D[k].x = 1.6;
+  if (call === 'man_press') for (const k of ['CB1', 'CB2', lp.defFormation === 'nickel' ? 'CB3' : null]) if (D[k]) D[k].x = frontX(D[k]) + 0.6;
   if (call === 'run_blitz' && D.MLB) D.MLB.x = 3.2;
   if (call === 'cover2') { if (D.FS) { D.FS.x = 14; D.FS.y = -12; } if (D.SS) { D.SS.x = 14; D.SS.y = 12; } }
   if (call === 'cover3') { if (D.FS) { D.FS.x = 15; D.FS.y = 0; } for (const k of ['CB1', 'CB2']) if (D[k]) D[k].x = 8; }
@@ -233,102 +221,6 @@ function setupOffense(lp) {
   lp.eligible = RECEIVERS.filter((k) => O[k] && O[k].role === 'route');
 }
 
-// ---------- formations ----------
-// Real football alignments, measured from the ball in yards. The neutral zone is the length of
-// the ball; each lineman sets his drawn body just behind his side of it, so the two lines face
-// each other across a visible gap. Linemen are spaced by their collision capsules plus a
-// split, so a Snorlax takes more of the line than a Pikachu but five linemen still span about
-// eight yards, not twenty. Seven offensive players are on the line (five linemen, the tight
-// end and the split end); the flanker and slot are a yard off it.
-export const NEUTRAL = 0.15;     // half the neutral zone
-const SPLIT = 0.4;               // gap between linemen's capsules
-const lineX = (p) => -(p.r * FOOT_DEPTH + NEUTRAL);   // offense, on the line
-const offX = (p) => lineX(p) - 1.1;                   // offense, a yard off the line
-const frontX = (p) => p.r * FOOT_DEPTH + NEUTRAL;      // defensive front
-
-function alignOffense(lp) {
-  const O = lp.off, F = FORMATIONS[lp.formation];
-  const C = O.C;
-  if (C) { C.x = lineX(C); C.y = 0; }
-  let yL = C ? -C.r : 0, yR = C ? C.r : 0;
-  for (const [l, r] of [['LG', 'RG'], ['LT', 'RT']]) {
-    if (O[l]) { O[l].y = yL - SPLIT - O[l].r; O[l].x = lineX(O[l]); yL = O[l].y - O[l].r; }
-    if (O[r]) { O[r].y = yR + SPLIT + O[r].r; O[r].x = lineX(O[r]); yR = O[r].y + O[r].r; }
-  }
-  // Tight end attached outside the right tackle.
-  if (O.TE) { O.TE.y = yR + SPLIT + 0.25 + O.TE.r; O.TE.x = lineX(O.TE); yR = O.TE.y + O.TE.r; }
-  if (O.QB) {
-    if (F.QB) { O.QB.x = F.QB[0]; O.QB.y = F.QB[1]; }
-    else { O.QB.x = (C ? C.x - C.r : -1) - O.QB.r - 0.15; O.QB.y = 0; } // under center
-  }
-  if (O.RB && F.RB) {
-    if (lp.formation === 'shotgun' && O.QB) { O.RB.x = O.QB.x; O.RB.y = O.QB.y + O.QB.r + O.RB.r + 1.0; }
-    else { O.RB.x = Math.min(F.RB[0], (O.QB?.x ?? -5) - ((O.QB?.r ?? 0.6) + O.RB.r) * FOOT_DEPTH - 2.2); O.RB.y = F.RB[1]; }
-  }
-  // Receivers: the split end on the line, the flanker and the slot off it, all outside the
-  // formation with room to release.
-  if (O.WR1) { O.WR1.x = lineX(O.WR1); O.WR1.y = Math.min(SLOT.WR1.y, yL - 6); }
-  if (O.WR3) { O.WR3.x = offX(O.WR3); O.WR3.y = Math.min(SLOT.WR3.y, yL - 3.5); }
-  if (O.WR2) { O.WR2.x = offX(O.WR2); O.WR2.y = Math.max(SLOT.WR2.y, yR + 6); }
-}
-
-// The 4-3 front lines up across from the offense: tackles shading the guards, ends outside
-// the tackles, linebackers over the box, corners over the wideouts, safeties deep.
-function alignDefense(lp) {
-  const O = lp.off, D = lp.def;
-  const front = (p, y) => { if (!p) return; p.x = frontX(p); p.y = y; };
-  front(D.DT1, O.RG ? O.RG.y - O.RG.r * 0.35 : 1.4);
-  front(D.DT2, O.LG ? O.LG.y + O.LG.r * 0.35 : -1.4);
-  const te = O.TE && O.TE.y > (O.RT?.y ?? 0) ? O.TE : O.RT;
-  front(D.LE, te ? te.y + te.r * 0.6 + (D.LE?.r ?? 0.6) * 0.6 : 5.5);
-  front(D.DE, O.LT ? O.LT.y - O.LT.r * 0.6 - (D.DE?.r ?? 0.6) * 0.6 : -5.5);
-  const over = (d, o, depth, inside = 0.6) => { if (!d || !o) return; d.y = o.y - Math.sign(o.y || 1) * inside; d.x = depth; };
-  over(D.CB1, O.WR1, SLOT.CB1.x);
-  over(D.CB2, O.WR2, SLOT.CB2.x);
-  over(D.CB3, O.WR3, SLOT.CB3.x);
-  if (D.OLB) { D.OLB.x = SLOT.OLB.x; D.OLB.y = (te?.y ?? 4) - 0.5; }
-  if (D.MLB) { D.MLB.x = SLOT.MLB.x; D.MLB.y = SLOT.MLB.y; }
-}
-
-// Nobody starts inside anybody else. Teammates are pushed apart across the field (linemen
-// keep their depth), and anyone crowding the line from the other side backs off it. Spacing
-// is by the drawn bodies (capsule plus spill) with a little air between them.
-function alignLines(lp) {
-  const ps = lp.players;
-  const lineman = (p) => ['LT', 'LG', 'C', 'RG', 'RT', 'LE', 'DE', 'DT1', 'DT2', 'TE'].includes(p.slot);
-  for (let it = 0; it < 60; it++) {
-    let moved = false;
-    for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
-      const a = ps[i], b = ps[j];
-      // Under center the quarterback's hands are on the center: that pair only needs to not touch.
-      const exchange = a.side === b.side && a.side === 'off' && (a.slot === 'C' && b.slot === 'QB' || a.slot === 'QB' && b.slot === 'C');
-      const need = exchange ? a.r + b.r + 0.1 : a.side === b.side ? (a.r + b.r) * FOOT_SIDE + 0.2 : (a.r + b.r) * FOOT_DEPTH + 0.25;
-      const dx = b.x - a.x, dy = b.y - a.y, d = len(dx, dy);
-      if (d >= need) continue;
-      moved = true;
-      if (a.side !== b.side) {
-        // Back the defender off the ball.
-        const dfd = a.side === 'def' ? a : b, o = dfd === a ? b : a;
-        dfd.x = o.x + Math.sqrt(Math.max(0, need * need - (dfd.y - o.y) ** 2)) + 0.02;
-        continue;
-      }
-      const push = (need - d) / 2 + 0.01;
-      if (lineman(a) && lineman(b) || Math.abs(dy) > Math.abs(dx) * 0.5 || d < 0.01) {
-        const s = dy === 0 ? (a.y <= 0 ? -1 : 1) : sgn(dy);
-        // The center stays over the ball; whoever crowds him moves the whole way.
-        const ka = a.slot === 'C' && a.side === 'off' ? 0 : b.slot === 'C' && b.side === 'off' ? 2 : 1;
-        a.y -= s * push * ka; b.y += s * push * (2 - ka);
-      } else {
-        const ux = dx / d, uy = dy / d;
-        a.x -= ux * push; a.y -= uy * push; b.x += ux * push; b.y += uy * push;
-      }
-    }
-    for (const p of ps) p.y = clamp(p.y, -SIDE + p.r + 0.4, SIDE - p.r - 0.4);
-    if (!moved) break;
-  }
-  for (const p of ps) if (p.side === 'def') p.x = Math.max(p.x, frontX(p));
-}
-
 // The formation check run before every snap. Returns the list of problems (empty when the
 // alignment is legal and clean): eleven a side, seven on the line with the quarterback, back
 // and receivers where they belong, both lines clearly set, no two bodies overlapping, everyone
@@ -339,7 +231,8 @@ export function validateFormation(lp) {
   if (off.length !== 11) issues.push(`offense has ${off.length} players`);
   if (def.length !== 11) issues.push(`defense has ${def.length} players`);
   const O = lp.off, D = lp.def;
-  const onLine = (p) => p.x + p.r * FOOT_DEPTH > -NEUTRAL - 0.6;
+  // On the line: his front edge at the neutral zone.
+  const onLine = (p) => Math.abs(p.x - lineX(p)) < 0.6;
   const line = off.filter(onLine);
   if (line.length !== 7) issues.push(`${line.length} offensive players on the line (need 7: ${line.map((p) => p.slot).join(' ')})`);
   for (const k of ['LT', 'LG', 'C', 'RG', 'RT']) if (O[k] && !onLine(O[k])) issues.push(`${k} is off the line`);
@@ -348,26 +241,24 @@ export function validateFormation(lp) {
   if (O.C && Math.abs(O.C.y) > 0.05) issues.push('center is not over the ball');
   if (O.QB) {
     const depth = -O.QB.x;
-    if (lp.formation === 'shotgun' ? Math.abs(depth - 5) > 0.6 : depth > 3.5 || Math.abs(O.QB.y) > 0.3) issues.push(`quarterback at ${depth.toFixed(1)} yards`);
+    const want = OFF_FORMATIONS[lp.formation]?.qb ?? 0;
+    if (want > 0 ? Math.abs(depth - want) > 0.6 || Math.abs(O.QB.y) > 0.3 : depth > 3.5 || Math.abs(O.QB.y) > 0.3) issues.push(`quarterback at ${depth.toFixed(1)} yards`);
   }
   if (O.RB && O.QB && O.RB.x > O.QB.x + 0.05) issues.push('running back is in front of the quarterback');
   if (O.RB && -O.RB.x < 4) issues.push('running back is not in the backfield');
   const wrs = ['WR1', 'WR2', 'WR3'].map((k) => O[k]).filter(Boolean);
   for (const w of wrs) if (Math.abs(w.y) < 9) issues.push(`${w.slot} is not split out`);
   for (let i = 0; i < wrs.length; i++) for (let j = i + 1; j < wrs.length; j++) if (Math.abs(wrs[i].y - wrs[j].y) < 4) issues.push(`${wrs[i].slot} and ${wrs[j].slot} are stacked`);
-  for (const k of ['LE', 'DE', 'DT1', 'DT2']) if (D[k] && D[k].x - D[k].r * FOOT_DEPTH > NEUTRAL + 1.2) issues.push(`${k} is off the line`);
+  for (const k of ['LE', 'DE', 'DT1', 'DT2']) if (D[k] && D[k].x - frontX(D[k]) > 1.2) issues.push(`${k} is off the line`);
   for (const p of lp.players) {
-    if (p.side === 'off' && p.x + p.r > -NEUTRAL + 0.01) issues.push(`${p.slot} is offside`);
+    if (p.side === 'off' && p.x + foot(p).front > -NEUTRAL + 0.01) issues.push(`${p.slot} is offside`);
     if (p.side === 'def' && p.x + 0.01 < frontX(p)) issues.push(`${p.slot} is in the neutral zone`);
     if (Math.abs(p.y) > SIDE - p.r) issues.push(`${p.slot} is out of bounds`);
     if (p.x > lp.goalX + 10 || p.x < lp.ownGoalX - 10) issues.push(`${p.slot} is behind the end line`);
     if (Math.sign(p.fx) !== (p.side === 'off' ? 1 : -1)) issues.push(`${p.slot} faces the wrong way`);
   }
-  const ps = lp.players;
-  for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
-    const a = ps[i], b = ps[j];
-    if (dist(a, b) < a.r + b.r - 1e-3) issues.push(`${a.side} ${a.slot} overlaps ${b.side} ${b.slot}`);
-  }
+  // No two drawn bodies overlap (by their measured footprints, not only their capsules).
+  issues.push(...overlapIssues(lp));
   return issues;
 }
 
@@ -446,7 +337,7 @@ export function snap(lp) {
   lp.phase = 'live';
   lp.t = 0;
   const qb = lp.off.QB, c = lp.off.C;
-  if (lp.formation === 'shotgun' && c && qb) {
+  if (isGun(lp.formation) && c && qb) {
     // The ball flies back from the center to the quarterback.
     lp.ball = { state: 'snap', holder: null, x: c.x + 0.4, y: c.y, z: 0.3, from: { x: c.x + 0.4, y: c.y }, t0: 0, T: 0.22 + dist(c, qb) * 0.02 };
   } else {

@@ -13,7 +13,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { MODEL_INDEX } from './models3d.js';
-import { bodyOf, fitScale } from './body.js';
+import { bodyOf, fitModel, setMeasured } from './body.js';
 
 export const hasModel = (id) => MODEL_INDEX[id] != null;
 
@@ -79,25 +79,45 @@ function finish(T, gltf) {
   const clips = {};
   for (const c of gltf.animations) clips[c.name] = c;
   for (const k of ['idle', 'walk', 'run']) if (clips[k]) stripRootMotion(clips[k]);
-  // Measure in the idle pose: skinned bounds follow the bones.
+  // Measure in the idle pose, from the posed vertices themselves (skinned ones follow the
+  // bones): the feet, the height of the body without the last few percent of spikes and wing
+  // tips, the core of the mass (the middle 80% of the vertices to the side and front to back)
+  // and the tips of everything. The model is centered on its core, so a long tail does not
+  // push the body off its spot.
   const probe = cloneSkinned(scene);
   if (clips.idle) { const mx = new THREE.AnimationMixer(probe); mx.clipAction(clips.idle).play(); mx.update(0.01); }
   probe.updateMatrixWorld(true);
-  const box = new THREE.Box3();
+  const xs = [], ys = [], zs = [];
+  let total = 0;
+  probe.traverse((o) => { if (o.isMesh) total += o.geometry.attributes.position.count; });
+  const stride = Math.max(1, Math.floor(total / 9000));
+  const v = new THREE.Vector3();
   probe.traverse((o) => {
     if (!o.isMesh) return;
-    if (o.isSkinnedMesh) { o.skeleton.update(); o.computeBoundingBox(); }
-    else if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
-    const b = (o.isSkinnedMesh ? o.boundingBox : o.geometry.boundingBox).clone().applyMatrix4(o.matrixWorld);
-    box.union(b);
+    if (o.isSkinnedMesh) o.skeleton.update();
+    const pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i += stride) {
+      v.fromBufferAttribute(pos, i);
+      if (o.isSkinnedMesh) o.applyBoneTransform(i, v);
+      v.applyMatrix4(o.matrixWorld);
+      if (!Number.isFinite(v.x + v.y + v.z)) continue;
+      xs.push(v.x); ys.push(v.y); zs.push(v.z);
+    }
   });
-  const size = box.getSize(new THREE.Vector3());
-  // Species height, but never wider or longer than the collision capsule (see body.js).
-  const s = fitScale(bodyOf(T.id), size.x, size.y, size.z);
+  const q = (a, f) => a[Math.min(a.length - 1, Math.max(0, Math.floor(f * (a.length - 1))))];
+  for (const a of [xs, ys, zs]) a.sort((m, n) => m - n);
+  const yMin = ys[0], yTop = q(ys, 0.97);
+  const cx = (q(xs, 0.1) + q(xs, 0.9)) / 2, cz = (q(zs, 0.1) + q(zs, 0.9)) / 2;
+  const core = { side: Math.max(cx - q(xs, 0.1), q(xs, 0.9) - cx), front: q(zs, 0.9) - cz, back: cz - q(zs, 0.1) };
+  const tips = { side: Math.max(cx - xs[0], xs[xs.length - 1] - cx), front: zs[zs.length - 1] - cz, back: cz - zs[0] };
+  const B = bodyOf(T.id);
+  const s = fitModel(B, yTop - yMin, core, tips);
+  // The footprint formations space this Pokémon by: what is actually drawn.
+  setMeasured(T.id, tips.side * s, tips.front * s, tips.back * s);
   Object.assign(T, {
     ready: true, scene, clips, scale: s,
-    offset: new THREE.Vector3(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2),
-    height: size.y * s, width: size.x * s, depth: size.z * s,
+    offset: new THREE.Vector3(-cx, -yMin, -cz),
+    height: (yTop - yMin) * s, fullHeight: (ys[ys.length - 1] - yMin) * s, width: tips.side * 2 * s, depth: (tips.front + tips.back) * s,
   });
 }
 

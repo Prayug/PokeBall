@@ -7,15 +7,16 @@ import { OFF_PLAYS } from './engine.js';
 export const ART_COLORS = ['#ffd23f', '#4fc3f7', '#ff7a59', '#c792ff', '#7fdc93'];
 const cache = new Map();
 
-export function formationName(call) {
-  const f = PLAY_FORMATION[call];
+export function formationName(call, form = null) {
+  const f = form && FORMATIONS[form] ? form : PLAY_FORMATION[call];
   return f ? FORMATIONS[f].name : OFF_PLAYS[call]?.kind === 'punt' ? 'Punt' : OFF_PLAYS[call]?.kind === 'fg' ? 'Field goal' : '';
 }
 
 // Diagram for a call. side: 'off' draws the offense's assignments, 'def' the defense's.
-export function diagram(g, call, side) {
+// form: the formation (offense) or front (defense) it will be run from, if not the default.
+export function diagram(g, call, side, form = null) {
   const lk = (ti) => Object.values(g.teams[ti].lineup).join(',');
-  const key = `${side}:${call}:${g.poss}:${lk(0)}|${lk(1)}`;
+  const key = `${side}:${call}:${form}:${g.poss}:${lk(0)}|${lk(1)}`;
   let svg = cache.get(key);
   if (svg) return svg;
   if (side === 'off' && !['run', 'pass'].includes(OFF_PLAYS[call]?.kind)) { svg = kickArt(OFF_PLAYS[call]?.kind); cache.set(key, svg); return svg; }
@@ -24,7 +25,7 @@ export function diagram(g, call, side) {
   const spot = g.spot;
   g.spot = 50;
   let lp;
-  try { lp = side === 'off' ? createLivePlay(g, call, 'base', {}) : createLivePlay(g, 'slant', call, {}); } finally { g.rng = saved; g.spot = spot; }
+  try { lp = side === 'off' ? createLivePlay(g, call, 'base', { formation: form }) : createLivePlay(g, 'slant', call, { defFormation: form }); } finally { g.rng = saved; g.spot = spot; }
   // Play frame to SVG: downfield is up, the field's width across.
   const X = (p) => (p.y).toFixed(2), Y = (p) => (-p.x).toFixed(2);
   const parts = [];
