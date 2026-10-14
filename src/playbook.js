@@ -29,7 +29,7 @@ export function diagram(g, call, side, form = null) {
   // Play frame to SVG: downfield is up, the field's width across.
   const X = (p) => (p.y).toFixed(2), Y = (p) => (-p.x).toFixed(2);
   const parts = [];
-  parts.push('<line x1="-27" y1="0" x2="27" y2="0" class="los"/>');
+  parts.push('<line x1="-23" y1="0" x2="23" y2="0" class="los"/>');
   const arrowAt = (a, b, color, size = 1.5) => {
     const dx = b.y - a.y, dy = -(b.x - a.x), l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l;
     const bx = b.y, by = -b.x;
@@ -54,12 +54,12 @@ export function diagram(g, call, side, form = null) {
         if (!p) return;
         if (!p.route) { parts.push(path([p.home, { x: p.home.x - 1.6, y: p.home.y * 0.85 }], '#9fb3c8', 0.55, 'bar')); return; }
         const pts = [p.home, ...p.route.filter((w) => w.x != null)];
-        parts.push(path(pts, ART_COLORS[i], 0.75, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow'));
+        parts.push(path(pts, ART_COLORS[i], 1, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow'));
       });
       if (O.QB) parts.push(path([O.QB.home, { x: lp.dropX, y: O.QB.home.y }], '#ffffff', 0.45, '', '0.8 0.6'));
     } else {
       const c = lp.carrier ?? O.RB, hole = lp.holeY ?? 0;
-      if (c) parts.push(path([c.home, { x: -3.5, y: hole * 0.35 }, { x: 1.5, y: hole }, { x: 7, y: hole * 1.05 }], '#ffd23f', 1.1, 'arrow'));
+      if (c) parts.push(path([c.home, { x: -3.5, y: hole * 0.35 }, { x: 1.5, y: hole }, { x: 7, y: hole * 1.05 }], '#ffd23f', 1.3, 'arrow'));
       for (const k of ['LT', 'LG', 'C', 'RG', 'RT', 'TE', 'WR1', 'WR2', 'WR3']) {
         const b = O[k];
         if (!b?.assign) continue;
@@ -86,7 +86,7 @@ export function diagram(g, call, side, form = null) {
     const x = p.home.y, y = -p.home.x, s = side === 'def' ? 0.95 : 0.7;
     parts.push(`<path d="M${(x - s).toFixed(2)} ${(y - s).toFixed(2)}L${(x + s).toFixed(2)} ${(y + s).toFixed(2)}M${(x + s).toFixed(2)} ${(y - s).toFixed(2)}L${(x - s).toFixed(2)} ${(y + s).toFixed(2)}" class="x ${side === 'def' ? 'on' : ''}"/>`);
   }
-  svg = `<svg class="pdiag" viewBox="-27.5 -27 55 39" aria-hidden="true">${parts.join('')}</svg>`;
+  svg = `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true">${parts.join('')}</svg>`;
   if (cache.size > 200) cache.clear();
   cache.set(key, svg);
   return svg;
@@ -94,7 +94,7 @@ export function diagram(g, call, side, form = null) {
 
 function kickArt(kind) {
   const arc = kind === 'punt' ? 'M0 9 Q0 -40 0 -24' : 'M0 9 Q0 -30 0 -25';
-  return `<svg class="pdiag" viewBox="-27.5 -27 55 39" aria-hidden="true"><line x1="-27" y1="0" x2="27" y2="0" class="los"/>
+  return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>
     ${kind === 'fg' ? '<path d="M-3.1 -24 L-3.1 -18 M3.1 -24 L3.1 -18 M-3.1 -21 L3.1 -21 M0 -21 L0 -17" stroke="#ffd23f" stroke-width="0.7" fill="none"/>' : ''}
     <path d="${arc}" fill="none" stroke="#ffffff" stroke-width="0.6" stroke-dasharray="1 0.8"/><circle cx="0" cy="9" r="1.05" class="o on"/></svg>`;
 }

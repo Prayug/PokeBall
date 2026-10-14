@@ -81,7 +81,7 @@ function loadPrefs() {
       S.coach = !!p.coach; S.watch = p.watch ?? S.coach; Object.assign(S.setup, p.setup ?? {});
       // Version 2 cameras: the old behind-the-offense "broadcast" is now "gameplay", the old
       // sideline shot is "broadcast" and behind-the-QB is "player focus".
-      const cam = p.camV === 2 ? p.cam : p.cam === 'broadcast' ? 'gameplay' : CAMERA_ALIASES[p.cam] ?? p.cam;
+      const cam = p.camV >= 2 ? p.cam : p.cam === 'broadcast' ? 'gameplay' : CAMERA_ALIASES[p.cam] ?? p.cam;
       if (CAMERA_MODES.some(([k]) => k === cam)) S.cam = cam;
       if (p.weatherFx != null) S.weatherFx = !!p.weatherFx;
       if (['auto', 'high', 'low'].includes(p.quality)) S.quality = p.quality;
@@ -89,12 +89,13 @@ function loadPrefs() {
       if (p.pips != null) S.pips = !!p.pips;
       if (p.sound != null) S.sound = !!p.sound;
       if (p.seenHelp) S.seenHelp = true;
-      if (p.camShots && p.camV === 2) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
+      // Lens settings saved before version 3 belong to the older framing and are dropped.
+      if (p.camShots && p.camV === 3) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
     }
   } catch { /* ignore */ }
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 2, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 3, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, camShots: S.cal })); } catch { /* ignore */ }
 }
 
 // ---------- small view helpers ----------
@@ -775,20 +776,25 @@ function formFor(call) {
   return S.formPick && ok.includes(S.formPick) ? S.formPick : PLAY_FORMATION[call];
 }
 function frontFor(call) { return S.frontPick ?? CALL_FRONT[call] ?? '43'; }
+// The AI's pick is a fixed function of the game and the play number (not Math.random), so a
+// game started from the same seed lines up the same way every time.
+function aiRoll(call) {
+  const g = S.game;
+  let h = ((g?.seed ?? 1) ^ Math.imul((g?.playNo ?? 0) + 1, 0x9E3779B1)) >>> 0;
+  for (let i = 0; i < call.length; i++) h = Math.imul(h ^ call.charCodeAt(i), 0x85EBCA6B) >>> 0;
+  h ^= h >>> 15; h = Math.imul(h, 0xC2B2AE35) >>> 0; h ^= h >>> 13;
+  return (h >>> 0) / 2 ** 32;
+}
 function aiFormation(call) {
   const ok = formationsFor(call);
   if (!ok.length) return null;
-  return Math.random() < 0.6 ? PLAY_FORMATION[call] : ok[Math.floor(Math.random() * ok.length)];
+  const r = aiRoll(call);
+  return r < 0.6 ? PLAY_FORMATION[call] : ok[Math.floor(((r - 0.6) / 0.4) * ok.length) % ok.length];
 }
 function aiFront(call) {
   if (call === 'goal_line') return 'goal';
-  return Math.random() < 0.7 ? CALL_FRONT[call] : ['43', 'nickel'][Math.floor(Math.random() * 2)];
-}
-function formChips(onOff) {
-  const opts = onOff ? Object.entries(FORMATIONS).map(([k, f]) => [k, f.short]) : Object.entries(DEF_FORMATIONS).map(([k, f]) => [k, f.short]);
-  const cur = onOff ? S.formPick : S.frontPick;
-  const chip = (k, label) => `<button class="cs-form ${cur === k ? 'on' : ''}" data-act="formpick" data-k="${k ?? ''}" aria-pressed="${cur === k}">${label}</button>`;
-  return `<div class="cs-forms" role="group" aria-label="${onOff ? 'Formation' : 'Front'}"><span>${onOff ? 'Formation' : 'Front'} <kbd>Z</kbd></span>${chip(null, 'Play default')}${opts.map(([k, l]) => chip(k, l)).join('')}</div>`;
+  const r = aiRoll(call);
+  return r < 0.7 ? CALL_FRONT[call] : ['43', 'nickel'][Math.floor(((r - 0.7) / 0.3) * 2) % 2];
 }
 function cycleForm(onOff) {
   const keys = [null, ...Object.keys(onOff ? FORMATIONS : DEF_FORMATIONS)];
@@ -804,7 +810,6 @@ function cycleForm(onOff) {
 // the panel opens on the category of the call that fits the down.
 const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'draw', 'qb_sneak']], ['short', 'Short pass', ['screen', 'slant', 'out', 'curl']],
   ['deep', 'Deep pass', ['te_seam', 'post', 'pa_deep']], ['kick', 'Special teams', ['punt', 'fg']]];
-const CS_PER_PAGE = 6;
 function csTabs(g) {
   const { onOff, groups, fit } = callSheet(g);
   const byCall = new Map(groups.flatMap(([fam, , cs]) => cs.map((c) => [c.call, { ...c, fam }])));
@@ -821,32 +826,37 @@ function callSheetHtml(g) {
   const { onOff, tabs, fit, cur } = csTabs(g);
   const fg = fgDistance(g);
   const side = onOff ? 'off' : 'def';
-  const tab = tabs.find(([k]) => k === cur);
-  const page = Math.min(S.csPage ?? 0, Math.max(0, Math.ceil(tab[2].length / CS_PER_PAGE) - 1));
-  const shown = tab[2].slice(page * CS_PER_PAGE, page * CS_PER_PAGE + CS_PER_PAGE);
-  const pages = Math.ceil(tab[2].length / CS_PER_PAGE);
   const card = ({ call, label, fam }) => {
     const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
     const kind = onOff ? p.kind : fam;
     const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
     const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick' }[kind] : { front: 'Front', blitz: 'Blitz', cover: 'Coverage' }[kind];
-    const form = onOff ? formationName(call, formFor(call)) : DEF_FORMATIONS[frontFor(call)]?.name ?? '';
-    return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
-      <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call))}</span>
-      <span class="pc-top"><em class="pc-kind">${tag}</em>${form ? `<span class="pc-form">${esc(form)}</span>` : ''}${label ? `<kbd>${label}</kbd>` : ''}</span>
-      <span class="pname">${p.name}</span><span class="pblurb">${esc(extra)}</span>
-      ${call === fit ? '<em class="fittag">Fits the down</em>' : ''}</button>`;
+    const form = onOff ? formationName(call, formFor(call)) : DEF_FORMATIONS[frontFor(call)]?.short ?? '';
+    return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" title="${esc(extra)}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
+      <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call))}${label ? `<kbd>${label}</kbd>` : ''}${call === fit ? '<em class="fittag">Fits</em>' : ''}</span>
+      <span class="pname">${p.name}</span>
+      <span class="pc-top"><em class="pc-kind">${tag}</em>${form ? `<span class="pc-form">${esc(form)}</span>` : ''}</span>
+      <span class="pblurb">${esc(extra)}</span></button>`;
   };
-  const who = onOff ? 'Call your offense' : `${esc(g.teams[g.poss].abbr)} ball · call your defense`;
-  return `<div class="callsheet${S.csFold ? ' folded' : ''}" role="dialog" aria-label="Play call">
-    <div class="cs-head"><b>${downText(g)}</b><span>${who}</span>
-      <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
-      <span class="cs-keys"><kbd>←</kbd><kbd>→</kbd> category · number keys call · <kbd>H</kbd> hide</span>
-      <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>
-    ${formChips(onOff)}
-    <div class="cs-cards">${shown.map(card).join('')}</div>
-    ${pages > 1 ? `<div class="cs-pages"><button class="btn tiny" data-act="cspage" data-d="-1" ${page ? '' : 'disabled'}>Previous</button><span>${page + 1} / ${pages}</span><button class="btn tiny" data-act="cspage" data-d="1" ${page < pages - 1 ? '' : 'disabled'}>Next</button></div>` : ''}
-  </div>`;
+  const who = onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
+  const head = `<div class="cs-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>
+      <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur && !S.csAll ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
+      ${formSelect(onOff)}
+      <button class="btn tiny cs-all" data-act="csall" aria-pressed="${!!S.csAll}">${S.csAll ? 'Fewer' : 'All plays'} <kbd>X</kbd></button>
+      <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>`;
+  // The strip: the plays of one category in a row, each a real play diagram with its name.
+  // The expanded playbook (X): every category at once.
+  const body = S.csAll
+    ? `<div class="cs-book">${tabs.map(([k, label, cs]) => `<section><h4>${label}</h4><div class="cs-cards">${cs.map(card).join('')}</div></section>`).join('')}</div>`
+    : `<div class="cs-cards">${tabs.find(([k]) => k === cur)[2].map(card).join('')}</div>`;
+  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${body}</div>`;
+}
+// The formation (offense) or front (defense) for the call, as one compact control.
+function formSelect(onOff) {
+  const opts = onOff ? Object.entries(FORMATIONS).map(([k, f]) => [k, f.short]) : Object.entries(DEF_FORMATIONS).map(([k, f]) => [k, f.short]);
+  const cur = (onOff ? S.formPick : S.frontPick) ?? '';
+  return `<label class="cs-formsel"><span>${onOff ? 'Formation' : 'Front'} <kbd>Z</kbd></span><select id="cs-form" aria-label="${onOff ? 'Formation' : 'Front'}">
+    <option value="" ${cur === '' ? 'selected' : ''}>Play default</option>${opts.map(([k, l]) => `<option value="${k}" ${cur === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
 }
 function csMove(d) {
   const g = S.game;
@@ -1309,7 +1319,7 @@ function fitStage() {
 // Keep the line of scrimmage clear of the call sheet: the view shifts up by part of it.
 function fitDock() {
   const sheet = document.querySelector('.game.g3d .callsheet:not(.folded)');
-  stage?.setInset(sheet ? sheet.offsetHeight * 0.55 : 0);
+  stage?.setInset(sheet ? sheet.offsetHeight + 10 : 0);
 }
 
 // Between plays, both teams get up and jog from where the last play ended to the new spot.
@@ -1356,6 +1366,9 @@ function doSnap() {
   const lp = L3.lp;
   if (!lp || lp.phase !== 'pre') return;
   L3.rec?.log.push({ snap: true, control: lp.control ? [lp.control.side, lp.control.slot] : null });
+  // The play as it stands at the snap. Lining up depends on the measured model footprints, which
+  // change as models finish loading, so the replay starts from this copy rather than lining up again.
+  if (L3.rec) try { L3.rec.atSnap = structuredClone(lp); } catch { L3.rec.atSnap = null; }
   snap(lp);
   L3.autoSnap = null;
   render();
@@ -1631,12 +1644,17 @@ function replayReady() { return !!(stage && L3.rec?.done && !L3.lp && !L3.replay
 function startReplay() {
   if (!replayReady()) return;
   const r = L3.rec;
-  const lp = createLivePlay(structuredClone(r.g), r.off, r.def, r.opts);
-  lp.preview = true;
-  // Walk to the line instantly; the replay starts at the snap.
   let i = 0;
-  for (; i < r.log.length && !r.log[i]?.snap; i++) stepLive(lp, null);
+  while (i < r.log.length && !r.log[i]?.snap) i++;
   const m = r.log[i++];
+  let lp;
+  if (r.atSnap) lp = structuredClone(r.atSnap);
+  else {
+    // Walk to the line instantly; the replay starts at the snap.
+    lp = createLivePlay(structuredClone(r.g), r.off, r.def, r.opts);
+    for (let k = 0; k < i - 1; k++) stepLive(lp, null);
+  }
+  lp.preview = true;
   lp.control = m?.control ? lp[m.control[0]]?.[m.control[1]] ?? null : null;
   snap(lp);
   L3.replay = { lp, i, acc: 0 };
@@ -1730,6 +1748,7 @@ function onKey(e, down) {
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
     if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; render(); return; }
+    if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
     if (code === 'Escape') {
       if (S.menuOpen) { S.menuOpen = false; render(); return; }
       if (L3.paused || L3.lp?.phase === 'live') { e.preventDefault(); togglePause(); return; }
@@ -1900,8 +1919,7 @@ function onClick(e) {
     }
     case 'finishgame': finishLeagueGame(); break;
     case 'call': doCall(el.dataset.call); break;
-    case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; render(); break;
-    case 'cspage': S.csPage = Math.max(0, (S.csPage ?? 0) + Number(el.dataset.d)); render(); break;
+    case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; S.csAll = false; render(); break;
     case 'calshot': S.calShot = el.dataset.k; render(); break;
     case 'calreset': S.cal = cameraDefaults(); stage?.rig.setCalibration(S.cal); savePrefs(); render(); break;
     case 'snap': doSnap(); break;
@@ -1914,6 +1932,7 @@ function onClick(e) {
     case 'replay': startReplay(); break;
     case 'mode': setMode(el.dataset.mode); break;
     case 'csfold': S.csFold = !S.csFold; render(); break;
+    case 'csall': S.csAll = !S.csAll; S.csFold = false; render(); break;
     case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
     case 'quality': S.quality = el.dataset.q; stage?.setQuality(S.quality); savePrefs(); render(); break;
     case 'details': S.menuOpen = false; render(); document.querySelector('.game.g3d .below')?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' }); break;
@@ -1978,6 +1997,7 @@ function onChange(e) {
   if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
+  if (t.id === 'cs-form') { const v = t.value || null; if (S.game?.poss === userSide()) S.formPick = v; else S.frontPick = v; t.blur(); render(); }
   if (t.id === 'g-sound') { S.sound = t.checked; setSound(S.sound); savePrefs(); }
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
   if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }

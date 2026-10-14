@@ -13,10 +13,28 @@
 import { bodyOf } from './body.js';
 
 export const SIDE = 26.65;
-export const NEUTRAL = 0.2;     // half the neutral zone (the ball is about 0.3 yards long)
-export const STANDOFF = 0.3;    // the defensive front sets back a touch further
-const SPLIT = 0.3;              // air between linemen's bodies
-const AIR = 0.25;               // the least air between any two bodies before the snap
+// The lines set a little off the ball on both sides, so from behind the quarterback the two
+// fronts read as two rows with turf between them, not one pile (a real neutral zone is the
+// ball's length, but real linemen are not drawn from a camera above and behind them).
+export const NEUTRAL = 0.45;    // the offense's front edge behind the ball
+export const STANDOFF = 0.55;   // the defense's front edge beyond the far end of the ball
+const SPLIT = 0.5;              // air between linemen's bodies (about a two-foot split)
+const AIR = 0.3;                // the least air between any two bodies before the snap
+
+// Line spots have a set width: a lineman whose drawn body is wider than his spot (wings,
+// a wide shell, a long tail across) is drawn smaller there, down to LINE_MIN_FIT of his size,
+// so the five offensive linemen and the front four read as separate bodies. Everyone else
+// keeps his full size. Scaling is uniform, so proportions never change.
+export const LINE_SLOTS = new Set(['LT', 'LG', 'C', 'RG', 'RT', 'LE', 'DE', 'DT1', 'DT2']);
+const LINE_HALF = 0.8, LINE_DEPTH = 1.0, LINE_MIN_FIT = 0.7;
+export function slotFit(id, slot) {
+  // The tight end sets on the line or next to it too, with a little more room.
+  const wide = slot === 'TE' ? 1.15 : LINE_SLOTS.has(slot) ? 1 : 0;
+  if (!wide) return 1;
+  const f = bodyOf(id).foot;
+  const k = Math.min(1, (LINE_HALF * wide) / f.side, (LINE_DEPTH * wide) / Math.max(f.front, f.back));
+  return Math.max(LINE_MIN_FIT, k);
+}
 
 // ---------- offense ----------
 // wr: [y, on the line] per receiver, y as if the ball were in the middle of the field.
@@ -65,7 +83,10 @@ export function positionName(lp, p) {
 // ---------- footprints ----------
 // The drawn body's box on the turf, facing downfield for the offense and back up it for the
 // defense: x from -back to +front along the facing, y ±side.
-export function foot(p) { return bodyOf(p.id).foot; }
+export function foot(p) {
+  const f = bodyOf(p.id).foot, k = p.fit ?? 1;
+  return k === 1 ? f : { side: f.side * k, front: f.front * k, back: f.back * k };
+}
 export function box(p, x = p.x, y = p.y) {
   const f = foot(p), off = p.side === 'off';
   return { x0: x - (off ? f.back : f.front), x1: x + (off ? f.front : f.back), y0: y - f.side, y1: y + f.side };
@@ -86,6 +107,7 @@ export const frontX = (p) => foot(p).front + NEUTRAL + STANDOFF;
 
 // ---------- alignment ----------
 export function alignFormation(lp) {
+  for (const p of lp.players) p.fit = slotFit(p.id, p.slot);
   alignOffense(lp);
   alignDefense(lp);
 }
@@ -179,7 +201,7 @@ function alignDefense(lp) {
   over(D.CB1, O.WR1 ?? wide(-1)[0], 6.5);
   over(D.CB2, O.WR2 ?? wide(1)[0], 6.5);
   // Linebackers: over the box at four and a half yards (two in the goal line).
-  const lbX = form === 'goal' ? 2.4 : 4.6;
+  const lbX = form === 'goal' ? 2.8 : 5;
   const sam = D.OLB, mike = D.MLB, will = D.CB3;
   if (form === 'nickel') {
     at(sam, lbX, s * 2.2);

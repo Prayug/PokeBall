@@ -147,7 +147,7 @@ const S = [
     check: () => [] },
   { name: 'sack', off: ['post', 'pa_deep', 'curl'], def: ['pass_blitz', 'run_blitz'], ok: ({ r }) => r.kind === 'sack',
     check: ({ r }) => (r.yards >= 0 ? [`sack for ${r.yards}`] : []) },
-  { name: 'open-field tackle', off: ['slant', 'inside_run', 'out', 'screen'], ok: ({ lp }) => lp.end.how === 'tackle' && lp.spotX > 6,
+  { name: 'open-field tackle', off: ['slant', 'inside_run', 'out', 'screen'], ok: ({ lp, r }) => lp.end.how === 'tackle' && !r.turnover && lp.spotX > 6,
     check: ({ lp, r }) => (Math.abs(r.yards - Math.round(lp.spotX)) > 1 ? [`gain ${r.yards} does not match the spot ${lp.spotX.toFixed(1)}`] : []) },
   { name: 'touchdown', off: ['slant', 'inside_run', 'te_seam'], setup: { spot: 93 }, ok: ({ lp }) => lp.end.how === 'td',
     check: () => [] },

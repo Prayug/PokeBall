@@ -26,6 +26,7 @@ export class Animator {
     this.out = pose();
     this.tmp = pose();
     this.ov = {}; // overlay weights
+    this.seed = seed;
     this.gait = seed * 10;
     this.t = seed * 30;
     this.fallK = 0;
@@ -54,6 +55,7 @@ export class Animator {
     this.t += dt;
     const t = this.t;
     const H = s.height;
+    this.stance = s.mode === 'pre' && s.set ? s.stance : null;
     const sf = s.top > 0 ? clamp(s.speed / s.top, 0, 1.2) : 0;
     this.sprK += ((s.sprint ? 1 : 0) - this.sprK) * (1 - Math.exp(-dt * 6));
     const spr = this.sprK;
@@ -271,10 +273,24 @@ export class Animator {
       const H = this.H ?? 2, sf = Math.min(1, this.sf ?? 0), ph = this.gait, hs = Math.abs(Math.sin(ph));
       const hop = m * hs * H * (0.05 + 0.06 * sf + 0.04 * this.sprK) + gal * hs * H * 0.05;
       const pitch = o[PITCH] * k + (f.rig ? 0 : clamp(this.fb.lean - o[PITCH] * 0.3, -0.2, 0.35) * (1 - hard)) + m * Math.sin(ph * 2) * 0.08 + gal * Math.sin(ph * 2) * 0.07;
-      f.pivot.rotation.set(pitch, (f.rig ? 0 : this.fb.twist * 0.8) + sl * Math.sin(ph) * 0.32, o[ROLL] * k + m * Math.sin(ph) * 0.1 + sl * Math.sin(ph + 0.8) * 0.06, 'XZY');
+      // Alive before the snap, without leaving the spot: a slow shift of weight, a look
+      // around (the quarterback reads the defense left and right), and now and then a bounce
+      // on the toes for receivers, backs and defensive backs. Linemen stay set and still.
+      const set = this.stance, live = set ? this.w.stance * (1 - hard) * (1 - run) : 0;
+      let lookY = 0, swayR = 0, toes = 0;
+      if (live > 0.01) {
+        const z = this.seed * 40, tt = this.t;
+        swayR = Math.sin(tt * 0.8 + z) * (set === 'line' ? 0.008 : 0.022) * live;
+        lookY = (set === 'qb' || set === 'qbUnder' ? Math.sin(tt * 0.55 + z) * 0.2 : set === 'line' ? 0 : Math.sin(tt * 0.37 + z) * 0.06) * live;
+        if (set === 'skill' || set === 'db' || set === 'back') {
+          const u = (tt * 0.23 + this.seed) % 1;
+          if (u < 0.1) toes = Math.abs(Math.sin((u / 0.1) * Math.PI * 3)) * live;
+        }
+      }
+      f.pivot.rotation.set(pitch, (f.rig ? 0 : this.fb.twist * 0.8) + sl * Math.sin(ph) * 0.32 + lookY, o[ROLL] * k + m * Math.sin(ph) * 0.1 + sl * Math.sin(ph + 0.8) * 0.06 + swayR, 'XZY');
       // A crouch lowers the hips, so the feet stay on the turf.
       const c = this.fb.crouch, drop = f.rig ? (f.hipH ?? 0) * (1 - 0.5 * (Math.cos(0.55 * c) + Math.cos(0.3 * c))) : 0;
-      f.pivot.position.y = Math.max(0, o[LIFT]) - drop + hop;
+      f.pivot.position.y = Math.max(0, o[LIFT]) - drop + hop + toes * H * 0.025;
       // Breathing while standing, squash and stretch while bounding.
       const still = this.w.idle + this.w.stance;
       const sy = 1 + Math.sin(this.t * 2.3) * 0.018 * still * (1 - hard) + m * (hs - 0.55) * 0.12;

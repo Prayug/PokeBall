@@ -532,6 +532,9 @@ export class Stage {
         if (a.dustT <= 0) { a.dustT = 0.07; this.dust(a.pos, p.vx * this.dir, p.vy * this.dir); }
       }
       a.root.position.copy(a.pos);
+      // A lineman too wide for his spot is drawn smaller there (formations.js slotFit).
+      const fit = p.fit ?? 1;
+      if (a.root.scale.x !== fit) a.root.scale.setScalar(fit);
       a.root.rotation.y = a.yaw + (a.fig ? a.anim.yawOffset : 0);
       if (a.ph) { a.ph.position.y = s.hover ? 0.4 : 0; }
       // Flash on contact: a quick white glow.
@@ -539,7 +542,7 @@ export class Stage {
       if (a.fig && !a.fig.model) { const m = a.fig.mesh.material; m.emissive.setScalar(a.flash * 0.6); }
       // Team pip over the head, contact shadow on the turf, position tag in debug view.
       const lift = a.fig ? a.anim.lift : 0;
-      const top = (a.fig?.template.height ?? a.body.height) + Math.max(0, lift);
+      const top = (a.fig?.template.height ?? a.body.height) * fit + Math.max(0, lift);
       a.ring.position.set(a.pos.x, top + 0.45, a.pos.z);
       const ps = clampN(this.camera.position.distanceTo(a.ring.position) * 0.011, 0.26, 0.6);
       a.ring.scale.set(ps, ps, 1);
@@ -571,7 +574,9 @@ export class Stage {
     // Camera: a wider lens while the player you control sprints.
     const kickWant = lp.phase === 'live' && lp.control?.sprinting ? 1 : 0;
     this.rig.kick = (this.rig.kick ?? 0) + (kickWant - (this.rig.kick ?? 0)) * (1 - Math.exp(-dt * 4));
-    this.rig.update(dt, this.framing(lp), this.camera.aspect, obstacles, this.snapNext || reduceMotion);
+    const fr = this.framing(lp);
+    fr.inset = Math.min(0.45, this.inset / Math.max(1, this.el.clientHeight));
+    this.rig.update(dt, fr, this.camera.aspect, obstacles, this.snapNext || reduceMotion);
     this.snapNext = false;
     this.applyInset(reduceMotion ? 1 : 1 - Math.exp(-dt * 6));
     this.stadium.follow(this.rig.look.x, this.rig.look.z * 0.5);
@@ -796,7 +801,7 @@ export class Stage {
     const qbA = lp.phase === 'pre' ? this.actorOf(lp.off.QB) : null;
     this.qbMark.visible = !!qbA?.fig && sel !== qbA;
     if (this.qbMark.visible) {
-      this.qbMark.position.set(qbA.pos.x, top(qbA) + 0.55, qbA.pos.z);
+      this.qbMark.position.set(qbA.pos.x, top(qbA) + 0.3, qbA.pos.z);
       const s = clampN(this.camera.position.distanceTo(this.qbMark.position) * 0.022, 0.5, 1.1);
       this.qbMark.scale.set(s * 1.5, s, 1);
     }
@@ -867,6 +872,7 @@ export class Stage {
     const set = (st) => { if (f.state !== st) { f.state = st; f.since = lp.t; } this.rig.shot = st; };
     f.fwd = this.dir;
     f.pts.length = 0;
+    f.nBox = 0;
     let np = 0;
     const pt = (x, y, z) => { const v = f.pool[np] ?? (f.pool[np] = new THREE.Vector3()); np++; v.set(x, y, z); f.pts.push(v); return v; };
     // A player as two points: his feet and the top of his head, where he is drawn.
@@ -875,7 +881,7 @@ export class Stage {
       if (!a) return;
       let x = a.pos.x;
       if (clampX != null) x = this.dir > 0 ? Math.min(x, clampX) : Math.max(x, clampX);
-      const h = (a.fig?.template.height ?? a.body.height) + 0.3;
+      const h = (a.fig?.template.height ?? a.body.height) * (p.fit ?? 1) + 0.3;
       pt(x, 0, a.pos.z); pt(x, h, a.pos.z);
     };
     const near = (c, R, clampX = null) => { for (const p of lp.players) if (Math.hypot(p.x - c.x, p.y - c.y) < R) body(p, clampX); };
@@ -896,9 +902,15 @@ export class Stage {
     const caught = lp.caught && lp.catchAt != null && lp.t - lp.catchAt < 0.7;
     const los = this.world(0, 0);
     if (f.pre) {
-      // Both formations: everyone, with the deep safeties counted at most a dozen yards off
-      // the ball (they sit at the top of the frame, not decide its size).
-      for (const p of lp.players) body(p, p.side === 'def' ? los.x + this.dir * 11 : null);
+      // The box first: both lines, the quarterback, the backs, the linebackers and any
+      // receiver or defender within a dozen yards of the ball across the field. The gameplay
+      // and broadcast cameras frame these, so the Pokémon fill the screen; wide receivers
+      // further out may sit at the edges. Then everyone (deep safeties counted at most a dozen
+      // yards off the ball) for the tactical camera.
+      const inBox = (p) => Math.abs(p.y) < 12.5 && (p.side === 'off' || p.x < 7.5);
+      for (const p of lp.players) if (inBox(p)) body(p, p.side === 'def' ? los.x + this.dir * 7.5 : null);
+      f.nBox = f.pts.length;
+      for (const p of lp.players) if (!inBox(p)) body(p, p.side === 'def' ? los.x + this.dir * 11 : null);
       this.world(-2, 0, 0, f.focus);
       f.shot = 'pre';
       set('PRE_SNAP');
@@ -1023,12 +1035,12 @@ export class Stage {
   setWeatherFx(on) { this.weatherFx = on; if (this.lp) this.stadium.setWeather(this.lp.g.weather, on); }
   setQuality(q) { this.quality = q; this.applyRatio(q === 'high' ? this.maxRatio : q === 'low' ? Math.min(1, this.maxRatio) * 0.75 : this.ratio); this.renderer.shadowMap.enabled = q !== 'low'; this.scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); }
 
+  // The call sheet covers the bottom of the view between plays: the camera frames the
+  // formation in the part of the screen above it (see CameraRig.target), easing as the sheet
+  // comes and goes.
   applyInset(k) {
     this.inset += (this.insetWant - this.inset) * k;
-    const w = this.el.clientWidth, h = this.el.clientHeight;
-    if (!w || !h) return;
-    if (this.inset < 0.5) { if (this.camera.view?.enabled) this.camera.clearViewOffset(); return; }
-    this.camera.setViewOffset(w, h, 0, Math.min(h * 0.28, this.inset / 2), w, h);
+    if (this.camera.view?.enabled) this.camera.clearViewOffset();
   }
 
   // Resolution scaling: drop the pixel ratio when frames run long, raise it when there is room.

@@ -475,48 +475,51 @@ body.g3d-on main { max-width: none; }
 .ticker mark { background: none; color: var(--amber); }
 .ticker { transition: opacity 0.6s, transform 0.6s; }
 .ticker.gone { opacity: 0; transform: translateY(-8px); }
-/* Play-call panel: a few big cards per category */
-.callsheet { align-self: end; justify-self: center; z-index: 3; margin: 0 12px 10px; width: min(1060px, calc(100% - 24px)); max-height: 42%; overflow-y: auto; overscroll-behavior: contain;
-  background: rgba(9, 22, 17, 0.9); backdrop-filter: blur(8px); border: 1px solid rgba(238,242,230,0.14); border-radius: 10px; padding: 10px 12px 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+/* Play call: a compact strip of play cards docked at the bottom, sized to its contents. Each
+   card is a real play diagram (routes, run lane, blocks; zones, man and rush for the defense)
+   with the play's name under it. X opens the whole playbook. */
+.callsheet { align-self: end; justify-self: center; z-index: 3; margin: 0 12px 10px; width: auto; max-width: calc(100% - 24px); max-height: 46%; overflow-y: auto; overscroll-behavior: contain;
+  background: rgba(9, 22, 17, 0.88); backdrop-filter: blur(8px); border: 1px solid rgba(238,242,230,0.14); border-radius: 10px; padding: 8px 10px 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.35);
   animation: cs-in 0.22s ease-out; }
+.callsheet.all { max-height: 72%; }
 @keyframes cs-in { from { transform: translateY(16px); opacity: 0; } to { transform: none; opacity: 1; } }
-.cs-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 0 2px 10px; font-family: var(--f-data); }
-.cs-head b { font: 700 20px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; color: #ffe27a; }
-.cs-head > span { color: var(--chalk-dim); font-size: 15px; }
-.cs-head .cs-keys { margin-left: auto; font-size: 12px; display: flex; gap: 4px; align-items: center; }
-.cs-tabs { display: flex; gap: 4px; padding: 3px; border-radius: 999px; background: rgba(238,242,230,0.06); }
-.cs-tab { cursor: pointer; border: 0; background: none; color: var(--chalk-dim); font: 700 14px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.05em; padding: 8px 14px; border-radius: 999px; display: flex; gap: 6px; align-items: center; }
+.cs-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 0 2px 8px; font-family: var(--f-data); }
+.cs-head b { font: 700 19px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; color: #ffe27a; }
+.cs-who { color: var(--chalk-dim); font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; }
+.cs-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(238,242,230,0.06); }
+.cs-tab { cursor: pointer; border: 0; background: none; color: var(--chalk-dim); font: 700 13px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.05em; padding: 7px 11px; border-radius: 999px; display: flex; gap: 5px; align-items: center; }
 .cs-tab span { font-size: 11px; opacity: 0.7; }
 .cs-tab:hover { color: var(--chalk); background: rgba(238,242,230,0.08); }
 .cs-tab.on { background: var(--chalk); color: #10241a; }
-.cs-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
-.pcard { position: relative; display: grid; gap: 4px; text-align: left; cursor: pointer; padding: 8px 10px 10px; border-radius: 8px; color: var(--chalk);
-  background: rgba(238, 242, 230, 0.05); border: 1px solid rgba(238, 242, 230, 0.12); border-top: 4px solid var(--fam, var(--chalk-dim)); transition: transform 0.1s, background 0.12s, box-shadow 0.12s; }
+.cs-formsel { flex-direction: row; align-items: center; gap: 6px; font: 600 12px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--chalk-dim); }
+.cs-formsel select { padding: 5px 8px; font: 700 13px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; border-radius: 6px; }
+.cs-head .cs-all { margin-left: auto; }
+.cs-cards { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.cs-book { display: grid; gap: 8px; }
+.cs-book h4 { margin: 0 0 4px; }
+.cs-book .cs-cards { flex-wrap: wrap; overflow: visible; }
+.pcard { position: relative; flex: none; width: 176px; display: grid; gap: 3px; text-align: left; cursor: pointer; padding: 6px 6px 8px; border-radius: 8px; color: var(--chalk);
+  background: rgba(238, 242, 230, 0.05); border: 1px solid rgba(238, 242, 230, 0.12); border-bottom: 3px solid var(--fam, var(--chalk-dim)); transition: transform 0.1s, background 0.12s, box-shadow 0.12s; }
 .pcard:hover, .pcard:focus-visible { background: rgba(238, 242, 230, 0.12); transform: translateY(-3px); box-shadow: 0 0 0 2px var(--fam) inset, 0 8px 18px rgba(0,0,0,0.3); outline: none; }
 .pcard:active { transform: translateY(0); background: rgba(255, 181, 71, 0.25); }
 .pcard.k-run { --fam: #ffc233; } .pcard.k-pass { --fam: #4fc3f7; } .pcard.k-punt, .pcard.k-fg { --fam: #a7bba9; }
 .pcard.k-front { --fam: #ffc233; } .pcard.k-blitz { --fam: #ff5a4f; } .pcard.k-cover { --fam: #4fc3f7; }
 .pcard.fit { box-shadow: 0 0 0 2px var(--amber) inset; }
-.pc-top { display: flex; gap: 8px; align-items: center; font: 600 12px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--chalk-dim); }
-.pc-kind { font-style: normal; color: #10241a; background: var(--fam); padding: 3px 6px; border-radius: 3px; font-weight: 700; }
-.pc-top kbd { margin-left: auto; font-size: 14px; padding: 3px 7px; }
-.pcard .pname { font: 700 17px/1.05 var(--f-data); text-transform: uppercase; letter-spacing: 0.02em; }
-.pcard .pblurb { font-size: 13px; line-height: 1.2; color: var(--chalk-dim); }
-.pcard .fittag { position: absolute; top: 14px; left: 16px; font: 700 11px/1 var(--f-data); font-style: normal; text-transform: uppercase; letter-spacing: 0.06em; background: var(--amber); color: #1b1408; padding: 3px 6px; border-radius: 3px; }
-.pc-art { display: block; }
-.pdiag { width: 100%; height: auto; aspect-ratio: 55 / 26; display: block; background: linear-gradient(#2f7a45, #2a6f3f); border-radius: 5px; }
-.pdiag .los { stroke: #2f7bff; stroke-width: 0.5; }
-.pdiag .o { fill: rgba(238,242,230,0.35); }
+.pc-art { position: relative; display: block; }
+.pc-art kbd { position: absolute; top: 4px; right: 4px; font-size: 13px; padding: 2px 6px; background: rgba(9, 22, 17, 0.85); }
+.pcard .fittag { position: absolute; top: 4px; left: 4px; font: 700 10px/1 var(--f-data); font-style: normal; text-transform: uppercase; letter-spacing: 0.06em; background: var(--amber); color: #1b1408; padding: 3px 5px; border-radius: 3px; }
+.pcard .pname { font: 700 17px/1.05 var(--f-data); text-transform: uppercase; letter-spacing: 0.02em; padding: 2px 2px 0; }
+.pc-top { display: flex; gap: 6px; align-items: center; padding: 0 2px; font: 600 11px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--chalk-dim); }
+.pc-kind { font-style: normal; color: #10241a; background: var(--fam); padding: 2px 5px; border-radius: 3px; font-weight: 700; }
+.pc-form { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcard .pblurb { display: none; font-size: 12px; line-height: 1.2; color: var(--chalk-dim); padding: 0 2px; }
+.callsheet.all .pcard .pblurb { display: block; }
+.pdiag { width: 100%; height: auto; aspect-ratio: 46 / 33; display: block; background: linear-gradient(#2f7a45, #2a6f3f); border-radius: 5px; }
+.pdiag .los { stroke: #6fb0ff; stroke-width: 0.45; }
+.pdiag .o { fill: rgba(238,242,230,0.4); }
 .pdiag .o.on { fill: #ffffff; stroke: #0d2b20; stroke-width: 0.3; }
-.pdiag .x { stroke: rgba(238,242,230,0.35); stroke-width: 0.45; fill: none; }
+.pdiag .x { stroke: rgba(238,242,230,0.4); stroke-width: 0.45; fill: none; }
 .pdiag .x.on { stroke: #ffffff; stroke-width: 0.6; }
-.cs-forms { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 0 2px 8px; font: 600 12px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--chalk-dim); }
-.cs-forms > span { margin-right: 4px; display: flex; gap: 4px; align-items: center; }
-.cs-form { cursor: pointer; border: 1px solid rgba(238,242,230,0.16); background: none; color: var(--chalk-dim); font: 700 12px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.05em; padding: 5px 9px; border-radius: 999px; }
-.cs-form:hover { color: var(--chalk); background: rgba(238,242,230,0.08); }
-.cs-form.on { background: #ffe27a; border-color: #ffe27a; color: #1b1408; }
-.callsheet.folded .cs-forms { display: none; }
-.cs-pages { display: flex; justify-content: center; gap: 10px; align-items: center; padding-top: 8px; font: 600 13px/1 var(--f-data); color: var(--chalk-dim); }
 /* Result lower third: shown after the whistle, never during the play */
 .lower3 { position: absolute; left: 16px; bottom: 18px; z-index: 4; pointer-events: none; width: min(460px, calc(100% - 32px)); padding: 10px 14px 10px 16px; border-radius: 6px;
   background: rgba(9, 22, 17, 0.9); border-left: 5px solid var(--chalk-dim); box-shadow: 0 8px 24px rgba(0,0,0,0.35); opacity: 0; transform: translateX(-24px); transition: opacity 0.22s, transform 0.22s; }
@@ -545,7 +548,7 @@ body.g3d-on main { max-width: none; }
 .mode-note { margin: 0; }
 /* Folded call sheet */
 .callsheet.folded { width: auto; padding: 8px 12px; }
-.callsheet.folded .cs-cards, .callsheet.folded .cs-pages, .callsheet.folded .cs-tabs, .callsheet.folded .cs-keys { display: none; }
+.callsheet.folded .cs-cards, .callsheet.folded .cs-book, .callsheet.folded .cs-tabs, .callsheet.folded .cs-formsel, .callsheet.folded .cs-all { display: none; }
 .cs-fold { margin-left: 6px; }
 /* Debug view */
 .dbg { align-self: start; justify-self: start; z-index: 4; margin: 120px 0 0 12px; width: min(300px, calc(100% - 24px)); padding: 10px 12px; display: grid; gap: 6px; background: rgba(9, 22, 17, 0.92); font-size: 13px; }

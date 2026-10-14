@@ -3,8 +3,9 @@
 //   cls:    the size class (small, medium, large, xl), from the Pokédex height and weight. A
 //           football game needs readable bodies, not Pokédex scale: a Wailord is not drawn
 //           fifteen yards long, it is an extra-large lineman.
-//   height: how tall the model is drawn: about 1.2 yards for small, 1.55 medium, 1.9 large,
-//           2.3 extra-large, with a little spread inside each class so two large Pokémon are
+//   height: how tall the model is drawn: about 1.35 yards for small, 1.6 medium, 1.85 large,
+//           2.1 extra-large (close enough that a small Pokémon still reads on the field, far
+//           enough apart that a Snorlax still stands over a Pikachu), with a little spread inside each class so two large Pokémon are
 //           not identical. A football player is about 2 yards tall.
 //   r:      the gameplay collision capsule's radius. It is the body, not the wings or the tail:
 //           the simulation spaces, blocks, tackles and separates bodies with it.
@@ -17,10 +18,10 @@ import { PLAYERS } from './ratings.js';
 const cache = new Map();
 
 export const SIZE_CLASSES = {
-  small: { name: 'Small', height: 1.2, r: 0.4 },
-  medium: { name: 'Medium', height: 1.55, r: 0.46 },
-  large: { name: 'Large', height: 1.9, r: 0.54 },
-  xl: { name: 'Extra large', height: 2.3, r: 0.62 },
+  small: { name: 'Small', height: 1.35, r: 0.42 },
+  medium: { name: 'Medium', height: 1.6, r: 0.47 },
+  large: { name: 'Large', height: 1.85, r: 0.53 },
+  xl: { name: 'Extra large', height: 2.1, r: 0.58 },
 };
 const ORDER = ['small', 'medium', 'large', 'xl'];
 // Size score: doubling the height counts one, doubling the weight about a third of that.
@@ -30,8 +31,8 @@ export function sizeScore(m, kg) { return Math.log2(Math.max(0.1, m) / 0.4) + 0.
 
 // How far the drawn model may reach past the capsule: the core of the body (the middle of its
 // mass, see fitModel) to the sides and front to back, and the tips of wings, arms and tails.
-export const CORE_SIDE = 1.15, CORE_DEPTH = 1.4;
-export const TIP_SIDE = 1.6, TIP_DEPTH = 2.1;
+export const CORE_SIDE = 1.1, CORE_DEPTH = 1.35;
+export const TIP_SIDE = 1.4, TIP_DEPTH = 1.85;
 // A model is never shrunk below this share of its class height to fit, so it stays
 // recognizable (scaling is always uniform: nothing is flattened or stretched).
 export const MIN_FIT = 0.6;

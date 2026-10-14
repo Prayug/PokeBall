@@ -1,17 +1,17 @@
 // The football cameras. One rig, four views, each working out every frame what it has to
 // show and where to stand to show it, then easing there on critically damped springs, so a
 // change of shot, of view or of possession never jumps:
-//   gameplay:  the default. Behind the offense and up high enough to see the whole formation:
-//              the quarterback and backs at the bottom of the screen, both lines in the middle,
-//              the receivers toward the edges and the secondary above them, with the field
-//              running away to the far end zone. It frames by fitting: the players that matter
+//   gameplay:  the default. Low behind the quarterback, Madden style: the quarterback near the
+//              bottom of the screen, both lines across the middle, the linebackers and nearby
+//              receivers above them, with the field running away to the far end zone. It frames by fitting: the players that matter
 //              this moment (the formation before the snap, the pocket and the routes, the ball
 //              in the air, the ball carrier and whoever is near him) are projected through the
 //              lens and the camera backs off just far enough for all of them to fit, so a
 //              wide formation or a tall Pokémon pulls it back and a tight run brings it in.
 //   tactical:  the same idea from much higher and steeper, like an all-22 coaching view, with
 //              position labels on the field (see field3d.js).
-//   broadcast: an elevated sideline shot from the press box side, for replays and big moments.
+//   broadcast: the TV sideline shot: above and outside the near sideline at a moderate
+//              diagonal, panning with the play (and the replay camera).
 //   player:    behind the Pokémon you control (or the ball carrier), far enough back to see
 //              defenders coming. It never turns with the player: it always looks down the field.
 // The rig never leaves the stadium bowl (the end walls and the press box), never sits inside a
@@ -31,9 +31,9 @@ export const CAMERA_ALIASES = { sideline: 'broadcast', qb: 'player' };
 // down (pitch), its vertical field of view, and an extra zoom factor on the fitted distance.
 export const CAMERA_SHOTS = CAMERA_MODES;
 export const CAMERA_DEFAULTS = {
-  gameplay: { pitch: 31, fov: 44, zoom: 1 },
-  tactical: { pitch: 56, fov: 42, zoom: 1 },
-  broadcast: { pitch: 26, fov: 32, zoom: 1 },
+  gameplay: { pitch: 21, fov: 50, zoom: 1 },
+  tactical: { pitch: 60, fov: 40, zoom: 1 },
+  broadcast: { pitch: 22, fov: 30, zoom: 1 },
   player: { pitch: 23, fov: 52, zoom: 1 },
 };
 export const CAMERA_LIMITS = { pitch: [10, 75], fov: [25, 75], zoom: [0.6, 1.8] };
@@ -163,12 +163,19 @@ export class CameraRig {
     const narrow = aspect < 1.1;
     const fov = (narrow ? C.fov * 1.12 : C.fov) + this.kick * 4;
     this.wantFov = fov;
+    // The players this shot frames: before the snap, the box (see Stage.framing) for the
+    // gameplay and broadcast cameras; during the play, the action.
+    const box = f.nBox ? f.pts.slice(0, f.nBox) : f.pts;
+    // Keep the players above the call sheet when it is up (inset: its share of the height).
+    const lift = (sf) => (f.inset > 0.01 ? { ...sf, y0: Math.max(sf.y0, -1 + 2 * f.inset + 0.05) } : sf);
     switch (this.mode) {
       case 'broadcast': {
-        // From the near sideline, high in the press box, following the action up and down the
-        // field; it backs off or comes in to keep the players that matter in frame.
-        const aimZ = f.focus.z * 0.5;
-        const R = this.fit(f.pts, 0, -1, C.pitch, fov, aspect, { x: f.focus.x, z: aimZ }, { x: 0.8, y0: -0.72, y1: 0.55 }, 26, 90);
+        // The TV camera: above and outside the near sideline, a little behind the offense, so
+        // it looks across and slightly down the field at a moderate diagonal. Before the snap it
+        // frames the box tightly; during the play it pans with the ball and backs off as the
+        // action spreads (a deep throw), then tracks the ball carrier.
+        const hx = s * 0.42, hz = -1, hl = Math.hypot(hx, hz);
+        const R = this.fit(box, hx / hl, hz / hl, C.pitch, fov, aspect, { x: f.focus.x, z: f.focus.z * 0.6 }, lift({ x: 0.86, y0: -0.7, y1: 0.5 }), 18, 80);
         this.place(R, f, C.zoom);
         break;
       }
@@ -184,11 +191,17 @@ export class CameraRig {
         break;
       }
       default: {
-        // Gameplay and tactical: behind the offense, fitted to the players that matter.
+        // Gameplay: low behind the quarterback, the box filling the screen with the
+        // quarterback near the bottom, both lines across the middle and the linebackers and
+        // nearby receivers above them. During the play the framing follows the action (the
+        // pocket and the routes, the ball in the air, the carrier) and backs off only as far
+        // as it has to.
+        // Tactical: high over the line of scrimmage, everyone in view, labels on.
         const tac = this.mode === 'tactical';
-        const safe = tac ? { x: 0.86, y0: -0.8, y1: 0.78 } : f.pre ? { x: 0.9, y0: -0.8, y1: 0.4 } : { x: 0.84, y0: -0.72, y1: 0.45 };
-        const R = this.fit(f.pts, s, 0, C.pitch, fov, aspect, { x: f.focus.x + s * (tac ? 6 : 3), z: f.focus.z * 0.75 },
-          safe, tac ? 30 : 20, tac ? 95 : 64);
+        const pts = tac ? f.pts : box;
+        const safe = tac ? { x: 0.92, y0: -0.84, y1: 0.7 } : f.pre ? { x: 0.94, y0: -0.86, y1: 0.42 } : { x: 0.86, y0: -0.76, y1: 0.45 };
+        const R = this.fit(pts, s, 0, C.pitch, fov, aspect, { x: f.focus.x + s * (tac ? 3 : 2), z: f.focus.z * (tac ? 0.5 : 0.75) },
+          lift(safe), tac ? 24 : 9, tac ? 95 : 64);
         this.place(R, f, C.zoom);
       }
     }
