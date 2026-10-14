@@ -53,6 +53,9 @@ export const OFF_FORMATIONS = {
 export const PLAY_FORMATION = {
   inside_run: 'iform', outside_run: 'singleback', qb_sneak: 'singleback', draw: 'gun_spread',
   screen: 'gun_spread', slant: 'gun_spread', out: 'gun_trips', curl: 'gun_spread', te_seam: 'pistol', post: 'gun_trips', pa_deep: 'singleback',
+  power: 'iform', counter: 'singleback', toss: 'singleback', dive: 'iform',
+  bubble: 'gun_trips', stick: 'gun_spread', curl_flat: 'gun_spread', mesh: 'gun_spread', smash: 'gun_spread', dagger: 'gun_trips',
+  levels: 'gun_trips', flood: 'singleback', y_cross: 'gun_spread', four_verts: 'gun_spread', pa_boot: 'singleback',
 };
 export function formationsFor(call) {
   if (!PLAY_FORMATION[call]) return [];
@@ -71,7 +74,8 @@ export const DEF_FORMATIONS = {
   nickel: { name: 'Nickel 4-2-5', short: 'Nickel' },
   goal: { name: 'Goal Line', short: 'Goal line' },
 };
-export const CALL_FRONT = { base: '43', run_blitz: '43', cover3: '43', pass_blitz: 'nickel', cover2: 'nickel', man_press: 'nickel', prevent: 'nickel', goal_line: 'goal' };
+export const CALL_FRONT = { base: '43', run_blitz: '43', cover3: '43', pass_blitz: 'nickel', cover2: 'nickel', man_press: 'nickel', prevent: 'nickel', goal_line: 'goal',
+  cover1_robber: '43', cover2_man: 'nickel', tampa2: '43', cover4: 'nickel', mug: '43', nickel_blitz: 'nickel', fire_zone: '43', cover0: 'nickel' };
 // Position names the formation gives each roster slot (shown in the tactical camera).
 export function positionName(lp, p) {
   if (p.side === 'off') return p.slot === 'TE' && lp.formation === 'iform' ? 'FB' : p.slot.replace(/\d$/, '');

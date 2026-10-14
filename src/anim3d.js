@@ -56,6 +56,7 @@ export class Animator {
     const t = this.t;
     const H = s.height;
     this.stance = s.mode === 'pre' && s.set ? s.stance : null;
+    this.cad = s.cad ?? 0; this.side = s.side; this.lookSide = s.lookSide ?? 1;
     const sf = s.top > 0 ? clamp(s.speed / s.top, 0, 1.2) : 0;
     this.sprK += ((s.sprint ? 1 : 0) - this.sprK) * (1 - Math.exp(-dt * 6));
     const spr = this.sprK;
@@ -276,24 +277,41 @@ export class Animator {
       // Alive before the snap, without leaving the spot: a slow shift of weight, a look
       // around (the quarterback reads the defense left and right), and now and then a bounce
       // on the toes for receivers, backs and defensive backs. Linemen stay set and still.
+      // The line is never frozen: linemen breathe hard, rock their weight, check the front to
+      // their side and back, and tense on each of the quarterback's calls ("hut"), offense and
+      // defense alike (the defense a beat later, reacting).
       const set = this.stance, live = set ? this.w.stance * (1 - hard) * (1 - run) : 0;
-      let lookY = 0, swayR = 0, toes = 0;
+      let lookY = 0, swayR = 0, toes = 0, rock = 0, dip = 0;
       if (live > 0.01) {
         const z = this.seed * 40, tt = this.t;
-        swayR = Math.sin(tt * 0.8 + z) * (set === 'line' ? 0.008 : 0.022) * live;
-        lookY = (set === 'qb' || set === 'qbUnder' ? Math.sin(tt * 0.55 + z) * 0.2 : set === 'line' ? 0 : Math.sin(tt * 0.37 + z) * 0.06) * live;
+        swayR = Math.sin(tt * 0.8 + z) * (set === 'line' ? 0.014 : 0.022) * live;
+        lookY = (set === 'qb' || set === 'qbUnder' ? Math.sin(tt * 0.55 + z) * 0.24 : set === 'line' ? 0 : Math.sin(tt * 0.37 + z) * 0.06) * live;
         if (set === 'skill' || set === 'db' || set === 'back') {
           const u = (tt * 0.23 + this.seed) % 1;
           if (u < 0.1) toes = Math.abs(Math.sin((u / 0.1) * Math.PI * 3)) * live;
         }
+        if (set === 'line') {
+          rock = Math.sin(tt * 1.3 + z) * 0.03 * live;
+          // A look down the line and back, each lineman on his own beat.
+          const u = (this.cad * 0.32 + this.seed * 0.7) % 1;
+          if (this.cad > 0.4 && u < 0.3) lookY = Math.sin((u / 0.3) * Math.PI) * 0.32 * this.lookSide * live;
+        }
+        // The cadence: a call every 1.4 s after the line is set; everyone on the line tenses.
+        const c = this.cad - 1 - (this.side === 'def' ? 0.12 : 0);
+        if (c > 0 && (set === 'line' || set === 'qbUnder')) {
+          const ph = c % 1.4;
+          if (ph < 0.3) dip = Math.sin((ph / 0.3) * Math.PI) * live;
+        }
       }
-      f.pivot.rotation.set(pitch, (f.rig ? 0 : this.fb.twist * 0.8) + sl * Math.sin(ph) * 0.32 + lookY, o[ROLL] * k + m * Math.sin(ph) * 0.1 + sl * Math.sin(ph + 0.8) * 0.06 + swayR, 'XZY');
+      f.pivot.rotation.set(pitch + rock + dip * 0.07, (f.rig ? 0 : this.fb.twist * 0.8) + sl * Math.sin(ph) * 0.32 + lookY, o[ROLL] * k + m * Math.sin(ph) * 0.1 + sl * Math.sin(ph + 0.8) * 0.06 + swayR, 'XZY');
       // A crouch lowers the hips, so the feet stay on the turf.
       const c = this.fb.crouch, drop = f.rig ? (f.hipH ?? 0) * (1 - 0.5 * (Math.cos(0.55 * c) + Math.cos(0.3 * c))) : 0;
-      f.pivot.position.y = Math.max(0, o[LIFT]) - drop + hop + toes * H * 0.025;
-      // Breathing while standing, squash and stretch while bounding.
+      f.pivot.position.y = Math.max(0, o[LIFT]) - drop + hop + toes * H * 0.025 - dip * H * 0.02;
+      // Breathing while standing (harder for a lineman in his stance), squash and stretch while
+      // bounding.
       const still = this.w.idle + this.w.stance;
-      const sy = 1 + Math.sin(this.t * 2.3) * 0.018 * still * (1 - hard) + m * (hs - 0.55) * 0.12;
+      const breath = set === 'line' ? 0.03 : 0.018;
+      const sy = 1 + Math.sin(this.t * (set === 'line' ? 2.8 : 2.3)) * breath * still * (1 - hard) + m * (hs - 0.55) * 0.12;
       f.pivot.scale.set(1 / Math.sqrt(sy), sy, 1 / Math.sqrt(sy));
       return;
     }

@@ -42,6 +42,17 @@ const ROUTES = {
   wheel: [[0.5, 'out7'], [24, 'out1']],
   screen: [[5.5, 'out6'], 'stop'],
   check: ['block', [3, 'out5'], [2, 'out2']],
+  // Added with the bigger playbook.
+  stick: [[5.5, 0], [0.3, 'in1'], 'stop'],
+  dig: [[12, 0], [0, 'in13']],
+  shallow: [[1.5, 0], [0.5, 'in20']],
+  in5: [[5, 0], [0, 'in12']],
+  sail: [[6, 0], [6, 'out9']],
+  cross: [[7, 'in3'], [6, 'in22']],
+  bubble: [[-1.2, 'out2.5'], [0.4, 'out2'], 'stop'],
+  fade: [[28, 'out2']],
+  angle: [[0.5, 'out3'], [5, 'in6']],
+  comeback: [[13, 0], [-2, 'out3'], 'stop'],
 };
 const PLAY_ROUTES = {
   screen: { WR1: 'go', WR2: 'go', WR3: 'hitch', TE: 'drag', RB: 'screen' },
@@ -51,6 +62,17 @@ const PLAY_ROUTES = {
   te_seam: { WR1: 'go', WR2: 'curl', WR3: 'post', TE: 'seam', RB: 'check' },
   post: { WR1: 'post', WR2: 'post', WR3: 'curl', TE: 'drag', RB: 'check' },
   pa_deep: { WR1: 'go', WR2: 'post', WR3: 'curl', TE: 'seam', RB: 'block' },
+  bubble: { WR1: 'stalk', WR2: 'stalk', WR3: 'bubble', TE: 'block', RB: 'block' },
+  stick: { WR1: 'fade', WR2: 'slant', WR3: 'stick', TE: 'stick', RB: 'flat' },
+  curl_flat: { WR1: 'curl', WR2: 'curl', WR3: 'flat', TE: 'seam', RB: 'flat' },
+  mesh: { WR1: 'corner', WR2: 'dig', WR3: 'shallow', TE: 'drag', RB: 'angle' },
+  smash: { WR1: 'hitch', WR2: 'hitch', WR3: 'corner', TE: 'corner', RB: 'check' },
+  dagger: { WR1: 'dig', WR2: 'hitch', WR3: 'seam', TE: 'drag', RB: 'check' },
+  levels: { WR1: 'dig', WR2: 'go', WR3: 'in5', TE: 'in5', RB: 'check' },
+  flood: { WR1: 'go', WR2: 'go', WR3: 'sail', TE: 'drag', RB: 'flat' },
+  y_cross: { WR1: 'post', WR2: 'comeback', WR3: 'go', TE: 'cross', RB: 'flat' },
+  four_verts: { WR1: 'go', WR2: 'go', WR3: 'seam', TE: 'seam', RB: 'check' },
+  pa_boot: { WR1: 'go', WR2: 'corner', WR3: 'post', TE: 'cross', RB: 'flat' },
 };
 export { ROUTES, PLAY_ROUTES };
 const DROP = { screen: -6, short: -6.5, mid: -7.5, deep: -8.5 };
@@ -71,8 +93,8 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
     spot: g.spot, goalX: 100 - g.spot, ownGoalX: -g.spot,
     players: [], off: {}, def: {}, events: [], result: null,
     user: opts.userSide ?? null, autoQB: !!opts.autoQB, control: null, manual: false,
-    blitz: defCall === 'pass_blitz' ? ['OLB', 'MLB'] : defCall === 'run_blitz' ? ['MLB'] : [],
-    zone: ['cover2', 'cover3', 'prevent'].includes(defCall),
+    blitz: [...(DEF_SCHEMES[defCall]?.blitz ?? [])],
+    zone: !!DEF_SCHEMES[defCall]?.zones && !DEF_SCHEMES[defCall]?.manUnder,
     qbState: 'drop', pressure: false, thrown: null, caught: false, crossed: false, carrierTeam: 'off',
     stats: { tackler: null, cov: null, target: null, se: false, extras: [] }, readTick: 0, notes: [], tackle: null, windup: null,
     formation: formationsFor(offCall).includes(opts.formation) ? opts.formation : PLAY_FORMATION[offCall] ?? 'gun_spread',
@@ -136,14 +158,39 @@ function makePlayer(g, ti, side, slot, id, lp) {
   };
 }
 
+// Defensive calls as data: who rushes (blitz), who drops from the line into coverage (drop),
+// zone spots { slot: [depth, across, radius] } (across is toward the defender's own side for
+// 'flat' entries), man matchups that differ from the default (receiver -> defender), pressed
+// corners and walked-up alignments { slot: [depth, across] } (null keeps that coordinate).
+const C2 = { CB1: [5, -19, 7], CB2: [5, 19, 7], CB3: [7, -9, 6], FS: [18, -12, 12], SS: [18, 12, 12], OLB: [6, 9, 6], MLB: [7, 0, 6] };
+const C3 = { CB1: [17, -17, 10], CB2: [17, 17, 10], FS: [21, 0, 12], CB3: [6, -14, 7], SS: [6, 14, 7], OLB: [7, 6, 6], MLB: [7, -4, 6] };
+export const DEF_SCHEMES = {
+  base: {},
+  cover1_robber: { zones: { SS: [9, 0, 7] }, man: { TE: 'OLB', RB: 'MLB' }, manUnder: true },
+  cover2_man: { zones: { FS: [17, -12, 12], SS: [17, 12, 12] }, man: { TE: 'OLB', RB: 'MLB' }, manUnder: true, align: { FS: [14, -12], SS: [14, 12] } },
+  man_press: { press: true },
+  goal_line: {},
+  cover2: { zones: C2, align: { FS: [14, -12], SS: [14, 12] } },
+  tampa2: { zones: { ...C2, MLB: [14, 0, 8] }, align: { FS: [14, -12], SS: [14, 12] } },
+  cover3: { zones: C3, align: { FS: [15, 0], CB1: [8, null], CB2: [8, null] } },
+  cover4: { zones: { CB1: [16, -17, 9], CB2: [16, 17, 9], FS: [17, -6, 8], SS: [17, 6, 8], CB3: [6, -12, 7], OLB: [6, 8, 6], MLB: [6, -2, 6] },
+    align: { FS: [11, -7], SS: [11, 7], CB1: [7, null], CB2: [7, null] } },
+  prevent: { zones: { CB1: [20, -17, 12], CB2: [20, 17, 12], FS: [28, 0, 14], CB3: [13, -10, 9], SS: [13, 10, 9], OLB: [9, 5, 7], MLB: [9, -5, 7] }, deepen: 6 },
+  run_blitz: { blitz: ['MLB'], align: { MLB: [3.2, null] } },
+  pass_blitz: { blitz: ['OLB', 'MLB'] },
+  mug: { blitz: ['OLB', 'MLB'], align: { MLB: [2.4, -1.4], OLB: [2.4, 1.4] } },
+  nickel_blitz: { blitz: ['CB3'], man: { WR3: 'SS', TE: 'OLB', RB: 'MLB' }, align: { CB3: [2.5, null] } },
+  fire_zone: { blitz: ['MLB', 'SS'], drop: ['DE'], zones: { CB1: [17, -17, 10], CB2: [17, 17, 10], FS: [21, 0, 12], DE: [5, 'flat', 7], CB3: [6, -13, 7], OLB: [7, 4, 6] } },
+  cover0: { blitz: ['OLB', 'MLB', 'SS'], man: { TE: 'FS' }, press: true },
+};
+const LINE = ['LE', 'DE', 'DT1', 'DT2'];
+
 function setupDefense(lp) {
-  const D = lp.def, call = lp.defCall;
+  const D = lp.def, call = lp.defCall, S = DEF_SCHEMES[call] ?? {};
   const cap = (x) => Math.min(x, lp.goalX + 8);
-  if (call === 'man_press') for (const k of ['CB1', 'CB2', lp.defFormation === 'nickel' ? 'CB3' : null]) if (D[k]) D[k].x = frontX(D[k]) + 0.6;
-  if (call === 'run_blitz' && D.MLB) D.MLB.x = 3.2;
-  if (call === 'cover2') { if (D.FS) { D.FS.x = 14; D.FS.y = -12; } if (D.SS) { D.SS.x = 14; D.SS.y = 12; } }
-  if (call === 'cover3') { if (D.FS) { D.FS.x = 15; D.FS.y = 0; } for (const k of ['CB1', 'CB2']) if (D[k]) D[k].x = 8; }
-  if (call === 'prevent') for (const p of Object.values(D)) if (!['LE', 'DE', 'DT1', 'DT2'].includes(p.slot)) p.x += 6;
+  if (S.press) for (const k of ['CB1', 'CB2', lp.defFormation === 'nickel' ? 'CB3' : null]) if (D[k]) D[k].x = frontX(D[k]) + 0.6;
+  for (const [k, [x, y]] of Object.entries(S.align ?? {})) if (D[k]) { if (x != null) D[k].x = x; if (y != null) D[k].y = y; }
+  if (S.deepen) for (const p of Object.values(D)) if (!LINE.includes(p.slot)) p.x += S.deepen;
   for (const p of Object.values(D)) p.x = Math.max(frontX(p), cap(p.x));
 
   const O = lp.off;
@@ -152,24 +199,39 @@ function setupDefense(lp) {
     const R = rep(r.id, route, c.id, c.a.cov);
     return clamp(0.12 + R.diff * 0.011, 0.02, 0.5);
   };
-  const man = { WR1: 'CB1', WR2: 'CB2', WR3: 'CB3', TE: 'SS', RB: !lp.blitz.includes('OLB') ? 'OLB' : !lp.blitz.includes('MLB') ? 'MLB' : null };
-  for (const [rk, ck] of Object.entries(man)) {
-    const c = D[ck], r = O[rk];
-    if (c && r) { c.man = r; c.lag = covR(r, c) - (call === 'man_press' ? 0.05 : 0); }
-  }
+  const blitz = new Set(lp.blitz), drop = new Set(S.drop ?? []), zoned = new Set(Object.keys(S.zones ?? {}));
   for (const p of Object.values(D)) {
-    if (['LE', 'DE', 'DT1', 'DT2'].includes(p.slot) || lp.blitz.includes(p.slot)) p.role = 'rush';
+    if ((LINE.includes(p.slot) && !drop.has(p.slot)) || blitz.has(p.slot)) p.role = 'rush';
     else p.role = 'cover';
   }
-  if (lp.zone) {
+  // Man coverage underneath: the default matchups, then the call's own; a defender who rushes
+  // or plays a zone hands his man to the next free linebacker or safety.
+  if (!lp.zone) {
+    const man = { WR1: 'CB1', WR2: 'CB2', WR3: 'CB3', TE: 'SS', RB: 'OLB', ...(S.man ?? {}) };
+    const taken = new Set();
+    const spare = ['OLB', 'MLB', 'SS', 'FS', 'CB3'];
+    for (const rk of ['WR1', 'WR2', 'WR3', 'TE', 'RB']) {
+      const r = O[rk];
+      if (!r) continue;
+      let ck = man[rk];
+      const free = (k) => D[k] && D[k].role === 'cover' && !zoned.has(k) && !taken.has(k);
+      if (!free(ck)) ck = spare.find(free) ?? null;
+      // Leave the free safety deep unless the call puts him on a man.
+      if (ck === 'FS' && !Object.values(S.man ?? {}).includes('FS') && rk !== 'TE') ck = null;
+      if (!ck) continue;
+      taken.add(ck);
+      D[ck].man = r; D[ck].lag = covR(r, D[ck]) - (S.press ? 0.05 : 0);
+    }
+  }
+  if (S.zones) {
     const g = lp.goalX;
-    const z = (x, y, r) => ({ x: Math.min(x, g + 7), y, r });
-    const zones = call === 'cover2'
-      ? { CB1: z(5, -19, 7), CB2: z(5, 19, 7), CB3: z(7, -9, 6), FS: z(18, -12, 12), SS: z(18, 12, 12), OLB: z(6, 9, 6), MLB: z(7, 0, 6) }
-      : call === 'cover3'
-        ? { CB1: z(17, -17, 10), CB2: z(17, 17, 10), FS: z(21, 0, 12), CB3: z(6, -14, 7), SS: z(6, 14, 7), OLB: z(7, 6, 6), MLB: z(7, -4, 6) }
-        : { CB1: z(20, -17, 12), CB2: z(20, 17, 12), FS: z(28, 0, 14), CB3: z(13, -10, 9), SS: z(13, 10, 9), OLB: z(9, 5, 7), MLB: z(9, -5, 7) };
-    for (const [k, zn] of Object.entries(zones)) if (D[k] && D[k].role === 'cover') { D[k].zone = zn; D[k].lag = clamp(0.32 - (D[k].a.cov - 60) * 0.007, 0.06, 0.5); }
+    for (const [k, [x, y, r]] of Object.entries(S.zones)) {
+      const p = D[k];
+      if (!p || p.role !== 'cover' || p.man) continue;
+      const across = y === 'flat' ? sgn(p.y || 1) * 13 : y;
+      p.zone = { x: Math.min(x, g + 7), y: across, r };
+      p.lag = clamp(0.32 - (p.a.cov - 60) * 0.007, 0.06, 0.5);
+    }
   }
 }
 
@@ -186,8 +248,20 @@ function setupOffense(lp) {
     const inside = (k) => (side < 0 ? gap(...[['LG', 'C'], ['LT', 'LG']][k]) : gap(...[['C', 'RG'], ['RG', 'RT']][k])) ?? side * (k ? 2.7 : 0.9);
     lp.holeY = dir === 'outside' ? side * 9 : dir === 'sneak' ? 0 : inside(chance(lp.g, 0.55) ? 0 : 1);
     if (dir === 'draw') lp.holeY = inside(1);
+    if (dir === 'dive') lp.holeY = inside(0);
+    if (dir === 'counter') lp.holeY = inside(1);
+    // Toss: pitched to the back, who races the edge.
+    if (dir === 'toss') lp.holeY = side * 9.5;
+    // Power: off tackle to the tight end's side, behind a pulling guard.
+    lp.runSide = side;
+    if (dir === 'power') {
+      const s2 = O.TE && O.TE.x > -3 ? sgn(O.TE.y) : side;
+      lp.runSide = s2;
+      const t = s2 > 0 ? O.RT : O.LT;
+      lp.holeY = t ? t.y + s2 * 1.7 : s2 * 4.5;
+    }
     // Each blocker takes the nearest defender in front of him.
-    const bl = ['LT', 'LG', 'C', 'RG', 'RT', 'TE'].map((k) => O[k]).filter(Boolean);
+    const bl = ['LT', 'LG', 'C', 'RG', 'RT', lp.formation === 'iform' && dir !== 'sneak' ? null : 'TE'].map((k) => k && O[k]).filter(Boolean);
     const df = ['LE', 'DE', 'DT1', 'DT2', 'OLB', 'MLB'].map((k) => lp.def[k]).filter(Boolean);
     const pairs = [];
     for (const b of bl) for (const d of df) pairs.push([Math.abs(b.y - d.y) + Math.max(0, d.x - 2) * 0.5, b, d]);
@@ -197,11 +271,39 @@ function setupOffense(lp) {
       if (b.assign || used.has(d)) continue;
       b.assign = d; b.role = 'runblock'; used.add(d);
     }
-    for (const [w, c] of [['WR1', 'CB1'], ['WR2', 'CB2'], ['WR3', 'CB3']]) if (O[w]) { O[w].role = 'stalk'; O[w].assign = lp.def[c]; }
+    // Receivers stalk-block the nearest man in coverage on their side, not a fixed slot (the
+    // slot corner may be lined up across the field).
+    const taken = new Set();
+    for (const w of ['WR1', 'WR2', 'WR3']) {
+      const r = O[w];
+      if (!r) continue;
+      let best = null, bd = 99;
+      for (const q of Object.values(lp.def)) {
+        if (taken.has(q) || used.has(q) || ['LE', 'DE', 'DT1', 'DT2'].includes(q.slot)) continue;
+        const dd = Math.hypot(q.x - r.x, q.y - r.y);
+        if (dd < bd) { bd = dd; best = q; }
+      }
+      r.role = 'stalk'; r.assign = best; if (best) taken.add(best);
+    }
+    // Power and counter pull the backside guard: he runs flat behind the line and leads
+    // through the hole onto the first linebacker.
+    if (dir === 'power' || dir === 'counter') {
+      const hs = sgn(lp.holeY || lp.runSide);
+      const g2 = hs > 0 ? O.LG : O.RG;
+      const lbs = ['OLB', 'MLB', 'CB3'].map((k) => lp.def[k]).filter(Boolean);
+      const lb = lbs.sort((a, b) => Math.abs(a.y - lp.holeY) - Math.abs(b.y - lp.holeY))[0];
+      if (g2 && lb) {
+        // Whoever had the linebacker takes the guard's man instead.
+        const was = bl.find((b) => b !== g2 && b.assign === lb);
+        if (was) was.assign = g2.assign;
+        g2.assign = lb; g2.pull = { until: dir === 'power' ? 0.85 : 1.0, via: { x: -1.5, y: lp.holeY - hs * 0.8 } };
+      }
+    }
+    // A fullback (the I-form's tight end) leads through the hole instead of blocking a man.
+    if (O.TE && lp.formation === 'iform' && dir !== 'sneak') O.TE.role = 'lead';
     if (O.QB) O.QB.role = dir === 'sneak' ? 'carrier' : 'handoff';
     if (O.RB) O.RB.role = dir === 'sneak' ? 'runblock' : 'runner';
-    lp.handAt = dir === 'draw' ? 1.15 : dir === 'sneak' ? 0 : 0.42;
-    if (dir === 'sneak') { lp.handAt = 0; }
+    lp.handAt = { draw: 0.95, sneak: 0, dive: 0.26, power: 0.5, counter: 0.55, toss: 0.3 }[dir] ?? 0.42;
     return;
   }
   const routes = PLAY_ROUTES[lp.offCall];
@@ -211,6 +313,14 @@ function setupOffense(lp) {
     let r = routes[k];
     if (k === 'RB' && rbBlocks) r = 'block';
     if (r === 'block') { p.role = 'passblock'; continue; }
+    if (r === 'stalk') {
+      // Block the man over him for the screen.
+      p.role = 'stalk';
+      let best = null;
+      for (const q of lp.players) if (q.side === 'def' && (!best || dist(q, p) < dist(best, p))) best = q;
+      p.assign = best;
+      continue;
+    }
     p.role = 'route';
     p.route = buildRoute(lp, p, r);
     p.routeName = r;
@@ -284,10 +394,17 @@ function walkIn(lp, from) {
   if (lp.set) for (const p of lp.players) { p.x = p.home.x; p.y = p.home.y; }
 }
 
+// Hurry-up: the snap was called while players are still walking up. Everyone sprints to the
+// line and the stragglers are set within a beat, so the snap is never kept waiting.
+export function hurry(lp) {
+  if (lp.phase === 'pre' && !lp.set && lp.hurry == null) lp.hurry = lp.setT;
+}
+
 // Pre-snap: players jog to their spots, then settle.
 function lineUp(lp) {
   if (lp.set) return;
   lp.setT += DT;
+  const rush = lp.hurry != null;
   let done = true;
   for (const p of lp.players) {
     const d = dist(p, p.home);
@@ -295,14 +412,16 @@ function lineUp(lp) {
     if (d > 0.12) {
       done = false;
       // Jog, then hurry if the play clock is getting on; walk around anyone in the way.
-      seek(p, p.home, lp.setT > 6 ? 1 : d > 6 ? 0.85 : 0.6, 1.4);
+      seek(p, p.home, rush || lp.setT > 4 ? 1 : d > 6 ? 0.85 : 0.6, 1.4);
       p.aim = null;
       const [vx, vy] = d > 1.5 ? steer(lp, p, p.want.vx, p.want.vy) : [p.want.vx, p.want.vy];
       kin(p, vx, vy, p.top, DT);
+      // Hurrying: close the rest of the gap smoothly so nobody is still walking at the snap.
+      if (rush) { const k = 1 - Math.exp(-DT * 4); p.x += (p.home.x - p.x) * k; p.y += (p.home.y - p.y) * k; }
     } else { p.vx *= 0.6; p.vy *= 0.6; p.x += (p.home.x - p.x) * 0.2; p.y += (p.home.y - p.y) * 0.2; }
   }
   separate(lp);
-  if (done || lp.setT > 12) {
+  if (done || lp.setT > 7 || (rush && lp.setT - lp.hurry > 1.1)) {
     for (const p of lp.players) { p.x = p.home.x; p.y = p.home.y; p.vx = 0; p.vy = 0; p.fx = p.side === 'off' ? 1 : -1; p.fy = 0; }
     lp.set = true;
   }
@@ -319,7 +438,7 @@ function buildRoute(lp, p, name) {
     const [dx, dy] = leg;
     let across = 0;
     if (typeof dy === 'string') {
-      const m = /^(in|out)(\d+)$/.exec(dy);
+      const m = /^(in|out)([\d.]+)$/.exec(dy);
       across = (m[1] === 'in' ? inward : -inward) * Number(m[2]);
     } else across = dy;
     x = Math.min(x + dx, lp.goalX + 8.5);
@@ -397,7 +516,8 @@ export function step(lp, input = null) {
   // Run play handoff: the exchange starts when the quarterback and the back actually meet.
   if (lp.kind === 'run' && !lp.carrierSet && lp.t >= lp.handAt && qbHas(lp)) {
     const rb = lp.carrier, qb = lp.off.QB;
-    if (rb && dist(rb, qb) < rb.r + qb.r + 0.75) startExchange(lp, qb, rb);
+    if (lp.play.dir === 'toss' && rb && dist(rb, qb) < 7) startExchange(lp, qb, rb, 0.4);
+    else if (rb && dist(rb, qb) < rb.r + qb.r + 0.75) startExchange(lp, qb, rb);
   }
   // AI quarterback, then the throwing motion
   if (lp.kind === 'pass' && !lp.thrown && !lp.windup) coverageRead(lp);
@@ -519,10 +639,17 @@ function applyInput(lp, inp) {
     if (inp.truck) startMove(lp, c, 'truck');
     if (inp.spin) startMove(lp, c, 'spin');
   }
-  if (inp.dive && c.dive == null) { c.dive = 0.3; }
+  // The ball in the air to the receiver you now control: Space goes up and attacks it at its
+  // highest point (better in traffic, but he stops to make the catch).
+  const air = lp.thrown && lp.ball.state === 'air' && lp.thrown.target === c;
+  if (air && inp.juke) lp.aggro = true;
+  else if (inp.dive && c.dive == null) { c.dive = 0.3; }
   if (inp.throwTo && lp.kind === 'pass' && !lp.thrown && lp.ball.holder === lp.off.QB && lp.qbState !== 'run') {
     const r = lp.off[inp.throwTo];
-    if (r && r.role === 'route') throwTo(lp, r);
+    // Ball placement: the stick at release leads him (up), brings it back to him (down) or
+    // puts it to one side, away from the defender.
+    const place = Math.hypot(inp.mx ?? 0, inp.my ?? 0) > 0.3 ? { x: inp.mx, y: inp.my } : null;
+    if (r && r.role === 'route') startThrow(lp, r, false, { type: inp.throwType ?? 'touch', place });
   }
   if (inp.throwAway && lp.kind === 'pass' && !lp.thrown && lp.ball.holder === lp.off.QB && lp.qbState !== 'run') throwAway(lp);
 }
@@ -560,13 +687,19 @@ function think(lp, p) {
       // Open to the back and meet him at the mesh point; if he is late, go to him.
       const rb = lp.carrier;
       if (!lp.carrierSet && rb && lp.t > lp.handAt + 0.15) return seek(p, rb, 0.55, 0.6);
-      const mesh = { x: -4.2, y: lp.holeY > 0 ? 0.6 : -0.6 };
+      if (lp.play.dir === 'toss') return seek(p, lp.carrierSet ? { x: p.x - 1, y: -sgn(lp.holeY) * 2 } : { x: p.x - 0.6, y: sgn(lp.holeY) * 0.8 }, 0.5);
+      const mesh = { x: lp.play.dir === 'dive' ? -3.2 : -4.2, y: lp.holeY > 0 ? 0.6 : -0.6 };
       return seek(p, lp.carrierSet ? { x: -6, y: -lp.holeY * 0.3 } : mesh, 0.6);
     }
     case 'fake': return seek(p, { x: -7, y: -sgn(lp.holeY) * 4 }, 0.5);
     case 'runner': {
       // Before the handoff: head for the mesh point, then aim at the hole.
-      if (lp.play.dir === 'draw' && lp.t < lp.handAt - 0.35) return seek(p, { x: -6.5, y: 1 }, 0.2);
+      const dir = lp.play.dir;
+      if (dir === 'draw' && lp.t < lp.handAt - 0.35) return seek(p, { x: -6.5, y: 1 }, 0.2);
+      // Counter: a jab step the wrong way first, so the linebackers flow with it.
+      if (dir === 'counter' && lp.t < 0.4) return seek(p, { x: p.x, y: -sgn(lp.holeY) * 2.5 }, 0.7);
+      if (dir === 'toss') return seek(p, { x: Math.min(p.x, -4.5), y: sgn(lp.holeY) * 6 }, 1, 0.1);
+      if (dir === 'dive') return seek(p, { x: -2.6, y: lp.holeY * 0.6 }, 0.95);
       return seek(p, { x: -3.5, y: lp.holeY * 0.35 }, 0.8);
     }
     case 'carrier': return carrierWant(lp, p);
@@ -575,6 +708,10 @@ function think(lp, p) {
     case 'runblock': return runBlockWant(lp, p);
     case 'stalk': return stalkWant(lp, p);
     case 'escort': return escortWant(lp, p, c);
+    case 'lead':
+      // Through the hole a step ahead of the back, then the first defender who shows.
+      if (!c) return seek(p, { x: 0.8, y: lp.holeY * (lp.play.dir === 'counter' && lp.t < 0.4 ? -0.3 : 0.85) }, 0.9, 0.3);
+      return escortWant(lp, p, c);
     case 'rush': return rushWant(lp, p);
     case 'cover': return coverWant(lp, p);
     case 'pursue': return pursueWant(lp, p, c);
@@ -600,6 +737,11 @@ function qbMove(lp, p) {
   if (lp.qbState === 'run') return carrierWant(lp, p);
   const pa = lp.play.pa && lp.t < 0.7;
   const target = { x: lp.dropX, y: pa ? 0.8 : 0 };
+  // Bootleg: after the fake the quarterback rolls out to the flood side, set to throw on the move.
+  if (lp.play.boot && !pa) {
+    const side = lp.bootSide ??= (lp.off.TE ? -sgn(lp.off.TE.y) : 1); // away from the tight end, who crosses to meet him
+    return seek(p, { x: lp.dropX + 2.5, y: side * 8 }, lp.t < 2.4 ? 0.8 : 0.45, 1);
+  }
   if (lp.t < 1.1 || pa) return seek(p, target, 0.75, 0.8);
   // Slide away from the nearest free rusher.
   let threat = null, td = 99;
@@ -682,7 +824,12 @@ function qbBrain(lp) {
     if (!best || seen > best.score) best = { r, score: seen };
   }
   const need = 3.2 - elapsed * 0.9;
-  if (best && (best.score > need || (lp.pressure && best.score > 1.9))) { throwTo(lp, best.r); return; }
+  if (best && (best.score > need || (lp.pressure && best.score > 1.9))) {
+    // A tight window short gets a bullet; a man running free deep gets air under it.
+    const r = best.r, deep = (r.lead?.x ?? 0) > 20;
+    startThrow(lp, r, false, { type: r.open < 2 && !deep ? 'bullet' : deep && r.open > 4.5 ? 'lob' : 'touch' });
+    return;
+  }
   if (nearRush < 1.8 || elapsed > 2.6) {
     const spd = qb.a.spd;
     if (chance(g, clamp((spd - 50) / 120, 0.05, 0.4) * 0.35)) { lp.qbState = 'run'; lp.scramble = true; setCarrier(lp, qb); event(lp, 'scramble', '', qb); return; }
@@ -780,6 +927,11 @@ function passBlockWant(lp, p) {
 
 function runBlockWant(lp, p) {
   if (p.eng) return;
+  if (p.pull && lp.t < p.pull.until && !lp.tackle) {
+    // Pulling: flat down the line behind the other blockers, then turn up through the hole.
+    p.aim = p.assign;
+    return seek(p, p.pull.via, 1, 0.3);
+  }
   let tgt = p.assign && !p.assign.eng && p.assign.stun <= 0.3 ? p.assign : null;
   if (!tgt || dist(tgt, p) > 7) {
     tgt = null;
@@ -827,7 +979,7 @@ function rushWant(lp, p) {
   const c = lp.carrierSet ? lp.carrier : lp.off.QB;
   if (!c) return;
   // Draws and play-action freeze the front for a beat.
-  const fooled = (lp.play.dir === 'draw' || lp.play.pa) && lp.t < 0.5;
+  const fooled = ((lp.play.dir === 'draw' && !lp.carrierSet) || lp.play.pa) && lp.t < (lp.play.dir === 'draw' ? 0.9 : 0.5);
   // Against a run each lineman fills his own gap until the ball declares itself: he plays his
   // gap a yard into the backfield and only chases once the carrier is in his lane or past the
   // line. That is what keeps the cutback lanes closed.
@@ -898,7 +1050,11 @@ function coverWant(lp, p) {
   }
   // Run reads: linebackers and safeties fill once the ball is handed off (handled by pursuit).
   if (lp.kind === 'run' && !lp.carrierSet && ['MLB', 'OLB', 'SS'].includes(p.slot)) {
-    return seek(p, { x: Math.max(1.5, p.x - 1), y: lp.holeY * 0.5 }, 0.5);
+    // A counter's jab step pulls them the wrong way for a beat.
+    const fooled = lp.play.dir === 'counter' && lp.t < 0.55 ? -1 : 1;
+    // A draw shows pass: they drop to their coverage depth until the handoff.
+    if (lp.play.dir === 'draw') return seek(p, { x: p.home.x + 2.5, y: p.home.y }, 0.55);
+    return seek(p, { x: Math.max(1.5, p.x - 1), y: lp.holeY * 0.5 * fooled }, 0.5);
   }
   if (lp.play.pa && lp.t < 0.6 && ['MLB', 'OLB', 'SS'].includes(p.slot)) return seek(p, { x: 1.5, y: p.y }, 0.6);
   if (p.zone) return zoneWant(lp, p);
@@ -1016,12 +1172,12 @@ function carrierWant(lp, p) {
   // a defender has set the edge outside him, he bounces back inside instead of running into it.
   if (lp.kind === 'run' && p.slot === 'RB' && p.x < 0.5) {
     const e = lp.t - (lp.carrierAt ?? 0);
-    if (lp.play.dir === 'outside' && e < 1.1 && !lp.bounced) {
+    if ((lp.play.dir === 'outside' || lp.play.dir === 'toss') && e < 1.1 && !lp.bounced) {
       const out = sgn(lp.holeY);
       const edge = lp.players.find((q) => q.side !== p.side && !q.eng && q.stun <= 0 && (q.y - p.y) * out > 0.3 && Math.abs(q.x - p.x) < 3 && dist(q, p) < 3.4);
       if (edge && e > 0.35) { lp.bounced = true; event(lp, 'bounce', '', p, edge); }
-      else return seek(p, { x: Math.min(1.5, -1 + e * 3), y: lp.holeY }, 1, 0.05);
-    } else if (e < 0.55 && lp.play.dir !== 'outside') return seek(p, { x: 1.5, y: lp.holeY }, 1, 0.05);
+      else return seek(p, { x: Math.min(1.5, -1 + e * (lp.play.dir === 'toss' ? 4.5 : 3)), y: lp.holeY }, 1, 0.05);
+    } else if (e < (lp.play.dir === 'power' ? 0.8 : 0.55) && lp.play.dir !== 'outside' && lp.play.dir !== 'toss') return seek(p, { x: 1.5, y: lp.holeY }, 1, 0.05);
   }
   let best = null;
   for (let a = -90; a <= 90; a += 15) {
@@ -1284,7 +1440,7 @@ function blocks(lp) {
   // New engagements
   for (const b of lp.players) {
     if (b.eng || b.stun > 0 || b.carrier) continue;
-    const blocker = b.side === lp.carrierTeam && ['passblock', 'runblock', 'stalk', 'escort'].includes(b.role)
+    const blocker = b.side === lp.carrierTeam && ['passblock', 'runblock', 'stalk', 'escort', 'lead'].includes(b.role)
       || (b.role === 'route' && b.route?.[b.wp]?.block != null);
     if (!blocker) continue;
     for (const d of lp.players) {
@@ -1337,7 +1493,11 @@ function blocks(lp) {
     let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.45 ? 0.3 : 1);
     if (!passPro) rate = Math.max(rate, 0.1);
     // Blocks far from the ball break up on their own.
-    if (lp.carrierSet && dist(d, lp.carrier) > 6 && b.engT > 0.6) rate = Math.max(rate, 2.5);
+    // (A block well in front of the carrier holds: that is the lane he is about to run through.)
+    if (lp.carrierSet && b.engT > 0.6) {
+      const c = lp.carrier, ahead = (d.x - c.x) * (c.side === 'off' ? 1 : -1);
+      if (dist(d, c) > 9 || (dist(d, c) > 4 && ahead < -1.5)) rate = Math.max(rate, 2.5);
+    }
     if (chance(g, rate * DT)) {
       // The move fits the body: big and strong bull rushes, light and quick swims, the rest rip.
       const move = mass > 0.25 && d.a.str >= d.a.acc ? 'bull' : d.a.acc > 70 || mass < -0.3 ? 'swim' : 'rip';
@@ -1398,10 +1558,15 @@ function throwSpeed(qb) { return 17 + 0.09 * qb.a.arm; }
 // ball leaves his hand on a real arc. Nothing is resolved until it gets there.
 function throwTo(lp, r) { startThrow(lp, r, false); }
 function throwAway(lp) { startThrow(lp, null, true); }
-function startThrow(lp, r, away) {
+// Throws come in three kinds, like the real thing: a bullet (hard and flat, through a closing
+// window, a little harder to catch), touch (the default: drilled short, lofted a bit as it gets
+// longer) and a lob (high and soft, over the underneath defenders, but it hangs in the air).
+const THROWS = { bullet: { v: 1.14, sd: 1.08, catch: -0.04, windup: 0.9 }, touch: { v: 1, sd: 1, catch: 0, windup: 1 }, lob: { v: 0.7, sd: 1.12, catch: 0.03, windup: 1.1 } };
+function startThrow(lp, r, away, opts = {}) {
   if (lp.windup || lp.thrown || lp.tackle) return;
   const qb = lp.off.QB;
-  lp.windup = { r, away, t0: lp.t, T: WINDUP_T * (1.15 - qb.a.arm / 400), at: away ? { x: qb.x + 6, y: (qb.y >= 0 ? 1 : -1) * (SIDE + 4) } : null };
+  const kind = THROWS[opts.type] ? opts.type : 'touch';
+  lp.windup = { r, away, kind, place: opts.place ?? null, t0: lp.t, T: WINDUP_T * (1.15 - qb.a.arm / 400) * THROWS[kind].windup, at: away ? { x: qb.x + 6, y: (qb.y >= 0 ? 1 : -1) * (SIDE + 4) } : null };
   lp.qbState = 'windup';
   event(lp, 'windup', '', qb, r);
 }
@@ -1413,7 +1578,7 @@ function windup(lp) {
   if (lp.ball.holder !== qb || lp.tackle || lp.phase !== 'live') { lp.windup = null; return; }
   if (lp.t - W.t0 < W.T) return;
   lp.windup = null;
-  release(lp, W.r, W.away);
+  release(lp, W.r, W.away, W.kind, W.place);
 }
 
 // Where the ball leaves the passer's hand: in front of his throwing shoulder, near the top of
@@ -1424,9 +1589,10 @@ export function releasePoint(qb) {
 // The height a receiver catches the ball at.
 export function catchHeight(p) { return clamp(p.h * 0.6, 0.9, 2.6); }
 
-function release(lp, r, away) {
+function release(lp, r, away, kind = 'touch', place = null) {
   const g = lp.g, qb = lp.off.QB;
-  const v = throwSpeed(qb);
+  const K = THROWS[kind] ?? THROWS.touch;
+  const v = throwSpeed(qb) * (away ? 1 : K.v);
   const rp = releasePoint(qb);
   if (away) {
     const side = qb.y >= 0 ? 1 : -1;
@@ -1451,13 +1617,29 @@ function release(lp, r, away) {
   const air = Math.hypot(px - rp.x, py - rp.y);
   const tPr = pressured ? traitMod('pressure', { qb }) : null;
   if (tPr) traitNotes(lp, tPr, { qb }, qb);
-  let sd = (0.25 + air * 0.042) * (1.9 - acc / 90) * (pressured ? 1 + 0.5 * tPr.v : 1);
-  if (lp.manual && lp.control === qb && len(qb.vx, qb.vy) > 2) sd *= 1.25; // throwing on the run
+  let sd = (0.25 + air * 0.042) * (1.9 - acc / 90) * (pressured ? 1 + 0.5 * tPr.v : 1) * K.sd;
+  // A bullet thrown a long way sprays more; a lob thrown short is hard to drop in.
+  if (kind === 'bullet' && air > 18) sd *= 1.15;
+  if (kind === 'lob' && air < 10) sd *= 1.2;
+  const moving = len(qb.vx, qb.vy) > 2;
+  if (moving && ((lp.manual && lp.control === qb) || lp.play.boot)) sd *= lp.play.boot ? 1.12 : 1.25; // throwing on the run
+  // Placement: lead him downfield (high), bring it back (low, he works back to it) or put it to
+  // one side. The receiver adjusts to it in the air.
+  let zc = catchHeight(r);
+  if (place) {
+    const k = 1.5;
+    px += place.x * (place.x > 0 ? k * 1.2 : k);
+    py += place.y * k;
+    if (place.x > 0.5) zc += 0.35; else if (place.x < -0.5) zc -= 0.3;
+    zc = clamp(zc, 0.6, 3.2);
+  }
   px += randn(g) * sd * 1.2; py += randn(g) * sd;
   py = clamp(py, -SIDE - 2, SIDE + 2);
-  // Deep balls are lofted (a touch pass), short ones are drilled.
-  const loft = air > 18 ? 0.86 : air > 10 ? 0.94 : 1;
-  launch(lp, { target: r, sx: rp.x, sy: rp.y, z0: rp.z, tx: px, ty: py, zc: catchHeight(r), v: v * loft, pressured, air: px });
+  // Touch: deep balls are lofted, short ones are drilled.
+  const loft = kind !== 'touch' ? 1 : air > 18 ? 0.86 : air > 10 ? 0.94 : 1;
+  launch(lp, { target: r, sx: rp.x, sy: rp.y, z0: rp.z, tx: px, ty: py, zc, v: v * loft, pressured, air: px, kind, catchMod: K.catch, placed: !!place });
+  // The user takes over the receiver while the ball is in the air (and can attack it).
+  if (lp.user === lp.o && lp.control === qb && !lp.autoQB) { lp.control = r; lp.manual = false; }
   lp.stats.target = r;
   lp.stats.cov = nearestDef(lp, r);
   event(lp, 'throw', `${nm(qb.id)} throws for ${nm(r.id)}`, qb, r);
@@ -1516,9 +1698,43 @@ function ballFlight(lp) {
   const at = flightAt(T, Math.min(e, T.T));
   const b = lp.ball;
   b.x = at.x; b.y = at.y; b.z = at.z;
-  if (e < T.T) return;
+  if (e < T.T) { if (!T.away && underneath(lp, T, e)) return; return; }
   if (T.away) { dropBall(lp, 0.45); incomplete(lp, `${nm(lp.off.QB.id)} throws it away.`); return; }
   arrival(lp);
+}
+
+// On its way the ball passes over (or into) defenders between the passer and the target: a
+// linebacker sitting in the throwing lane, a rusher with his hands up at the line. Each gets one
+// chance to get a hand on it if it comes by low enough; a bullet stays under the radar of no one,
+// a lob sails over them. Returns true when the ball was tipped or picked.
+function underneath(lp, T, e) {
+  if (e < 0.08 || T.T - e < 0.2) return false;
+  const b = lp.ball;
+  T.seen ??= new Set();
+  for (const q of lp.players) {
+    if (q.side !== 'def' || q.eng || q.stun > 0 || T.seen.has(q)) continue;
+    const dd = Math.hypot(q.x - b.x, q.y - b.y);
+    if (dd > 1.1) continue;
+    T.seen.add(q);
+    // How high he gets a hand: his height, a jump, more for a flyer.
+    const reach = q.h * 1.05 + 0.5 + (q.h > 2.2 ? 0.2 : 0);
+    const low = clamp((reach - b.z) / 0.9, 0, 1);
+    if (low <= 0) continue;
+    // He has to see it coming: a rusher facing the passer, a zone defender reading him; a man
+    // defender trailing his receiver with his back to the ball rarely does.
+    const facing = (q.fx * (lp.off.QB.x - q.x) + q.fy * (lp.off.QB.y - q.y)) / (Math.hypot(lp.off.QB.x - q.x, lp.off.QB.y - q.y) || 1);
+    const eyes = clamp(0.35 + facing * 0.5, 0.1, 0.85) * (q.react > 0 ? 0.4 : 1);
+    const p = low * eyes * (0.1 + (q.a.awr + q.a.cov) / 1000) * (1.1 - dd * 0.5);
+    if (!chance(lp.g, p)) continue;
+    const pick = q.role === 'cover' && b.z > 0.6 && chance(lp.g, clamp(0.12 + (q.a.hnd - 60) * 0.005, 0.05, 0.3));
+    if (pick) { interception(lp, q, { x: b.x, y: b.y }); return true; }
+    st(lp.g, lp.d, q.id).pd++;
+    dropBall(lp, 0.1, 2.6);
+    event(lp, 'deflect', '', q, T.target);
+    incomplete(lp, `${nm(q.id)} gets a hand on ${nm(lp.off.QB.id)}'s pass${q.role === 'rush' ? ' at the line' : ''}.`, q);
+    return true;
+  }
+  return false;
 }
 
 // The ball comes loose (incomplete, dropped, batted): it keeps some of its flight and falls.
@@ -1589,7 +1805,10 @@ function arrival(lp) {
   const contested = dfd && dd < 1.8;
   const hands = contested ? r.a.hndC : r.a.hnd;
   const thrown = Math.hypot(T.tx - T.sx, T.ty - T.sy);
-  const base = 0.93 + (hands - 75) * 0.006 - dr * 0.1 - Math.max(0, thrown - 14) * 0.009;
+  // Attacking the ball at its high point (Space while it is in the air to your receiver):
+  // better in traffic, and he stops to make the catch.
+  const aggro = !!lp.aggro && lp.control === r;
+  const base = 0.93 + (hands - 75) * 0.006 - dr * 0.1 - Math.max(0, thrown - 14) * 0.009 + (T.catchMod ?? 0) + (aggro ? (contested ? 0.1 : -0.02) : 0);
   let caught;
   if (contested) {
     const R = rep(r.id, hands, dfd.id, dfd.a.cov);
@@ -1597,9 +1816,13 @@ function arrival(lp) {
     caught = contest(lp, pc(R.diff), pc(R.base), R, r, dfd, 'on the contested catch');
   } else caught = chance(g, clamp(base, 0.15, 0.98));
   if (caught) {
-    // The ball comes to his hands where he is; nobody jumps to the spot.
+    // The ball comes to his hands where he is. Open and in stride, he catches it running and
+    // keeps going (a run-after-catch catch); in traffic or going up for it, he secures it first.
     const deepCatch = thrown > 18;
-    r.vx *= deepCatch ? 0.3 : 0.45; r.vy *= deepCatch ? 0.3 : 0.45; r.slow = deepCatch ? 0.5 : 0.3;
+    const rac = !contested && !aggro && dd > 3 && len(r.vx, r.vy) > 4;
+    const k = rac ? 0.6 : deepCatch || aggro ? 0.3 : 0.45;
+    r.vx *= k; r.vy *= k; r.slow = rac ? 0.08 : deepCatch ? 0.5 : 0.3;
+    lp.catchKind = rac ? 'rac' : aggro || contested ? 'aggressive' : 'possession';
     r.caughtAt = lp.t;
     lp.caught = true;
     lp.catchX = r.x;
@@ -1733,7 +1956,11 @@ function startTackle(lp, c, q, sack, dove) {
   const vx = (mc * c.vx + mq * q.vx) / (mc + mq), vy = (mc * c.vy + mq * q.vy) / (mc + mq);
   const fwd = c.side === 'off' ? 1 : -1;
   const drag = clamp(Math.log(mc / mq) * 0.25 + len(vx, vy) * 0.03, -0.2, 0.6);
-  lp.tackle = { c, q, sack, t0: lp.t, T: TACKLE_T * (1 + drag), vx, vy, fp: c.x, fwd, dove, contact: { x: c.x, y: c.y } };
+  // Falling forward: a carrier going downfield gets his body length past the contact point,
+  // more when he is stronger and heavier than the tackler, less when he is met square.
+  const headOn = (q.x - c.x) * fwd > 0.2;
+  const lean = sack ? 0 : clamp(0.3 + (c.a.strBT - q.a.tkl) * 0.012 + Math.max(0, c.vx * fwd) * 0.07 + Math.log(mc / mq) * 0.35 - (headOn ? 0.35 : 0), 0, 1.4);
+  lp.tackle = { c, q, sack, t0: lp.t, T: TACKLE_T * (1 + drag), vx, vy, fp: c.x, fwd, dove, lean, contact: { x: c.x, y: c.y } };
   if (lp.windup) lp.windup = null;
   c.slow = 0; q.dive = dove ? 0.3 : q.dive;
   event(lp, 'contact', `${nm(q.id)} wraps up ${nm(c.id)}`, q, c);
@@ -1751,6 +1978,7 @@ function tackleStep(lp) {
   const f = Math.exp(-DT * (3.2 + help * 2.5));
   T.vx *= f; T.vy *= f;
   c.vx = T.vx; c.vy = T.vy; c.x += c.vx * DT; c.y += c.vy * DT;
+  if (T.lean && e < T.T) { const k = (T.lean * DT) / T.T; c.x += T.fwd * k; q.x += T.fwd * k; }
   // The tackler stays wrapped on the side he hit from, at body distance.
   let ux = q.x - c.x, uy = q.y - c.y; const l = len(ux, uy) || 1; ux /= l; uy /= l;
   const want = (c.r + q.r) * 0.9;
@@ -1826,7 +2054,8 @@ function syncBall(lp) {
       // The hold changes shape (a snap caught, the passer cocking it, a catch tucked away):
       // the ball moves there over a few frames instead of jumping.
       const h = b.holder, d = Math.hypot(at.x - b.x, at.y - b.y, at.z - (b.z ?? at.z));
-      const max = Math.hypot(h.vx, h.vy) * DT + 0.22;
+      // (Less on the catch frame itself: the ball has already flown part of this step.)
+      const max = Math.hypot(h.vx, h.vy) * DT + (h.caughtAt === lp.t ? 0.1 : 0.22);
       if (d > max && Number.isFinite(b.z)) {
         const k = max / d;
         at.x = b.x + (at.x - b.x) * k; at.y = b.y + (at.y - b.y) * k; at.z = b.z + (at.z - b.z) * k;
@@ -1836,9 +2065,9 @@ function syncBall(lp) {
   }
 }
 
-function startExchange(lp, qb, rb) {
+function startExchange(lp, qb, rb, T = EXCHANGE_T) {
   setCarrier(lp, rb);
-  lp.ball.xfer = { from: qb, to: rb, t0: lp.t, T: EXCHANGE_T };
+  lp.ball.xfer = { from: qb, to: rb, t0: lp.t, T, pitch: T > EXCHANGE_T };
   event(lp, 'handoff', '', rb, qb);
 }
 

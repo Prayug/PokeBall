@@ -3,32 +3,63 @@
 import { PLAYERS, OFF_SLOTS, DEF_SLOTS, unitRatings } from './ratings.js';
 import { TYPE_TRAITS, ABILITIES, WEATHER, bestMultiplier, matchupModifier } from './types.js';
 
+// The playbook. Each run or pass has its kind, the fast simulator's numbers (depth, air yards,
+// target weights) and, for plays added on top of the original eleven, `sim`: the original play
+// the fast simulator resolves it as. The live field runs every play for real (routes and run
+// schemes in live.js).
 export const OFF_PLAYS = {
-  inside_run: { name: 'Inside run', kind: 'run', dir: 'inside', blurb: 'Between the guards' },
-  outside_run: { name: 'Outside run', kind: 'run', dir: 'outside', blurb: 'Stretch to the edge' },
-  draw: { name: 'Draw', kind: 'run', dir: 'draw', blurb: 'Fake pass, hand off' },
-  qb_sneak: { name: 'QB sneak', kind: 'run', dir: 'sneak', blurb: 'Push for a yard' },
-  screen: { name: 'Screen', kind: 'pass', depth: 'screen', air: [-2, 1], targets: { RB: 1 }, blurb: 'Dump to the back' },
-  slant: { name: 'Quick slant', kind: 'pass', depth: 'short', air: [3, 7], targets: { WR1: 0.35, WR2: 0.3, WR3: 0.35 }, blurb: '3 to 7 yards' },
-  out: { name: 'Out', kind: 'pass', depth: 'short', air: [4, 9], sideline: true, targets: { WR1: 0.3, WR2: 0.3, WR3: 0.25, RB: 0.15 }, blurb: 'Sideline, stops clock' },
-  curl: { name: 'Curl', kind: 'pass', depth: 'mid', air: [7, 12], targets: { WR1: 0.3, WR2: 0.3, TE: 0.25, WR3: 0.15 }, blurb: '7 to 12 yards' },
-  te_seam: { name: 'TE seam', kind: 'pass', depth: 'mid', air: [9, 15], targets: { TE: 0.6, WR3: 0.25, WR1: 0.15 }, blurb: 'Tight end up the middle' },
-  post: { name: 'Deep post', kind: 'pass', depth: 'deep', air: [14, 25], targets: { WR1: 0.45, WR2: 0.4, WR3: 0.15 }, blurb: '14 to 25 yards' },
-  pa_deep: { name: 'Play-action deep', kind: 'pass', depth: 'deep', pa: true, air: [18, 34], targets: { WR1: 0.45, WR2: 0.35, TE: 0.2 }, blurb: 'Sell the run, go long' },
+  inside_run: { name: 'Inside Zone', kind: 'run', dir: 'inside', blurb: 'Read the A and B gaps' },
+  outside_run: { name: 'Outside Zone', kind: 'run', dir: 'outside', blurb: 'Stretch to the edge, cut up' },
+  power: { name: 'Power O', kind: 'run', dir: 'power', sim: 'inside_run', blurb: 'Backside guard pulls, off tackle' },
+  counter: { name: 'Counter', kind: 'run', dir: 'counter', sim: 'inside_run', blurb: 'Step one way, run the other' },
+  toss: { name: 'Toss Sweep', kind: 'run', dir: 'toss', sim: 'outside_run', blurb: 'Pitch it wide and race the edge' },
+  dive: { name: 'HB Dive', kind: 'run', dir: 'dive', sim: 'inside_run', blurb: 'Quick hit straight ahead' },
+  draw: { name: 'HB Draw', kind: 'run', dir: 'draw', blurb: 'Show pass, hand off late' },
+  qb_sneak: { name: 'QB Sneak', kind: 'run', dir: 'sneak', blurb: 'Push for a yard' },
+  screen: { name: 'HB Screen', kind: 'pass', depth: 'screen', air: [-2, 1], targets: { RB: 1 }, blurb: 'Let the rush in, dump to the back' },
+  bubble: { name: 'WR Bubble', kind: 'pass', depth: 'screen', air: [-2, 1], sim: 'screen', targets: { WR3: 1 }, blurb: 'Slot catches it behind blockers' },
+  slant: { name: 'Slants', kind: 'pass', depth: 'short', air: [3, 7], targets: { WR1: 0.35, WR2: 0.3, WR3: 0.35 }, blurb: 'Quick inside breaks, 3 to 7 yards' },
+  out: { name: 'Quick Out', kind: 'pass', depth: 'short', air: [4, 9], sideline: true, targets: { WR1: 0.3, WR2: 0.3, WR3: 0.25, RB: 0.15 }, blurb: 'Sideline throws, stops the clock' },
+  stick: { name: 'Stick', kind: 'pass', depth: 'short', air: [4, 7], sim: 'slant', targets: { TE: 0.4, WR3: 0.35, RB: 0.25 }, blurb: 'Sit at six yards, flat underneath' },
+  curl_flat: { name: 'Curl Flat', kind: 'pass', depth: 'short', air: [3, 11], sim: 'curl', targets: { WR1: 0.35, WR2: 0.3, RB: 0.2, WR3: 0.15 }, blurb: 'High-low the flat defender' },
+  mesh: { name: 'Mesh', kind: 'pass', depth: 'short', air: [2, 8], sim: 'slant', targets: { WR3: 0.35, TE: 0.35, RB: 0.15, WR1: 0.15 }, blurb: 'Two shallow crossers rub man coverage' },
+  curl: { name: 'Curls', kind: 'pass', depth: 'mid', air: [7, 12], targets: { WR1: 0.3, WR2: 0.3, TE: 0.25, WR3: 0.15 }, blurb: 'Sit down in the zone holes' },
+  smash: { name: 'Smash', kind: 'pass', depth: 'mid', air: [5, 16], sim: 'curl', targets: { WR3: 0.4, WR1: 0.3, WR2: 0.3 }, blurb: 'Hitch outside, corner inside' },
+  dagger: { name: 'Dagger', kind: 'pass', depth: 'mid', air: [10, 16], sim: 'curl', targets: { WR1: 0.5, WR3: 0.3, TE: 0.2 }, blurb: 'Seam clears it out, dig underneath' },
+  levels: { name: 'Levels', kind: 'pass', depth: 'mid', air: [5, 13], sim: 'curl', targets: { WR1: 0.4, WR3: 0.4, TE: 0.2 }, blurb: 'In-breakers at 5 and 12 yards' },
+  flood: { name: 'Flood', kind: 'pass', depth: 'mid', air: [3, 16], sim: 'out', sideline: true, targets: { WR3: 0.45, RB: 0.3, WR2: 0.25 }, blurb: 'Three levels to one sideline' },
+  y_cross: { name: 'Y-Cross', kind: 'pass', depth: 'mid', air: [12, 18], sim: 'te_seam', targets: { TE: 0.55, WR2: 0.25, RB: 0.2 }, blurb: 'Tight end crosses the whole field' },
+  te_seam: { name: 'TE Seam', kind: 'pass', depth: 'mid', air: [9, 15], targets: { TE: 0.6, WR3: 0.25, WR1: 0.15 }, blurb: 'Tight end splits the safeties' },
+  four_verts: { name: 'Four Verticals', kind: 'pass', depth: 'deep', air: [15, 32], sim: 'post', targets: { WR3: 0.3, TE: 0.25, WR1: 0.25, WR2: 0.2 }, blurb: 'Everyone goes, stretch the safeties' },
+  post: { name: 'Deep Post', kind: 'pass', depth: 'deep', air: [14, 25], targets: { WR1: 0.45, WR2: 0.4, WR3: 0.15 }, blurb: 'Beat the safety to the middle' },
+  pa_boot: { name: 'PA Bootleg', kind: 'pass', depth: 'mid', pa: true, boot: true, air: [3, 18], sim: 'pa_deep', targets: { TE: 0.4, WR2: 0.35, RB: 0.25 }, blurb: 'Fake the run, QB rolls out' },
+  pa_deep: { name: 'PA Shot', kind: 'pass', depth: 'deep', pa: true, air: [18, 34], targets: { WR1: 0.45, WR2: 0.35, TE: 0.2 }, blurb: 'Sell the run, go long' },
   punt: { name: 'Punt', kind: 'punt', blurb: 'Flip the field' },
   fg: { name: 'Field goal', kind: 'fg', blurb: '' },
 };
 
+// Defensive calls. `sim` is the original call the fast simulator resolves a newer one as.
 export const DEF_PLAYS = {
-  base: { name: 'Base', blurb: 'Balanced, man coverage' },
-  run_blitz: { name: 'Run blitz', blurb: 'MLB attacks the line' },
-  pass_blitz: { name: 'Pass blitz', blurb: 'OLB and MLB rush' },
-  cover2: { name: 'Cover 2', blurb: 'Two deep safeties' },
-  cover3: { name: 'Cover 3', blurb: 'Three deep zones' },
-  man_press: { name: 'Man press', blurb: 'Jam short routes' },
+  base: { name: 'Cover 1', blurb: 'Man across, free safety deep' },
+  cover1_robber: { name: 'Cover 1 Robber', sim: 'base', blurb: 'Man, strong safety robs the middle' },
+  cover2_man: { name: '2 Man Under', sim: 'man_press', blurb: 'Trail man under two deep halves' },
+  man_press: { name: 'Press Man', blurb: 'Jam at the line, man across' },
+  goal_line: { name: 'Goal Line', blurb: 'Stack the box' },
+  cover2: { name: 'Cover 2', blurb: 'Two deep halves, five under' },
+  tampa2: { name: 'Tampa 2', sim: 'cover2', blurb: 'Cover 2, Mike runs the deep middle' },
+  cover3: { name: 'Cover 3', blurb: 'Three deep thirds, four under' },
+  cover4: { name: 'Cover 4', sim: 'cover3', blurb: 'Quarters, four deep' },
   prevent: { name: 'Prevent', blurb: 'Give up short, stop long' },
-  goal_line: { name: 'Goal line', blurb: 'Stack the box' },
+  run_blitz: { name: 'Mike Blitz', blurb: 'Middle linebacker hits the A gap' },
+  pass_blitz: { name: 'LB Dogs', blurb: 'Both linebackers rush' },
+  mug: { name: 'Double A Mug', sim: 'pass_blitz', blurb: 'Linebackers walk up in the A gaps' },
+  nickel_blitz: { name: 'Nickel Blitz', sim: 'pass_blitz', blurb: 'Slot corner off the edge' },
+  fire_zone: { name: 'Fire Zone', sim: 'cover3', blurb: 'Zone blitz, end drops to the flat' },
+  cover0: { name: 'Cover 0', sim: 'pass_blitz', blurb: 'Send six, no help deep' },
 };
+// The original call the fast simulator (and its tables) resolves a play as.
+export const simOff = (call) => OFF_PLAYS[call]?.sim ?? call;
+export const simDef = (call) => DEF_PLAYS[call]?.sim ?? call;
 
 // Separation adjustments by defensive call and route depth; run lane adjustments.
 export const SCHEME = {
@@ -341,8 +372,8 @@ export function runPlay(g, offCall, defCall) {
   let r;
   if (play.kind === 'punt') r = doPunt(g, base);
   else if (play.kind === 'fg') r = doFieldGoal(g, base);
-  else if (play.kind === 'run') r = doRun(g, offCall, defCall);
-  else r = doPass(g, offCall, defCall);
+  else if (play.kind === 'run') r = doRun(g, simOff(offCall), simDef(defCall));
+  else r = doPass(g, simOff(offCall), simDef(defCall));
   return finishPlay(g, r, base, offCall, defCall, between(g, 4, 8));
 }
 
@@ -840,6 +871,20 @@ export function passWeights(g) {
   };
   if (t.coach === 'speed') { w.post *= 1.4; w.pa_deep *= 1.4; }
   if (g.toGo > 15) { w.screen *= 0.5; w.slant *= 0.4; }
+  return spread(w, 'pass');
+}
+
+// The newer plays share the weight of the original play they resolve as, so the AI mixes the
+// whole playbook in the same proportions by kind and depth.
+const SHARE = { bubble: 0.5, stick: 0.8, curl_flat: 0.7, mesh: 0.8, smash: 0.7, dagger: 0.6, levels: 0.6, flood: 0.6, y_cross: 0.7,
+  four_verts: 0.7, pa_boot: 1.2, power: 0.8, counter: 0.6, toss: 0.7, dive: 0.6,
+  cover1_robber: 0.6, cover2_man: 0.6, tampa2: 0.7, cover4: 0.8, mug: 0.6, nickel_blitz: 0.6, fire_zone: 0.7, cover0: 0.35 };
+function spread(w, kind) {
+  const table = kind === 'def' ? DEF_PLAYS : OFF_PLAYS;
+  for (const [k, P] of Object.entries(table)) {
+    if (!P.sim || w[P.sim] == null || (kind !== 'def' && P.kind !== kind)) continue;
+    w[k] = w[P.sim] * (SHARE[k] ?? 0.6);
+  }
   return w;
 }
 
@@ -850,6 +895,9 @@ export function runWeights(g) {
   const w = { inside_run: 1.2, outside_run: 1 + (A(o, L.RB, 'spd') - 70) / 30, draw: g.toGo >= 7 ? 0.8 : 0.25 };
   if (g.toGo <= 1) w.qb_sneak = 0.6 + Math.max(0, A(o, L.QB, 'str') - 65) / 30;
   if (t.coach === 'trench') w.inside_run *= 1.5;
+  spread(w, 'run');
+  if (g.toGo <= 2) { w.dive = (w.dive ?? 0) * 1.6; w.power = (w.power ?? 0) * 1.4; }
+  if (g.toGo >= 7) w.toss = (w.toss ?? 0) * 1.2;
   return w;
 }
 
@@ -870,6 +918,11 @@ export function defenseWeights(g) {
   if (g.quarter >= 4 && lead > 0 && lead <= 8 && g.clock < 120) w.prevent = (w.prevent ?? 0) + 4;
   if (coach === 'trench') { w.pass_blitz = (w.pass_blitz ?? 0) * 1.5 + 0.5; w.run_blitz = (w.run_blitz ?? 0) * 1.3; }
   if (coach === 'speed') w.man_press = (w.man_press ?? 0) * 1.6 + 0.5;
+  spread(w, 'def');
+  // A few calls the down asks for by name: quarters and Tampa 2 on long yardage, an all-out
+  // blitz when the offense needs only a yard or two.
+  if (g.down >= 3 && g.toGo >= 7) { w.cover4 = (w.cover4 ?? 0) + 1; w.tampa2 = (w.tampa2 ?? 0) + 0.8; }
+  if (g.toGo <= 2) w.cover0 = (w.cover0 ?? 0) + 0.5;
   return w;
 }
 

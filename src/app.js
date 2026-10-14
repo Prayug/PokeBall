@@ -4,7 +4,7 @@ import { SPRITES } from './sprites.js';
 import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER, effectLabel, bestMultiplier } from './types.js';
 import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
   quarterText, fgDistance, fgChance, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights, manualSub } from './engine.js';
-import { createLivePlay, snap, step as stepLive, playSeconds, worldSpots, playState, DT, FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT } from './live.js';
+import { createLivePlay, snap, hurry, step as stepLive, playSeconds, worldSpots, playState, DT, FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT } from './live.js';
 import { formationsFor } from './formations.js';
 import { measureVersion } from './body.js';
 import { Stage, webglAvailable } from './field3d.js';
@@ -734,8 +734,9 @@ function scoreboard(g) {
 }
 
 // Play families for the call sheet: a short label and a colored edge per group.
-const DEF_GROUPS = [['front', 'Front', ['base', 'goal_line']], ['blitz', 'Blitz', ['run_blitz', 'pass_blitz']],
-  ['cover', 'Coverage', ['cover2', 'cover3', 'man_press', 'prevent']]];
+const DEF_GROUPS = [['front', 'Man', ['base', 'cover1_robber', 'cover2_man', 'man_press', 'goal_line']],
+  ['cover', 'Zone', ['cover2', 'tampa2', 'cover3', 'cover4', 'prevent']],
+  ['blitz', 'Pressure', ['run_blitz', 'pass_blitz', 'mug', 'nickel_blitz', 'fire_zone', 'cover0']]];
 // Number keys for the visible calls in order; kicks get letters.
 const CALL_KEYS = [['Digit1', '1'], ['Digit2', '2'], ['Digit3', '3'], ['Digit4', '4'], ['Digit5', '5'], ['Digit6', '6'],
   ['Digit7', '7'], ['Digit8', '8'], ['Digit9', '9'], ['Digit0', '0'], ['Minus', '-']];
@@ -808,8 +809,10 @@ function cycleForm(onOff) {
 // move between them, so each card has room for readable play art, the name, one line on
 // what it does, run or pass, and its key. Every call keeps its number key from any tab, and
 // the panel opens on the category of the call that fits the down.
-const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'draw', 'qb_sneak']], ['short', 'Short pass', ['screen', 'slant', 'out', 'curl']],
-  ['deep', 'Deep pass', ['te_seam', 'post', 'pa_deep']], ['kick', 'Special teams', ['punt', 'fg']]];
+const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'power', 'counter', 'toss', 'dive', 'draw', 'qb_sneak']],
+  ['short', 'Quick', ['slant', 'out', 'stick', 'curl_flat', 'mesh', 'screen', 'bubble']],
+  ['mid', 'Intermediate', ['curl', 'smash', 'dagger', 'levels', 'flood', 'y_cross', 'te_seam']],
+  ['deep', 'Shots', ['four_verts', 'post', 'pa_boot', 'pa_deep']], ['kick', 'Special teams', ['punt', 'fg']]];
 function csTabs(g) {
   const { onOff, groups, fit } = callSheet(g);
   const byCall = new Map(groups.flatMap(([fam, , cs]) => cs.map((c) => [c.call, { ...c, fam }])));
@@ -818,6 +821,11 @@ function csTabs(g) {
   // Anything not placed in a tab (new plays) lands in the last one.
   const placed = new Set(tabs.flatMap(([, , cs]) => cs.map((c) => c.call)));
   for (const c of byCall.values()) if (!placed.has(c.call)) tabs[tabs.length - 1][2].push(c);
+  // Number keys count from 1 within each tab (kicks keep their letters), like a playbook page.
+  for (const [, , cs] of tabs) {
+    let n = 0;
+    for (const c of cs) { const key = KICK_KEYS[c.call] && onOff ? KICK_KEYS[c.call] : CALL_KEYS[n++]; c.code = key?.[0]; c.label = key?.[1]; }
+  }
   const fitTab = tabs.find(([, , cs]) => cs.some((c) => c.call === fit))?.[0] ?? tabs[0][0];
   const cur = tabs.some(([k]) => k === S.csTab) ? S.csTab : fitTab;
   return { onOff, tabs, fit, cur };
@@ -826,11 +834,13 @@ function callSheetHtml(g) {
   const { onOff, tabs, fit, cur } = csTabs(g);
   const fg = fgDistance(g);
   const side = onOff ? 'off' : 'def';
-  const card = ({ call, label, fam }) => {
+  const curCalls = new Set(tabs.find(([k]) => k === cur)[2].map((c) => c.call));
+  const card = ({ call, label: key, fam }) => {
+    const label = curCalls.has(call) || KICK_KEYS[call] ? key : null;
     const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
     const kind = onOff ? p.kind : fam;
     const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
-    const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick' }[kind] : { front: 'Front', blitz: 'Blitz', cover: 'Coverage' }[kind];
+    const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick' }[kind] : { front: 'Man', blitz: 'Blitz', cover: 'Zone' }[kind];
     const form = onOff ? formationName(call, formFor(call)) : DEF_FORMATIONS[frontFor(call)]?.short ?? '';
     return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" title="${esc(extra)}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
       <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call))}${label ? `<kbd>${label}</kbd>` : ''}${call === fit ? '<em class="fittag">Fits</em>' : ''}</span>
@@ -1117,12 +1127,14 @@ function lineupHtml(g) {
 
 function keysHelp() {
   return `<div class="keygrid">
-    <span><kbd>1</kbd>-<kbd>9</kbd> <kbd>0</kbd> <kbd>-</kbd> between plays: call the play on that card</span>
+    <span><kbd>1</kbd>-<kbd>8</kbd> between plays: call that play on the open page · <kbd>←</kbd> <kbd>→</kbd> turn the page</span>
     <span><kbd>C</kbd> change camera (gameplay, tactical, broadcast, player) · <kbd>M</kbd> menu · <kbd>Esc</kbd> change the play</span>
-    <span><kbd>Space</kbd> snap, juke with the ball, dive to tackle</span>
+    <span><kbd>Space</kbd> snap (hurries everyone to the line), juke with the ball, dive to tackle</span>
     <span><kbd>W A S D</kbd> or arrows: move your player</span>
     <span><kbd>Shift</kbd> sprint</span>
-    <span><kbd>1</kbd>-<kbd>5</kbd> throw to that receiver</span>
+    <span><kbd>1</kbd>-<kbd>5</kbd> throw: tap for touch, hold for a bullet, <kbd>Shift</kbd> + number for a lob</span>
+    <span>Hold a direction as you throw to place the ball: up leads him, down brings it back, sideways away from the defender</span>
+    <span><kbd>Space</kbd> while the ball is in the air: go up and attack it</span>
     <span><kbd>T</kbd> throw it away</span>
     <span><kbd>E</kbd> truck through a tackler</span>
     <span><kbd>R</kbd> spin move</span>
@@ -1354,7 +1366,7 @@ function startLive(off, def, opts) {
   L3.off = off; L3.def = def; L3.acc = 0; L3.deadT = 0; L3.ev = 0; L3.committed = null;
   L3.autoSnap = opts.autoSnap ?? null;
   L3.pclock = Math.max(L3.pclock, 10);
-  L3.edges.clear();
+  L3.edges.clear(); L3.hold = null; L3.lob = null;
   S.menuOpen = false;
   hideBanner();
   stage.setPlay(L3.lp);
@@ -1482,11 +1494,24 @@ function readInput(lp) {
   const up = (k.has('ArrowUp') || k.has('KeyW') ? 1 : 0) - (k.has('ArrowDown') || k.has('KeyS') ? 1 : 0) + (L3.stick?.up ?? 0);
   const right = (k.has('ArrowRight') || k.has('KeyD') ? 1 : 0) - (k.has('ArrowLeft') || k.has('KeyA') ? 1 : 0) + (L3.stick?.right ?? 0);
   const m = stage.toPlayFrame(up, right);
-  const throwKey = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].find((d) => e.has(d));
+  // Throws: tap a receiver's number for a touch pass, hold it for a bullet, Shift with it for a
+  // lob. The stick at release places the ball.
+  const shift = k.has('ShiftLeft') || k.has('ShiftRight');
+  const pressed = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].find((d) => e.has(d));
+  let throwKey = null, throwType = null;
+  if (pressed) {
+    if (shift || L3.lob === pressed) { throwKey = pressed; throwType = 'lob'; L3.hold = null; L3.lob = null; }
+    else L3.hold = { key: pressed, t0: performance.now() };
+  }
+  if (L3.hold && !throwKey) {
+    const held = performance.now() - L3.hold.t0;
+    if (!k.has(L3.hold.key)) { throwKey = L3.hold.key; throwType = 'touch'; L3.hold = null; }
+    else if (held >= 220) { throwKey = L3.hold.key; throwType = 'bullet'; L3.hold = null; }
+  }
   const inp = {
-    mx: m.mx, my: m.my, sprint: k.has('ShiftLeft') || k.has('ShiftRight'),
+    mx: m.mx, my: m.my, sprint: shift && !throwKey,
     juke: e.has('Space'), dive: e.has('Space'), truck: e.has('KeyE'), spin: e.has('KeyR'),
-    throwTo: throwKey ? ['WR1', 'WR2', 'WR3', 'TE', 'RB'][Number(throwKey.slice(5)) - 1] : null,
+    throwTo: throwKey ? ['WR1', 'WR2', 'WR3', 'TE', 'RB'][Number(throwKey.slice(5)) - 1] : null, throwType,
     throwAway: e.has('KeyT'), switchTo: e.has('KeyQ') || e.has('Tab') ? 'ball' : null,
   };
   e.clear();
@@ -1505,7 +1530,8 @@ function hudTip(lp) {
   }
   if (lp.phase === 'dead') return '';
   if (!c) return 'Watching the AI run your call';
-  if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'run') return '1-5 throw to that receiver · T throw away · arrows move';
+  if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'run') return '1-5 tap touch · hold bullet · Shift lob · arrows place the ball · T away';
+  if (lp.thrown && lp.ball.state === 'air' && lp.thrown.target === c) return 'Ball in the air · arrows adjust · Space go up for it';
   if (c.carrier) return 'Arrows run · Shift sprint · Space juke · R spin · E truck';
   if (c.side === 'def') return 'Arrows move · Shift sprint · Space dive/tackle · Q switch to the ball';
   return 'Arrows move · Shift sprint';
@@ -1546,7 +1572,7 @@ function loop(now) {
       // Snap only once set, and only on a press made in this state (no carried-over keys).
       // A press while the line is still settling is kept and snaps the moment it is set.
       const ready = lp.set && now - L3.flowAt > 250;
-      if (L3.edges.has('Space')) L3.snapWant = true;
+      if (L3.edges.has('Space')) { L3.snapWant = true; if (!lp.set) hurry(lp); }
       if (L3.snapWant && ready) { L3.edges.clear(); L3.snapWant = false; doSnap(); }
       else if (L3.edges.has('KeyQ') || L3.edges.has('Tab')) {
         L3.edges.clear();
@@ -1759,7 +1785,9 @@ function onKey(e, down) {
   if (!L3.lp && down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
     const g = S.game;
     if (!g.final && needsUser(g) && !S.busy) {
-      const hit = callSheet(g).groups.flatMap(([, , cs]) => cs).find((c) => c.code === code);
+      const { tabs, cur } = csTabs(g);
+      const hit = (tabs.find(([k]) => k === cur)?.[2] ?? []).find((c) => c.code === code)
+        ?? tabs.flatMap(([, , cs]) => cs).find((c) => KICK_KEYS[c.call] && c.code === code);
       if (hit) { e.preventDefault(); doCall(hit.call); return; }
       if (code === 'ArrowLeft' || code === 'ArrowRight') { e.preventDefault(); csMove(code === 'ArrowLeft' ? -1 : 1); return; }
       if (code === 'KeyZ') { e.preventDefault(); cycleForm(g.poss === userSide()); return; }
@@ -1772,6 +1800,8 @@ function onKey(e, down) {
   if (!L3.lp) { if (code === 'Space' && down && e.target === document.body) e.preventDefault(); return; }
   e.preventDefault();
   if (down) { if (!L3.keys.has(code) || !e.repeat) L3.edges.add(code); L3.keys.add(code); }
+  // Shift held as a number goes down: a lob (remembered, in case Shift is let go first).
+  if (down && code.startsWith('Digit') && e.shiftKey) L3.lob = code;
 }
 
 function bindTouch(root) {

@@ -81,11 +81,11 @@ export class Stage {
   buildOverlays() {
     const S = this.scene;
     // Line of scrimmage (blue) and line to gain (yellow): thin glowing strips on the turf.
-    // Thin and a little translucent, so they mark the spots without painting over the field.
-    const lineGeo = new THREE.PlaneGeometry(0.2, HALF_W * 2 - 0.2);
+    // Bold enough to read from any camera, a little translucent so the yard lines show through.
+    const lineGeo = new THREE.PlaneGeometry(0.34, HALF_W * 2 - 0.2);
     const lineMat = (c, o) => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: o, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, fog: false });
-    this.losLine = new THREE.Mesh(lineGeo, lineMat('#4d8dff', 0.62));
-    this.firstLine = new THREE.Mesh(lineGeo, lineMat('#ffd84a', 0.7));
+    this.losLine = new THREE.Mesh(lineGeo, lineMat('#4d8dff', 0.85));
+    this.firstLine = new THREE.Mesh(lineGeo, lineMat('#ffd84a', 0.9));
     for (const l of [this.losLine, this.firstLine]) { l.rotation.x = -Math.PI / 2; l.position.y = 0.025; l.renderOrder = 2; S.add(l); }
     // The chain crew on the far sideline: the down box at the line of scrimmage (its number is
     // the down) and the stake at the line to gain.
@@ -379,29 +379,44 @@ export class Stage {
     const lp = this.lp;
     if (!lp || lp.preview || lp.user == null) return;
     const W = (x, y) => this.world(x, y, 0.05);
+    // Every mark is a bright stroke on a dark edge, so it reads on the green from any camera.
+    const add = (pts, width, color, opacity, end) => {
+      G.add(ribbon(pts, width + 0.16, '#06140c', opacity * 0.55, end, 0.04));
+      G.add(ribbon(pts, width, color, opacity, end));
+    };
     if (lp.user === lp.o) {
       if (lp.kind === 'pass') {
         RECEIVER_KEYS.forEach((k, i) => {
           const p = lp.off[k];
           if (!p) return;
-          if (p.role === 'passblock' || !p.route) { G.add(ribbon([W(p.home.x, p.home.y), W(p.home.x - 1.4, p.home.y * 0.8)], 0.08, '#9fb3c8', 0.4, 'bar')); return; }
+          if (p.role === 'stalk' && p.assign) { add([W(p.home.x, p.home.y), W((p.home.x + p.assign.home.x) / 2, (p.home.y + p.assign.home.y) / 2)], 0.16, '#cfd8e3', 0.8, 'bar'); return; }
+          if (p.role === 'passblock' || !p.route) { add([W(p.home.x, p.home.y), W(p.home.x - 1.4, p.home.y * 0.8)], 0.16, '#cfd8e3', 0.75, 'bar'); return; }
           const pts = [W(p.home.x, p.home.y)];
           for (const w of p.route) if (w.x != null) pts.push(W(w.x, w.y));
-          if (pts.length > 1) G.add(ribbon(pts, 0.1, ART_COLORS[i], 0.55, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow'));
+          if (pts.length > 1) add(pts, 0.3, ART_COLORS[i], 0.92, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow');
         });
       } else {
         // Run: the lane the carrier takes and who each blocker takes.
         const c = lp.carrier ?? lp.off.RB;
         if (c) {
           const hole = lp.holeY ?? 0;
-          G.add(ribbon([W(c.home.x, c.home.y), W(-3.5, hole * 0.35), W(1.5, hole), W(6, hole * 1.05)], 0.16, '#ffd23f', 0.55, 'arrow'));
+          const dir = lp.play.dir;
+          const lane = dir === 'counter' ? [W(c.home.x, c.home.y), W(c.home.x + 0.5, -Math.sign(hole) * 2), W(-3, hole * 0.4), W(1.5, hole), W(6, hole * 1.05)]
+            : dir === 'toss' || dir === 'outside' ? [W(c.home.x, c.home.y), W(-3.5, hole * 0.6), W(0, hole), W(6, hole * 1.05)]
+              : [W(c.home.x, c.home.y), W(-3.5, hole * 0.35), W(1.5, hole), W(6, hole * 1.05)];
+          add(lane, 0.42, '#ffd23f', 0.92, 'arrow');
+        }
+        // A pulling guard and a lead fullback show their paths to the hole.
+        for (const b of Object.values(lp.off)) {
+          if (b.pull) add([W(b.home.x, b.home.y), W(b.pull.via.x, b.pull.via.y), W(1.5, (lp.holeY ?? 0) * 0.95)], 0.2, '#ffffff', 0.85, 'bar');
+          else if (b.role === 'lead') add([W(b.home.x, b.home.y), W(0.8, (lp.holeY ?? 0) * 0.85)], 0.2, '#ffffff', 0.85, 'bar');
         }
         for (const k of ['LT', 'LG', 'C', 'RG', 'RT', 'TE']) {
           const b = lp.off[k];
-          if (!b?.assign) continue;
+          if (!b?.assign || b.pull) continue;
           const d = b.assign;
           const to = { x: (b.home.x + d.home.x) / 2 + 0.3, y: (b.home.y + d.home.y) / 2 };
-          G.add(ribbon([W(b.home.x, b.home.y), W(to.x, to.y)], 0.07, '#cfd8e3', 0.45, 'bar'));
+          add([W(b.home.x, b.home.y), W(to.x, to.y)], 0.16, '#cfd8e3', 0.8, 'bar');
         }
       }
     } else {
@@ -409,15 +424,15 @@ export class Stage {
       for (const p of Object.values(lp.def)) {
         if (p.zone) {
           const z = p.zone;
-          const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshBasicMaterial({ color: z.x >= 15 ? '#4fc3f7' : '#ffd23f', transparent: true, opacity: 0.1, depthWrite: false, fog: false }));
+          const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshBasicMaterial({ color: z.x >= 15 ? '#4fc3f7' : '#ffd23f', transparent: true, opacity: 0.2, depthWrite: false, fog: false }));
           disc.rotation.x = -Math.PI / 2; disc.position.copy(W(z.x, z.y)); disc.scale.set(z.r * 0.85, z.r * 0.6, 1); disc.position.y = 0.035;
           G.add(disc);
-          G.add(ribbon([W(p.home.x, p.home.y), W(z.x, z.y)], 0.06, z.x >= 15 ? '#4fc3f7' : '#ffd23f', 0.4, 'bar'));
+          add([W(p.home.x, p.home.y), W(z.x, z.y)], 0.16, z.x >= 15 ? '#4fc3f7' : '#ffd23f', 0.85, 'bar');
         } else if (p.man) {
-          G.add(ribbon([W(p.home.x, p.home.y), W(p.man.home.x + 0.5, p.man.home.y)], 0.06, '#ff9d7a', 0.45, 'bar'));
+          add([W(p.home.x, p.home.y), W(p.man.home.x + 0.5, p.man.home.y)], 0.14, '#ff9d7a', 0.85, 'bar');
         } else if (p.role === 'rush') {
           const blitz = !LINE_SLOTS.has(p.slot);
-          G.add(ribbon([W(p.home.x, p.home.y), W(-2.5, p.home.y * 0.5)], blitz ? 0.13 : 0.08, blitz ? '#ff5a4f' : '#e7b7b0', blitz ? 0.6 : 0.4, 'arrow'));
+          add([W(p.home.x, p.home.y), W(-2.5, p.home.y * 0.5)], blitz ? 0.3 : 0.18, blitz ? '#ff5a4f' : '#f0c4bd', blitz ? 0.95 : 0.75, 'arrow');
         }
       }
     }
@@ -503,6 +518,10 @@ export class Stage {
     if (lp.phase === 'dead' && this.whistled !== lp) { this.whistled = lp; sfx('whistle'); }
     const td = lp.phase === 'dead' && lp.end?.how === 'td';
     if (td && !this.celebrate) { this.celebrate = t; this.confetti(this.actorOf(lp.carrier)?.pos, lp.g.teams[lp.carrier.ti].color); this.stadium.cheer(1); sfx('cheer'); }
+    // The cadence clock: seconds since both teams were set. The quarterback's calls and the
+    // line's reactions to them run off it (see Animator.apply).
+    this.cadence = lp.phase === 'pre' && lp.set ? (this.cadenceLp === lp ? (this.cadence ?? 0) + dt : 0) : 0;
+    this.cadenceLp = lp;
     let held = null;
     const obstacles = this.obstacles ?? (this.obstacles = []);
     obstacles.length = 0;
@@ -596,6 +615,9 @@ export class Stage {
       s.set = p.act === 'READY';
       s.stance = STANCE[p.slot] ?? 'skill';
       if (p.slot === 'QB' && !isGun(lp.formation)) s.stance = 'qbUnder';
+      s.cad = this.cadence ?? 0; s.side = p.side;
+      // Which way a lineman checks: toward the end of the line he is on.
+      s.lookSide = Math.sign(p.y || (p.slot === 'C' ? 0 : 1));
     }
     s.engaged = !!p.eng && lp.phase === 'live';
     if (p.eng) {
@@ -1209,7 +1231,7 @@ function labelTexture(name, slot) {
 }
 
 // A flat ribbon along points on the turf, with an arrowhead or a block at the end.
-function ribbon(pts, width, color, opacity, end) {
+function ribbon(pts, width, color, opacity, end, below = 0) {
   const pos = [];
   const push = (a, b, c) => pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
   const side = (a, b) => { const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1; return { x: -dz / l, z: dx / l }; };
@@ -1236,6 +1258,8 @@ function ribbon(pts, width, color, opacity, end) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide, fog: false }));
   m.renderOrder = 2;
+  // An outline drawn just under its stroke.
+  if (below) { m.position.y = -below * 0.25; m.renderOrder = 1; }
   return m;
 }
 

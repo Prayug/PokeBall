@@ -52,17 +52,25 @@ export function diagram(g, call, side, form = null) {
       RECEIVERS.forEach((k, i) => {
         const p = O[k];
         if (!p) return;
+        if (p.role === 'stalk' && p.assign) { parts.push(path([p.home, { x: (p.home.x + p.assign.home.x) / 2, y: (p.home.y + p.assign.home.y) / 2 }], '#cfd8e3', 0.55, 'bar')); return; }
         if (!p.route) { parts.push(path([p.home, { x: p.home.x - 1.6, y: p.home.y * 0.85 }], '#9fb3c8', 0.55, 'bar')); return; }
         const pts = [p.home, ...p.route.filter((w) => w.x != null)];
         parts.push(path(pts, ART_COLORS[i], 1, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow'));
       });
-      if (O.QB) parts.push(path([O.QB.home, { x: lp.dropX, y: O.QB.home.y }], '#ffffff', 0.45, '', '0.8 0.6'));
+      if (O.QB) parts.push(path(lp.play.boot ? [O.QB.home, { x: lp.dropX, y: 1 }, { x: lp.dropX + 2.5, y: (O.TE ? -Math.sign(O.TE.home.y) : 1) * 8 }] : [O.QB.home, { x: lp.dropX, y: O.QB.home.y }], '#ffffff', 0.45, lp.play.boot ? 'arrow' : '', '0.8 0.6'));
     } else {
-      const c = lp.carrier ?? O.RB, hole = lp.holeY ?? 0;
-      if (c) parts.push(path([c.home, { x: -3.5, y: hole * 0.35 }, { x: 1.5, y: hole }, { x: 7, y: hole * 1.05 }], '#ffd23f', 1.3, 'arrow'));
+      const c = lp.carrier ?? O.RB, hole = lp.holeY ?? 0, dir = lp.play.dir;
+      const lane = dir === 'counter' ? [c?.home, { x: (c?.home.x ?? -5) + 0.5, y: -Math.sign(hole) * 2 }, { x: -3, y: hole * 0.4 }, { x: 1.5, y: hole }, { x: 7, y: hole * 1.05 }]
+        : dir === 'toss' || dir === 'outside' ? [c?.home, { x: -3.5, y: hole * 0.6 }, { x: 0, y: hole }, { x: 7, y: hole * 1.05 }]
+          : [c?.home, { x: -3.5, y: hole * 0.35 }, { x: 1.5, y: hole }, { x: 7, y: hole * 1.05 }];
+      if (c) parts.push(path(lane, '#ffd23f', 1.3, 'arrow'));
+      for (const b of Object.values(O)) {
+        if (b.pull) parts.push(path([b.home, b.pull.via, { x: 2, y: hole * 0.95 }], '#ffffff', 0.6, 'bar'));
+        else if (b.role === 'lead') parts.push(path([b.home, { x: 1, y: hole * 0.85 }], '#ffffff', 0.6, 'bar'));
+      }
       for (const k of ['LT', 'LG', 'C', 'RG', 'RT', 'TE', 'WR1', 'WR2', 'WR3']) {
         const b = O[k];
-        if (!b?.assign) continue;
+        if (!b?.assign || b.pull) continue;
         const d = b.assign;
         parts.push(path([b.home, { x: (b.home.x + d.home.x) / 2 + 0.6, y: (b.home.y + d.home.y) / 2 }], '#cfd8e3', 0.5, 'bar'));
       }
