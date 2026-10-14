@@ -1604,7 +1604,7 @@ function loop(now) {
   if (tk && now > L3.tickerUntil && !tk.classList.contains('gone')) tk.classList.add('gone');
   const pc = document.getElementById('pclock');
   if (pc) {
-    const txt = `:${String(Math.ceil(L3.pclock)).padStart(2, '0')}`;
+    const txt = `:${String(Math.min(40, Math.ceil(L3.pclock))).padStart(2, "0")}`;
     if (pc.textContent !== txt) { pc.textContent = txt; pc.classList.toggle('low', L3.pclock <= 5); }
   }
   const tip = document.getElementById('hud-tip');
