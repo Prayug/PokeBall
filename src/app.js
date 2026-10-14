@@ -1853,7 +1853,10 @@ function onClick(e) {
     }
     case 'quick': {
       applyGrowth({});
-      const seed = Math.floor(Math.random() * 2 ** 31);
+      // ?seed=N in the address replays the same quick game (rosters, weather, coin toss): the
+      // screenshot tests compare builds on exactly the same game state.
+      let seed = Math.floor(Math.random() * 2 ** 31);
+      try { const m = /[?&#]seed=(\d+)/.exec(location.search + location.hash); if (m) seed = Number(m[1]); } catch { /* no location */ }
       const Q = LG.quickRosters(seed);
       const [a, b] = Q.teams;
       a.name = S.setup.name || 'Pallet Starters'; a.abbr = (S.setup.abbr || 'PAL').toUpperCase();
