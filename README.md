@@ -82,7 +82,7 @@ Ball carriers have three moves, each better in a different spot: a juke beats a 
 
 Attributes come from base stats, height and weight, graded on a curve against the whole non-legendary pool: 60 is average, 80 is very good, 99 is the best in the league. There are 13: Speed, Acceleration, Agility, Strength, Blocking, Pass rush, Throwing, Accuracy, Catching, Coverage, Tackling, Awareness and Stamina. In the live game Speed sets top speed, Acceleration how fast a player gets there, Agility how sharply it cuts and turns, Awareness how quickly quarterbacks read and defenders react, and height and weight set body size, which decides spacing, blocking and tackling reach. Position overalls are graded the same way per position, centered on 50, so a 99 is the best at that spot, an 80 is a solid starter and a 50 is a backup. Legendaries, mythicals, Ultra Beasts and Paradox Pokémon are flagged as legendary (off by default; when on, there is no limit per team).
 
-Ratings decide games: in the live game a strong lineup (about 80 overall) beats a good one (about 74) roughly 9 times in 10, and the simulator is similar. `test/tiers.mjs` measures this.
+Ratings decide most games, not all of them. Each team rolls a form for the day (usually within 4% either way, from the game's seed, so a seed always replays the same), the home side gets a 1% edge (none at a neutral site), type matchups are worth 12% (20% for no effect) and the weather boosts or hurts its types by 12%. After halftime a team up by more than 14 eases off a little, so blowouts stay football scores. In the simulator a strong lineup (about 80 overall) beats a good one (about 74) about 8 times in 10, a good one beats an average one (about 68) about 7 in 10, and the home side wins about 56% of evenly matched games; a gap as wide as elite against average still almost never loses. The sizes live in `src/parity.js`. `test/tiers.mjs` measures this.
 
 ## Layout
 
@@ -103,6 +103,7 @@ Ratings decide games: in the live game a strong lineup (about 80 overall) beats 
 | `src/league.js` | Snake draft, AI drafters, schedule, standings, playoffs, league leaders |
 | `src/ratings.js` | Base stats to football attributes, the 22 slots, position overalls, auto depth chart |
 | `src/types.js` | Type chart, type traits, weather and the curated abilities |
+| `src/parity.js` | How far form, home field, types and weather can swing a game |
 | `src/app.js`, `src/index.html` | The screens and styles |
 | `src/data.js`, `src/sprites.js`, `src/sprites3d.js` | Generated Pokémon data, menu sprites and the index of the animated sprite strips (do not edit by hand) |
 | `dist/models3d/` | The 3D models, two Pokémon per file, loaded on demand |

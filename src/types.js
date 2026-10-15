@@ -1,4 +1,5 @@
 // Type chart, type traits, weather and curated abilities.
+import { PARITY } from './parity.js';
 
 // Attacking type -> defending type -> multiplier (only non-1 entries).
 const CHART = {
@@ -36,11 +37,11 @@ export function bestMultiplier(attacker, defender) {
 }
 
 // Football effect of a matchup multiplier, as a rating multiplier.
-// Super effective +8%, not very effective -8%, no effect -15%.
+// Super effective +12%, not very effective -12%, no effect -20% (PARITY sets the sizes).
 export function matchupModifier(mult) {
-  if (mult === 0) return 0.85;
-  if (mult > 1) return 1.08;
-  if (mult < 1) return 0.92;
+  if (mult === 0) return 1 - PARITY.noEffect;
+  if (mult > 1) return 1 + PARITY.type;
+  if (mult < 1) return 1 - PARITY.type;
   return 1;
 }
 
@@ -75,10 +76,10 @@ export const TYPE_TRAITS = {
 
 export const WEATHER = {
   clear: { name: 'Clear', text: 'No weather effects' },
-  rain: { name: 'Rain', text: 'Water +8%, Fire -8%, passing accuracy -4, more fumbles', boost: 'Water', nerf: 'Fire' },
-  sun: { name: 'Harsh sun', text: 'Fire +8%, Water -8%', boost: 'Fire', nerf: 'Water' },
-  sand: { name: 'Sandstorm', text: 'Rock, Ground and Steel +5%; everyone else tires faster', boost: 'Rock', immune: ['Rock', 'Ground', 'Steel'] },
-  hail: { name: 'Hail', text: 'Ice +8%; everyone else tires faster', boost: 'Ice', immune: ['Ice'] },
+  rain: { name: 'Rain', text: 'Water +12%, Fire -12%, passing accuracy -4, more fumbles', boost: 'Water', nerf: 'Fire' },
+  sun: { name: 'Harsh sun', text: 'Fire +12%, Water -12%', boost: 'Fire', nerf: 'Water' },
+  sand: { name: 'Sandstorm', text: 'Rock, Ground and Steel +8%; everyone else tires faster', boost: 'Rock', immune: ['Rock', 'Ground', 'Steel'] },
+  hail: { name: 'Hail', text: 'Ice +12%; everyone else tires faster', boost: 'Ice', immune: ['Ice'] },
 };
 
 // Curated abilities with football effects. `attr`: flat bonuses; `when`: condition.

@@ -2,6 +2,7 @@
 // Deterministic for a given seed. No DOM access.
 import { PLAYERS, OFF_SLOTS, DEF_SLOTS, unitRatings } from './ratings.js';
 import { TYPE_TRAITS, ABILITIES, WEATHER, bestMultiplier, matchupModifier } from './types.js';
+import { PARITY, formFor } from './parity.js';
 
 // The playbook. Each run or pass has its kind, the fast simulator's numbers (depth, air yards,
 // target weights) and, for plays added on top of the original eleven, `sim`: the original play
@@ -78,8 +79,10 @@ export const SCHEME = {
   prevent: { screen: 4, short: 6, mid: -2, deep: -10, run: 5, zone: true },
   goal_line: { screen: 3, short: 2, mid: 5, deep: 6, run: -7, zone: false },
 };
+// The base completion and run numbers sit a little low to offset the scoring that the parity
+// swings (parity.js) add, so a league still averages about 23 points a team.
 const SEP_OFFSET = 13.5;
-const BASE_CMP = { screen: 0.87, short: 0.75, mid: 0.63, deep: 0.41 };
+const BASE_CMP = { screen: 0.83, short: 0.71, mid: 0.59, deep: 0.37 };
 
 // ---------- random numbers (state lives in the game so saves resume exactly) ----------
 export function rand(g) {
@@ -120,9 +123,9 @@ function makeSide(t) {
   };
 }
 
-export function createGame({ home, away, seed = Date.now(), playoff = false, weather = null }) {
+export function createGame({ home, away, seed = Date.now(), playoff = false, weather = null, neutral = false }) {
   const g = {
-    seed, rng: seed >>> 0 || 1, playoff,
+    seed, rng: seed >>> 0 || 1, playoff, neutral, form: formFor(seed),
     teams: [makeSide(home), makeSide(away)],
     score: [0, 0], qs: [[0, 0, 0, 0], [0, 0, 0, 0]], quarter: 1, clock: 900,
     poss: 0, spot: 25, down: 1, toGo: 10, phase: 'play', final: false, winner: null,
@@ -175,9 +178,13 @@ export function eff(g, ti, id, attr, ctx = {}) {
   if (attr === 'hnd' && ctx.contested && p.types.includes('Flying')) v += TYPE_TRAITS.Flying.contested;
   let m = 1;
   const w = WEATHER[g.weather];
-  if (g.weather === 'sand') { if (w.immune.some((t) => p.types.includes(t))) m *= 1.05; }
-  else if (w.boost && p.types.includes(w.boost)) m *= 1.08;
-  if (w.nerf && p.types.includes(w.nerf)) m *= 0.92;
+  if (g.weather === 'sand') { if (w.immune.some((t) => p.types.includes(t))) m *= 1 + PARITY.sandImmune; }
+  else if (w.boost && p.types.includes(w.boost)) m *= 1 + PARITY.weather;
+  if (w.nerf && p.types.includes(w.nerf)) m *= 1 - PARITY.weather;
+  // Parity: the side's form for the day, home field, and easing off with a big second-half lead.
+  m *= 1 + (g.form?.[ti] ?? 0) + (ti === 0 && !g.neutral ? PARITY.home : 0);
+  const lead = g.score[ti] - g.score[1 - ti];
+  if (g.quarter >= 3 && lead > PARITY.coastFrom) m *= 1 - Math.min(PARITY.coastMax, (lead - PARITY.coastFrom) * PARITY.coastPerPoint);
   m *= 0.85 + 0.15 * energyOf(g, ti, id) / 100;
   if (ab?.special === 'truant' && g.playNo % 2 === 1) m *= 0.6;
   return v * m;
@@ -642,7 +649,7 @@ function doRun(g, call, defCall, qbRun = false) {
     const push = (power - (eff(g, d, D('DT1'), 'str') + eff(g, d, D('DT2'), 'str')) / 2) * 0.03;
     yards = Math.round(1.3 + push + lane * 0.04 + 1.3 * randn(g));
   } else {
-    let mean = 2.5 + lane * 0.1;
+    let mean = 2.1 + lane * 0.1;
     let sd = 3.0;
     if (dir === 'outside') {
       const edge = (eff(g, d, D('OLB'), 'spd') + eff(g, d, D('CB1'), 'spd')) / 2;
