@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bash build/build.sh",
+    "models": "node build/fetch_models3d.mjs",
     "balance": "node test/balance.mjs",
     "live": "node test/live.mjs",
     "test": "node test/plays.mjs"

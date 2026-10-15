@@ -1,0 +1,76 @@
+# Builds the game and deploys it to GitHub Pages with the 3D models from the release named in
+# build/models3d.json. The first run after the models left git publishes that release from the
+# last commit that still tracked them.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build the page
+        run: bash build/build.sh
+
+      - name: Publish the models release if it does not exist yet
+        run: |
+          TAG=$(jq -r .tag build/models3d.json)
+          ASSET=$(jq -r .asset build/models3d.json)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists"
+            exit 0
+          fi
+          git fetch --quiet --unshallow origin || true
+          GONE=$(git log -1 --format=%H --diff-filter=D -- dist/models3d/0.js)
+          if [ -z "$GONE" ]; then echo "No commit removes dist/models3d and no $TAG release"; exit 1; fi
+          SRC=$(git rev-parse "${GONE}^")
+          echo "Packing dist/models3d from $SRC"
+          mkdir -p /tmp/models && git archive "$SRC" dist/models3d | tar -x -C /tmp/models
+          tar -czf "/tmp/$ASSET" -C /tmp/models/dist models3d
+          gh release create "$TAG" "/tmp/$ASSET" --target "$SRC" \
+            --title "3D models ($TAG)" \
+            --notes "The packed 3D models for dist/models3d/. Fetch them with \`npm run models\`."
+
+      - name: Fetch the models
+        run: node build/fetch_models3d.mjs
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp dist/index.html _site/
+          cp -r dist/sprites3d dist/models3d _site/
+          du -sh _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
