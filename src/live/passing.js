@@ -169,8 +169,16 @@ export function qbBrain(lp) {
 
 export function routeWant(lp, p) {
   if (lp.thrown && lp.thrown.target === p) {
-    // Work back to the ball (but not into the bench).
-    return seek(p, { x: lp.thrown.tx, y: clamp(lp.thrown.ty, -SIDE - 0.5, SIDE + 0.5) }, 1, 0.4);
+    // Go to where the ball comes down (not into the bench) and get there as it does: run on
+    // only as fast as the flight needs and brake in time to stop under it, not through it.
+    const F = lp.thrown, spot = { x: F.tx, y: clamp(F.ty, -SIDE - 0.5, SIDE + 0.5) };
+    const dx = spot.x - p.x, dy = spot.y - p.y, d = len(dx, dy);
+    if (d < 0.15) { p.want = { vx: 0, vy: 0 }; return; }
+    const left = Math.max(0.05, F.t0 + F.T - lp.t);
+    const stop = Math.sqrt(2 * p.accel * (p.cut ?? 2) * 0.8 * d);
+    const sp = Math.min(p.top, stop, Math.max(d / left * 1.1, Math.min(p.top, 2.5)));
+    p.want = { vx: (dx / d) * sp, vy: (dy / d) * sp };
+    return;
   }
   if (p.jam > 0) { p.jam -= DT; p.want = { vx: 0.6, vy: 0 }; return; }
   const r = p.route;
@@ -404,31 +412,68 @@ export function looseBall(lp) {
 
 // The ball reaches the catch point. Whoever is there plays it: the receiver, a defender who
 // beat him to the spot, or nobody. Flying Pokémon reach a little farther for it.
+// Going up for the ball. Each player's jump has its own height (agility and speed, a little
+// more for Flying types) and lasts long enough that he peaks about when it comes down.
+export function jumpHeight(p) { return clamp(0.35 + (p.a.agi ?? 60) / 320 + (p.a.spd ?? 60) / 600 + (PLAYERS[p.id]?.types?.includes('Flying') ? 0.15 : 0), 0.4, 1.1); }
+export function jumpTime(p) { return 0.42 + jumpHeight(p) * 0.25; }
+export function jumpZ(p) { if (p.jump == null) return 0; const u = clamp(p.jump / p.jumpT, 0, 1); return 4 * u * (1 - u) * p.jumpH; }
+export function startJump(lp, p) {
+  if (p.jump != null || p.eng || p.stun > 0 || (lp.tackle && (lp.tackle.c === p || lp.tackle.q === p))) return false;
+  p.jump = 0; p.jumpH = jumpHeight(p); p.jumpT = jumpTime(p);
+  event(lp, 'jump', '', p);
+  return true;
+}
+// Is he in the air at the moment the ball gets there (the middle of the jump, near its top)?
+const upNow = (p) => p.jump != null && p.jump / p.jumpT > 0.2 && p.jump / p.jumpT < 0.85;
+
+// While the ball is in the air: the target goes up for a high ball or one with a defender on
+// him, and the closest defender goes up to knock it away, each timed to peak as it arrives.
+export function airJumps(lp) {
+  const F = lp.thrown;
+  if (!F || F.away || !F.target || lp.ball.state !== 'air') return;
+  const left = F.t0 + F.T - lp.t, spot = { x: F.tx, y: F.ty }, r = F.target;
+  const userR = lp.control === r && lp.manual;
+  let dfd = null, dd = 99;
+  for (const q of lp.players) if (q.side === 'def' && !q.eng) { const d = dist(q, spot); if (d < dd) { dd = d; dfd = q; } }
+  if (!userR && F.rJump == null && left <= jumpTime(r) * 0.5 && dist(r, spot) < 2) {
+    const high = F.zc > catchHeight(r) + 0.25;
+    F.rJump = (high || (dfd && dd < 1.8)) && chance(lp.g, high ? 0.9 : clamp(0.45 + ((r.a.hndC ?? 60) - 60) * 0.006, 0.3, 0.8));
+    if (F.rJump) startJump(lp, r);
+  }
+  const userD = lp.control === dfd && lp.manual;
+  if (dfd && !userD && F.dJump == null && left <= jumpTime(dfd) * 0.5 && dd < 2) {
+    F.dJump = chance(lp.g, clamp(0.5 + ((dfd.a.cov ?? 60) - 60) * 0.008, 0.3, 0.85));
+    if (F.dJump) startJump(lp, dfd);
+  }
+}
+
 function arrival(lp) {
   const g = lp.g, T = lp.thrown;
   const spot = { x: T.tx, y: T.ty };
   const r = T.target;
   const dr = dist(r, spot);
-  const reachOf = (p) => 1.45 + traitMod('catchReach', { p }).v;
+  // Up in the air at the catch point, a player gets his hands on balls a little farther away.
+  const reachOf = (p) => 1.45 + traitMod('catchReach', { p }).v + (upNow(p) ? 0.3 : 0);
   let dfd = null, dd = 99;
   for (const q of lp.players) if (q.side === 'def' && !q.eng) { const d = dist(q, spot); if (d < dd) { dd = d; dfd = q; } }
   lp.sepAtArrival = dd; lp.drAtArrival = dr;
   const userDef = lp.user === lp.d && lp.control && lp.control.side === 'def' ? lp.control : null;
-  const userPlay = userDef && dist(userDef, spot) < 1.8 && userDef.dive != null;
+  const userPlay = userDef && dist(userDef, spot) < 1.8 && (userDef.dive != null || upNow(userDef));
   lp.stats.cov = dfd && dd < 3 ? dfd : lp.stats.cov;
   const inBounds = Math.abs(spot.y) < SIDE && spot.x < lp.goalX + 10;
   const rReach = reachOf(r);
   if (dr <= rReach && dr > 1.45) traitNotes(lp, traitMod('catchReach', { p: r }), { p: r }, r, true);
   // Defender plays the ball first if he is closer.
-  if (dfd && dd < 1.5 && (dd < dr || dr > rReach - 0.05)) {
+  const dUp = dfd && upNow(dfd), rUp = upNow(r);
+  if (dfd && dd < (dUp ? 1.75 : 1.5) && (dd < dr + (dUp ? 0.5 : 0.25) || dr > rReach - 0.05)) {
     const tInt = traitMod('intChance', { d: dfd, r });
     const hawk = tInt.v;
     traitNotes(lp, tInt, { d: dfd, r }, dfd);
     const R = rep(dfd.id, dfd.a.cov, r.id, r.a.hndC);
-    const pI = (diff) => clamp(0.08 + hawk + diff * 0.006 + (T.pressured ? 0.04 : 0) + (dr > rReach ? 0.12 : 0) - dd * 0.05, 0.03, 0.42)
+    const pI = (diff) => clamp(0.11 + hawk + diff * 0.006 + (T.pressured ? 0.04 : 0) + (dr > rReach ? 0.12 : 0) - dd * 0.05, 0.03, 0.42)
       * (lp.offCall === 'screen' ? 0.4 : 1) + (userPlay && dfd === userDef ? 0.18 : 0);
     if (inBounds && contest(lp, pI(R.diff), pI(R.base), R, dfd, r, 'for the interception')) { interception(lp, dfd, spot); return; }
-    const pB = (diff) => clamp(0.3 + diff * 0.01 - dd * 0.15 + (userPlay ? 0.25 : 0), 0.15, 0.9);
+    const pB = (diff) => clamp(0.3 + diff * 0.01 - dd * 0.15 + (userPlay ? 0.25 : 0) + (dUp ? 0.1 : 0) - (rUp ? 0.08 : 0), 0.15, 0.9);
     if (dr > rReach || contest(lp, pB(R.diff), pB(R.base), R, dfd, r, 'at the catch point')) {
       st(g, lp.d, dfd.id).pd++;
       dropBall(lp, 0.12, 3.2);
@@ -448,7 +493,9 @@ function arrival(lp) {
   // Attacking the ball at its high point (Space while it is in the air to your receiver):
   // better in traffic, and he stops to make the catch.
   const aggro = !!lp.aggro && lp.control === r;
-  const base = 0.95 + (hands - 70) * 0.004 - Math.max(0, dr - 0.5) * 0.12 - Math.max(0, thrown - 18) * 0.006 + (T.catchMod ?? 0) + (aggro ? (contested ? 0.1 : -0.02) : 0);
+  // Going up for it high-points the ball over a defender; a defender in the air with him makes it harder.
+  const air = (rUp && contested ? 0.06 : 0) - (dUp && contested ? 0.06 : 0);
+  const base = 0.89 + (hands - 70) * 0.004 - Math.max(0, dr - 0.5) * 0.12 - Math.max(0, thrown - 18) * 0.006 + (T.catchMod ?? 0) + (aggro ? (contested ? 0.1 : -0.02) : 0) + air;
   let caught;
   if (contested) {
     const R = rep(r.id, hands, dfd.id, dfd.a.cov);

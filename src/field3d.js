@@ -677,6 +677,9 @@ export class Stage {
     // Reaching for a pass that is about to arrive (the target, and a defender playing it).
     const F = lp.thrown;
     if (p.act === 'REACH' && F) { const left = F.t0 + F.T - lp.t; s.reach = clampN(1 - left / 0.5, 0, 1); s.reachHigh = lp.ball.z > p.h * 0.9 ? 0.35 : 0; }
+    // Going up for the ball: lifted off the ground on the jump's arc, arms up.
+    s.jumpZ = p.jump != null ? 4 * clampN(p.jump / p.jumpT, 0, 1) * (1 - clampN(p.jump / p.jumpT, 0, 1)) * p.jumpH : 0;
+    if (p.act === 'JUMP') { s.reach = Math.max(s.reach ?? 0, clampN(p.jump / (p.jumpT * 0.4), 0, 1)); s.reachHigh = 0; }
     if (p.act === 'CATCH') s.reach = Math.max(s.reach ?? 0, 1 - (lp.t - (p.caughtAt ?? lp.t)) / 0.4);
     if (p.juke > 0) s.juke = Math.sin(clampN(p.juke / 0.35, 0, 1) * Math.PI) * (p.jukeSide ?? 1);
     if (p.truck > 0) s.truck = Math.sin(clampN(p.truck / 0.4, 0, 1) * Math.PI);

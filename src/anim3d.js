@@ -170,6 +170,7 @@ export class Animator {
     w = blendIn('reach', s.reach ?? 0, 16);
     set(w, bi.armL, -2.5); set(w, bi.armR, -2.5); set(w, bi.armL + 2, 0.25); set(w, bi.armR + 2, -0.25); set(w, bi.head, 0.3);
     if (s.reachHigh) o[LIFT] += w * s.reachHigh;
+    if (s.jumpZ) { o[LIFT] += s.jumpZ; const k = Math.min(1, s.jumpZ * 3); o[bi.legL] += 0.5 * k; o[bi.legR] += 0.25 * k; }
     // Juke and truck
     if (s.juke) { o[ROLL] += s.juke * 0.4; o[LIFT] += Math.abs(s.juke) * H * 0.06; }
     if (s.truck) { set(s.truck, PITCH, 0.55); set(s.truck, bi.armR, -1.5); set(s.truck, bi.armR + 2, 0.1); set(s.truck, bi.head, -0.3); }

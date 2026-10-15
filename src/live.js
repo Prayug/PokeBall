@@ -9,7 +9,7 @@ import { OFF_PLAYS, chance, clamp, eff, fumbleCheck, nm, rand, rep, sigmoid, st 
 import { bodyOf } from './body.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
 import { DEF_SCHEMES, coverWant, pursueWant, rushWant, setupDefense } from './live/defense.js';
-import { PLAY_ROUTES, ballFlight, buildRoute, contest, coverageRead, looseBall, qbBrain, releasePoint, routeWant, snapFlight, startThrow, throwAway, windup } from './live/passing.js';
+import { PLAY_ROUTES, airJumps, ballFlight, buildRoute, contest, coverageRead, looseBall, qbBrain, releasePoint, routeWant, snapFlight, startJump, startThrow, throwAway, windup } from './live/passing.js';
 export { DEF_SCHEMES } from './live/defense.js';
 export { ROUTES, PLAY_ROUTES, OPENNESS, releasePoint, catchHeight, flightAt } from './live/passing.js';
 export { OFF_FORMATIONS as FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT, NEUTRAL, isGun };
@@ -406,6 +406,7 @@ export function step(lp, input = null) {
   windup(lp);
 
   for (const p of lp.players) think(lp, p);
+  airJumps(lp);
   for (const p of lp.players) move(lp, p, DT);
   separate(lp);
   blocks(lp);
@@ -427,7 +428,7 @@ export function step(lp, input = null) {
 // What each player is doing this step, decided by the simulation from its real state. The
 // renderer picks poses and clips from it, the debug view prints it and the tests check it.
 export const ACTIONS = ['IDLE', 'WALK', 'READY', 'SNAP_REACT', 'ACCEL', 'RUN', 'SPRINT', 'DECEL', 'TURN', 'BACKPEDAL',
-  'BLOCK', 'BLOCKED', 'SHED', 'TACKLE', 'TACKLED', 'REACH', 'CATCH', 'THROW', 'HANDOFF', 'CARRY', 'FALL', 'DOWN', 'RECOVER', 'CELEBRATE', 'STUMBLE'];
+  'BLOCK', 'BLOCKED', 'SHED', 'TACKLE', 'TACKLED', 'REACH', 'CATCH', 'THROW', 'HANDOFF', 'CARRY', 'FALL', 'DOWN', 'RECOVER', 'CELEBRATE', 'STUMBLE', 'JUMP'];
 function classify(lp, p) {
   const sp = Math.hypot(p.vx, p.vy);
   // Acceleration along the motion and turn rate, smoothed over a few steps.
@@ -458,6 +459,7 @@ function actionOf(lp, p, sp) {
   const X = lp.ball.xfer;
   if (X && !X.snap && (X.from === p || X.to === p)) return 'HANDOFF';
   if (p.caughtAt != null && lp.t - p.caughtAt < 0.4) return 'CATCH';
+  if (p.jump != null) return 'JUMP';
   const F = lp.thrown;
   if (F && lp.ball.state === 'air' && (F.target === p || (p.side === 'def' && Math.hypot(F.tx - p.x, F.ty - p.y) < 1.8)) && F.t0 + F.T - lp.t < 0.5) return 'REACH';
   if (p.eng) {
@@ -530,7 +532,9 @@ function applyInput(lp, inp) {
   // The ball in the air to the receiver you now control: Space goes up and attacks it at its
   // highest point (better in traffic, but he stops to make the catch).
   const air = lp.thrown && lp.ball.state === 'air' && lp.thrown.target === c;
-  if (air && inp.juke) lp.aggro = true;
+  if (air && inp.juke) { lp.aggro = true; startJump(lp, c); }
+  // A defender near where the ball comes down goes up for it instead of diving.
+  else if (inp.dive && c.side === 'def' && lp.thrown && lp.ball.state === 'air' && Math.hypot(lp.thrown.tx - c.x, lp.thrown.ty - c.y) < 3) startJump(lp, c);
   else if (inp.dive && c.dive == null) { c.dive = 0.3; }
   if (inp.throwTo && lp.kind === 'pass' && !lp.thrown && lp.ball.holder === lp.off.QB && lp.qbState !== 'run') {
     const r = lp.off[inp.throwTo];
@@ -818,7 +822,13 @@ function move(lp, p, dt) {
   p.spin = Math.max(-1, p.spin - dt);
   if (p.dive != null) { p.dive -= dt; if (p.dive < -0.6) p.dive = null; }
   p.cool = Math.max(0, p.cool - dt);
-  if (inTackle(lp, p)) return; // the tackle sequence moves the pair (tackleStep)
+  if (inTackle(lp, p)) { p.jump = null; return; } // the tackle sequence moves the pair (tackleStep)
+  // In the air: no steering, he carries what speed he took off with and lands.
+  if (p.jump != null) {
+    p.jump += dt;
+    if (p.jump < p.jumpT) { p.vx *= 1 - dt * 0.6; p.vy *= 1 - dt * 0.6; integrate(p, dt); return; }
+    p.jump = null; p.vx *= 0.5; p.vy *= 0.5;
+  }
   if (p.stun > 0) { p.stun -= dt; slowDown(p, dt, 9); return; }
   if (p.eng) return; // engaged players move as a pair in blocks()
   let { vx, vy } = p.want ?? { vx: 0, vy: 0 };
