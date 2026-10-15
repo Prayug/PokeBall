@@ -6,7 +6,9 @@ Every football rating comes from real Pokémon data: base stats, types, height, 
 
 ## Play
 
-Open `dist/index.html` in a browser, keeping the `dist/models3d/` and `dist/sprites3d/` folders next to it: the 3D models load from there on demand, a few Pokémon at a time. There is no server and no network calls besides Google Fonts. Leagues save to the browser's local storage.
+Play it at **https://prayug.github.io/PokeBall/**, deployed from `main` on every push.
+
+To play a local copy, download the 3D models once with `npm run models` (they are a release download, not in git), then open `dist/index.html` in a browser, keeping the `dist/models3d/` and `dist/sprites3d/` folders next to it: the 3D models load from there on demand, a few Pokémon at a time. Without the models every Pokémon uses its generated figure. There is no server and no network calls besides Google Fonts. Leagues save to the browser's local storage.
 
 Games are played on a 3D field, Madden style: pick a play from the playbook, snap the ball, and control one Pokémon while the AI runs the other 21 using the same ratings and type matchups as the simulator.
 
@@ -68,6 +70,14 @@ There are four cameras (`C` cycles them). **Gameplay**, the default, sits low be
 
 The other 34 (mostly Gen 8 and 9, which the collection does not have yet) use a generated figure: the Pokémon's pixel sprite inflated into a rounded, auto-rigged 3D body, painted with its front and back sprites. `build/build_models3d.mjs` downloads, converts and packs the models into `dist/models3d/`, so a Pokémon that gets a model in the collection gets it here on the next run.
 
+The models are not in git, so they don't grow the clone each time one changes. They ship as `models3d.tar.gz` on a GitHub release, and `build/models3d.json` names the release this commit uses. After regenerating them, publish a new release and point the game at it:
+
+```sh
+node build/fetch_models3d.mjs --pack                                  # writes dist/models3d.tar.gz
+gh release create models-v2 dist/models3d.tar.gz --title "3D models (models-v2)"
+# then set "tag": "models-v2" in build/models3d.json and commit it with src/models3d.js
+```
+
 Animation is a state machine (`src/anim3d.js`) that picks each player's clip on a model and poses the generated figures' skeletons: idle, pre-snap stance (three-point on the line, the quarterback upright and ready, receivers and defensive backs in an athletic crouch, every defender facing the offense) with a little life on top: slow breathing, a slight sway, the quarterback scanning the defense and skill players bouncing on their toes now and then, smaller for linemen and drawn only on the model, so nobody's position changes, run and sprint with stride length from body size (a sprint leans further, reaches longer and pumps the arms, kicks up turf and widens the camera), turning leans, blocking, and layers for carrying the ball, the quarterback's ball by the ear, throwing, reaching for catches, jukes, spins, trucks, being stunned, diving tackles, falling the way the hit came from, getting back up and celebrating. Movement has a style per body type: fliers pitch and bank as they turn, floaters hover and bob, four-legged Pokémon gallop at a sprint, serpents slither and hoppers bound. Flying and levitating Pokémon hover above the turf. Players turn at a rate that depends on agility, so nobody snaps around or slides.
 
 On top of that, every model gets football posture from its own skeleton (`poseLimbs` in `src/model3d.js`), without stretching the mesh: linemen sink into a three-point stance with a hand down and fire out low, push with their arms out and lean back when they are losing the block; the quarterback crouches under center, drops back with the ball cocked by his ear, turns his shoulders to the receiver he is reading and whips the arm through, and the ball leaves from his hand; backs and receivers lean into acceleration, carry the ball tucked and turn to it as it arrives; defensive backs sit in a backpedal. Models with no skeleton lean and twist as one piece. After the snap the field only shows the ball carrier's ring, your player and, on a pass, the receivers' throw icons; team markers under every player are an option in the menu, as is the name and position over your player.
@@ -105,7 +115,9 @@ Ratings decide games: in the live game a strong lineup (about 80 overall) beats 
 | `src/types.js` | Type chart, type traits, weather and the curated abilities |
 | `src/app.js`, `src/index.html` | The screens and styles |
 | `src/data.js`, `src/sprites.js`, `src/sprites3d.js` | Generated Pokémon data, menu sprites and the index of the animated sprite strips (do not edit by hand) |
-| `dist/models3d/` | The 3D models, two Pokémon per file, loaded on demand |
+| `dist/models3d/` | The 3D models, two Pokémon per file, loaded on demand (not in git: `npm run models` downloads them) |
+| `build/fetch_models3d.mjs`, `build/models3d.json` | Downloads the models release into `dist/models3d/`, or packs it for a new release; which release to use |
+| `.github/workflows/pages.yml` | Builds the page and deploys it with the models and sprites to GitHub Pages on every push to `main` |
 | `build/build_models3d.mjs` | Downloads, converts and packs the 3D models (see its header for the npm packages it needs) |
 | `dist/sprites3d/` | Front and back pixel sprites, three Pokémon per file, loaded on demand to paint the figures |
 | `build/build_data.py` | Regenerates `data.js` from PokéAPI CSVs |
@@ -125,6 +137,7 @@ Ratings decide games: in the live game a strong lineup (about 80 overall) beats 
 
 ```sh
 npm install                         # three.js
+npm run models                      # the 3D models, into dist/models3d/
 bash build/build.sh                 # uses npx esbuild@0.24.0, or set ESBUILD=/path/to/esbuild
 node test/balance.mjs 10000         # balance check of the simulator
 node test/live.mjs 20               # balance check of live plays
