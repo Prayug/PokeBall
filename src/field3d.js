@@ -326,6 +326,9 @@ export class Stage {
     const R = a.fig?.rig, T = a.fig?.template, P = PLAYERS[a.id];
     const types = P?.types ?? [];
     const wings = !!R?.bones?.some((e) => e.part === 'wing');
+    // Winged Pokémon built on two real legs (Charizard, Dragonite) play on their feet like any
+    // biped: hovering pitched them forward into a hunched, legs-tucked crouch.
+    if (a.flier && R?.legs >= 2 && !R?.quad) return 'biped';
     if (a.flier && (wings || !R?.legs)) return 'flyer';
     if (R?.quad) return 'quad';
     if (R?.legs >= 2) return 'biped';
@@ -636,7 +639,7 @@ export class Stage {
     const holding = lp.ball.state === 'held' && lp.ball.holder === p && lp.phase !== 'pre';
     s.carrier = holding;
     s.qbHold = holding && p.slot === 'QB' && p.side === 'off' && lp.kind === 'pass' && !lp.carrierSet && lp.t > 0.25;
-    s.hover = a.flier && !(a.fallWant > 0);
+    s.hover = a.flier && a.style !== 'biped' && !(a.fallWant > 0);
     s.backpedal = p.act === 'BACKPEDAL';
     s.sprint = p.act === 'SPRINT' || (p.act === 'CARRY' && !!p.sprinting);
     // The throw: cocked through the windup, released at 0.45, follow-through after.
