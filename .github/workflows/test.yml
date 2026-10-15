@@ -1,0 +1,37 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Only src/ and test/: the tests never load dist/, so skip downloading its 3D models.
+      - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: |
+            src
+            test
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The simulation tests import src/ directly and need no npm packages (three.js is only
+      # used by the 3D field, which these tests never load).
+      - name: Complete plays
+        run: node test/plays.mjs
+      - name: Scenarios
+        run: node test/scenarios.mjs
+      - name: Formations
+        run: node test/formations.mjs
+      - name: League mode
+        run: node test/league.mjs

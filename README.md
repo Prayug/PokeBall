@@ -78,6 +78,36 @@ Every play starts from a real formation set from the ball (`src/formations.js`):
 
 Ball carriers have three moves, each better in a different spot: a juke beats a tackler coming from the side, a spin beats one coming head-on, and a truck works when the carrier is stronger and heavier. AI carriers pick between them the same way.
 
+## League mode
+
+A league is eight teams: yours and seven AI teams, each with a coach style (Speed Kills, Trench Builder, Type Stacker or Best Available) that shapes how it drafts, calls plays and trades. The home screen sets the team name, the draft length (24 rounds fills the 22 starters plus a kicker and punter; 28 adds four bench Pokémon), a cap of four Pokémon of one primary type, whether legendaries are in the pool and an optional 60-second pick clock.
+
+**Draft.** A snake draft in a random order. The board sorts and filters by type and rating and shows where each Pokémon fits your open slots; "Auto-draft the rest" hands your remaining picks to the AI. After the last pick, the grades screen scores every team's pass offense, run offense, pass rush, coverage and run defense against the league, from A+ to F.
+
+**Trade offer.** One AI team may offer a one-for-one swap that improves both rosters by overall, shown with what your best lineup gains. It stands until your first game.
+
+**Depth chart.** Tap a slot, then another slot or a bench Pokémon, to swap them; overalls update for the new position, and a Pokémon playing out of position shows where it is best. "Auto-arrange" builds the best lineup by overall.
+
+**Season.** A seven-week round robin. Each week you play your game live on the 3D field or simulate it, and the rest of the league simulates. The season screen carries the standings (top four make the playoffs), league leaders, every result with its box score and scoring plays, and the league's history across seasons.
+
+**Scouting report.** Before each game the season screen scouts your opponent: their lineup, offense, defense and kickers; your three best type edges and their three best; which weather setters will change the conditions; a one-line game plan with a pass or run lean; the opposing coach's habits; and your own injury list.
+
+**Pre-snap board and tendencies.** During a game, between plays, the pre-snap board lists every one-on-one the play will be decided by (your line against their front, your receivers against their coverage) with its type effectiveness and a count of edges for each side. Under it, the opponent's tendencies build up as the game goes: how often they run on first down, pass on third, blitz on third and long, and their favorite calls on each side of the ball.
+
+**Subs.** Tired starters come out at the start of a drive for a fresher bench Pokémon who would play better at that slot. The "Lineup and subs" tab shows each slot's energy and lets you make your own subs; a coach's sub stays in, and the auto-sub leaves that slot alone, until you send the starter back.
+
+**Soreness.** Energy carries over between games. A Pokémon who finished a game worn out starts the next one sore, below full energy; the most exhausted (at most two a team) are out for a week when the bench can cover them, and a team with no bench plays them hurt. The depth chart and the scouting report tag who is sore and who is out.
+
+**Playoffs and awards.** The top four seeds play semifinals (1 against 4 and 2 against 3, the higher seed at home), then a championship game; you can watch the rounds you are not in. When the season ends the champion screen shows your record and team star, the bracket and the awards: most valuable player, offensive and defensive player of the year, and from the second season on, rookie of the year. "Download recap" saves the season as text.
+
+**Offseason and development.** Training camp rewards playing time: every 180 snaps a Pokémon played earns +2 to a rating its position uses, up to +8 a season and +16 over a career, and the growth carries into its overalls from then on. The offseason screen shows your camp report and the league's top developers.
+
+**Cuts and the rookie draft.** Every team cuts four. The game suggests your four (the lowest keep-value), and you can pick your own; the AI teams' cuts are listed. Cut Pokémon go back into the pool, and a four-round snake rookie draft refills every roster, worst record picking first and the champion last. Then a new season starts with fresh standings, stats and health.
+
+**Saves, export and import.** The league saves to the browser's local storage after every change, including a game in progress, and "Continue league" on the home screen picks it up. "Export save" (home and season screens) downloads the whole league as a JSON file; "Import a save" on the home screen loads one from a file or pasted text, replacing the league in that browser. Older saves are brought up to the current format when they load.
+
+`test/league.mjs` plays this loop end to end and checks it (see Build).
+
 ## Ratings
 
 Attributes come from base stats, height and weight, graded on a curve against the whole non-legendary pool: 60 is average, 80 is very good, 99 is the best in the league. There are 13: Speed, Acceleration, Agility, Strength, Blocking, Pass rush, Throwing, Accuracy, Catching, Coverage, Tackling, Awareness and Stamina. In the live game Speed sets top speed, Acceleration how fast a player gets there, Agility how sharply it cuts and turns, Awareness how quickly quarterbacks read and defenders react, and height and weight set body size, which decides spacing, blocking and tackling reach. Position overalls are graded the same way per position, centered on 50, so a 99 is the best at that spot, an 80 is a solid starter and a 50 is a backup. Legendaries, mythicals, Ultra Beasts and Paradox Pokémon are flagged as legendary (off by default; when on, there is no limit per team).
@@ -119,6 +149,7 @@ Ratings decide games: in the live game a strong lineup (about 80 overall) beats 
 | `test/formations.mjs` | Lines up every offensive formation against every front for eight teams at five spots on the field and runs the formation check on each (`--print` lists the positions) |
 | `src/traits.js` | Abilities and types that act during a live snap |
 | `test/top.mjs` | Lists the top Pokémon at each position |
+| `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness and subs, the playoffs and awards, the offseason, cuts and the rookie draft, then the next season) and checks every step, plus that an exported save plays on to the same results (exits 1 on failure) |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
 
 ## Build
@@ -131,6 +162,7 @@ node test/live.mjs 20               # balance check of live plays
 node test/plays.mjs                 # the ten complete plays plus a 160-play sweep (exits 1 on failure)
 node test/scenarios.mjs             # the fifteen fixed-seed scenarios plus a strict sweep (exits 1 on failure)
 node test/formations.mjs            # 600 formation and front pairings through the formation check
+node test/league.mjs                # two seasons of league mode, draft to rookie draft (exits 1 on failure)
 node test/browser.mjs out 3         # three snaps in a real browser: video, screenshots, results.json
 node test/tiers.mjs 300             # how much ratings matter (add `live` for live plays)
 ```
@@ -143,6 +175,8 @@ python3 build/build_sprites3d.py <gif_cache_dir> src dist   # downloads the GIFs
 ```
 
 Gen 1–5 use the animated Black/White GIFs; later Pokémon use the static pixel PNGs.
+
+CI (`.github/workflows/test.yml`) runs `plays.mjs`, `scenarios.mjs`, `formations.mjs` and `league.mjs` on every pull request and on pushes to `main`.
 
 ## Balance
 

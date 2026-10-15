@@ -6,7 +6,8 @@
     "build": "bash build/build.sh",
     "balance": "node test/balance.mjs",
     "live": "node test/live.mjs",
-    "test": "node test/plays.mjs"
+    "test": "node test/plays.mjs && node test/scenarios.mjs && node test/formations.mjs && node test/league.mjs",
+    "league": "node test/league.mjs"
   },
   "dependencies": {
     "three": "0.160.0"
