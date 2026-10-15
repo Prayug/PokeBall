@@ -99,7 +99,9 @@ export function mountStage() {
   slot.prepend(stageWrap);
   fitStage();
   stage.resize();
-  if (!L3.lp) showPreview();
+  // A re-render during the replay keeps showing the replay, not the next play lining up.
+  if (L3.replay) stage.setPlay(L3.replay.lp);
+  else if (!L3.lp) showPreview();
 }
 
 // The 3D game fills the viewport under the sticky top bar.
