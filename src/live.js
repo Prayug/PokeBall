@@ -705,7 +705,9 @@ export function passBlockWant(lp, p) {
   const dm = dist(m, s);
   const ax = qb.x - m.x, ay = qb.y - m.y, l = len(ax, ay) || 1;
   const front = { x: m.x + (ax / l) * (m.r + p.r + 0.15), y: m.y + (ay / l) * (m.r + p.r + 0.15) };
-  seek(p, dm < 2.2 || dist(p, m) < 2 ? front : { x: (s.x * 2 + front.x) / 3, y: (s.y * 2 + front.y) / 3 }, 0.85, 0.4);
+  // Close to him, mirror at full speed so a quick rusher can't just run around.
+  const close = dm < 2.2 || dist(p, m) < 2;
+  seek(p, close ? front : { x: (s.x * 2 + front.x) / 3, y: (s.y * 2 + front.y) / 3 }, close ? 1 : 0.85, 0.4);
 }
 
 function runBlockWant(lp, p) {
@@ -1045,7 +1047,9 @@ function blocks(lp) {
     if (!blocker) continue;
     for (const d of lp.players) {
       if (d.side === b.side || d.eng || d.carrier || d.stun > 0 || d.shedT > 0) continue;
-      if (dist(b, d) > Math.max(ENGAGE, b.r + d.r + 0.08)) continue;
+      // Linemen get their hands on anyone who comes within arm's length; nobody runs through them.
+      const line = b.role === 'passblock' || b.role === 'runblock';
+      if (dist(b, d) > Math.max(ENGAGE, b.r + d.r + (line ? 0.45 : 0.08))) continue;
       engage(lp, b, d);
       break;
     }
@@ -1088,9 +1092,9 @@ function blocks(lp) {
     }
     // Rate of getting off the block, per second: rating and type edge, quick feet shed sooner,
     // and nobody sheds in the first instants of the fit.
-    const base = passPro ? 0.7 : lp.carrierSet ? 0.13 : 0.08;
+    const base = passPro ? 0.46 : lp.carrierSet ? 0.11 : 0.06;
     const quick = clamp((d.a.acc - b.a.acc) / 60, -0.4, 0.5);
-    let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.45 ? 0.3 : 1);
+    let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.8 ? 0.25 : 1);
     if (!passPro) rate = Math.max(rate, 0.1);
     // Blocks far from the ball break up on their own.
     // (A block well in front of the carrier holds: that is the lane he is about to run through.)
@@ -1113,7 +1117,7 @@ function blocks(lp) {
     // drives the defender away from the hole.
     const target = lp.carrierSet ? lp.carrier : lp.off.QB;
     let ux = target.x - d.x, uy = target.y - d.y; const l = len(ux, uy) || 1; ux /= l; uy /= l;
-    let push = clamp((passPro ? 0.3 : -0.15) + R.diff * 0.06 + mass * 0.55, -2.2, 2.2);
+    let push = clamp((passPro ? 0.12 : -0.35) + R.diff * 0.05 + mass * 0.45, -2.2, 2.2);
     if (passPro) {
       // Inside the cup the blocker anchors: the deeper the rusher gets, the harder it is.
       const S = pocketSpot(lp, b, d), behind = (S.x - b.x) * sgn(b.x - lp.dropX + 0.01);
