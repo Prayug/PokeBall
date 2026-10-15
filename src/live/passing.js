@@ -332,7 +332,7 @@ function nearestDef(lp, r) {
 export function snapFlight(lp) {
   const b = lp.ball;
   if (b.state !== 'snap') return;
-  const qb = lp.off.QB;
+  const qb = lp.snapTo ?? lp.off.QB;
   const u = clamp((lp.t - b.t0) / b.T, 0, 1);
   b.x = b.from.x + (qb.x + 0.3 - b.from.x) * u; b.y = b.from.y + (qb.y - b.from.y) * u;
   b.z = 0.3 + 0.8 * u + Math.sin(u * Math.PI) * 0.25;

@@ -227,7 +227,8 @@ function resultBanner(e, lp, before) {
   const b = before ?? { poss: g.poss, down: 1 };
   const how = lp?.end?.how;
   const yd = e.yards ?? 0;
-  const yds = how === 'incomplete' || e.kind === 'punt' || e.kind === 'fg' ? '' : yd === 0 ? 'No gain' : `${yd > 0 ? '+' : '−'}${Math.abs(yd)} yd${Math.abs(yd) === 1 ? '' : 's'}`;
+  const kickKind = lp?.kick ? lp.kind : ['punt', 'fg'].includes(OFF_PLAYS[e.off]?.kind) && !OFF_PLAYS[e.off]?.fake ? OFF_PLAYS[e.off].kind : null;
+  const yds = how === 'incomplete' || e.kind === 'punt' || e.kind === 'fg' || kickKind ? '' : yd === 0 ? 'No gain' : `${yd > 0 ? '+' : '−'}${Math.abs(yd)} yd${Math.abs(yd) === 1 ? '' : 's'}`;
   const changed = g.poss !== b.poss && !g.final;
   let head = '', tone = '';
   const td = e.highlight === 'td' || (e.kind === 'score' && before && g.score.some((v, i) => v - before.score[i] >= 6));
@@ -236,6 +237,8 @@ function resultBanner(e, lp, before) {
   else if (e.turnover === 'int' || /INTERCEPT/i.test(e.text)) { head = 'Interception'; tone = 'to'; }
   else if (e.turnover === 'fumble' || /FUMBLE!/.test(e.text) && changed) { head = 'Fumble'; tone = 'to'; }
   else if (changed && ['run', 'pass', 'sack'].includes(e.kind)) { head = 'Turnover on downs'; tone = 'to'; }
+  else if (kickKind === 'punt') head = how === 'blocked' ? 'Blocked punt' : 'Punt';
+  else if (kickKind === 'fg') { head = how === 'blocked' ? 'Blocked field goal' : 'Field goal no good'; tone = 'to'; }
   else if (e.kind === 'punt') head = 'Punt';
   else if (e.kind === 'fg') { head = 'Field goal no good'; tone = 'to'; }
   else if (how === 'incomplete') { head = 'Incomplete'; tone = 'muted'; }
@@ -307,6 +310,13 @@ function hudTip(lp) {
   if (!lp) return f === 'PLAY_SELECTION' && S.game && !S.game.final && needsUser(S.game) && !S.busy ? 'Pick a play · number keys · ← → categories' : '';
   const c = lp.control;
   if (f === 'FORMATION_SETUP') return 'Lining up…';
+  if (lp.kick) {
+    if (lp.phase === 'pre') return lp.user === lp.o ? 'Space snap · the kick goes on its own · Esc change call' : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
+    if (lp.phase === 'dead') return '';
+    if (c && c === lp.kick.returner && !c.carrier) return 'Get under it · arrows move · Shift sprint';
+    if (c && !c.carrier && c.side === 'off') return 'Cover the kick · arrows move · Shift sprint · Space dive';
+    if (!c) return lp.kick.kickedAt != null ? 'Kick away' : 'The long snap…';
+  }
   if (lp.phase === 'pre') {
     if (!c) return 'Coach mode · Space to snap now · Esc to change the call';
     return lp.user === lp.o ? `Space snap${lp.kind === 'pass' ? ' · then 1-5 throw' : ''} · Esc change call` : 'Space start · Q pick a defender';

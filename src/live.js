@@ -10,7 +10,9 @@ import { bodyOf } from './body.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
 import { DEF_SCHEMES, coverWant, pursueWant, rushWant, setupDefense } from './live/defense.js';
 import { PLAY_ROUTES, airJumps, ballFlight, buildRoute, contest, coverageRead, looseBall, qbBrain, releasePoint, routeWant, snapFlight, startJump, startThrow, throwAway, windup } from './live/passing.js';
+import { kickResult, kickStep, kickWant, liveKick, setupKick } from './live/kicks.js';
 export { DEF_SCHEMES } from './live/defense.js';
+export { liveKick } from './live/kicks.js';
 export { ROUTES, PLAY_ROUTES, OPENNESS, releasePoint, catchHeight, flightAt } from './live/passing.js';
 export { OFF_FORMATIONS as FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT, NEUTRAL, isGun };
 
@@ -50,7 +52,8 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
     zone: !!DEF_SCHEMES[defCall]?.zones && !DEF_SCHEMES[defCall]?.manUnder,
     qbState: 'drop', pressure: false, thrown: null, caught: false, crossed: false, carrierTeam: 'off',
     stats: { tackler: null, cov: null, target: null, se: false, extras: [] }, readTick: 0, notes: [], tackle: null, windup: null,
-    formation: formationsFor(offCall).includes(opts.formation) ? opts.formation : PLAY_FORMATION[offCall] ?? 'gun_spread',
+    // A kick's long snap flies back like a shotgun snap.
+    formation: liveKick(play) ? 'gun_spread' : formationsFor(offCall).includes(opts.formation) ? opts.formation : PLAY_FORMATION[offCall] ?? 'gun_spread',
     defFormation: DEF_FORMATIONS[opts.defFormation] ? opts.defFormation : CALL_FRONT[defCall] ?? '43',
     set: true, snapQueued: false, setT: 0,
   };
@@ -70,15 +73,25 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
   }
   alignFormation(lp);
   setupDefense(lp);
-  resolveSpacing(lp);
-  setupOffense(lp);
-  for (const p of lp.players) p.home = { x: p.x, y: p.y };
-  lp.formationIssues = validateFormation(lp);
+  if (liveKick(play)) {
+    // A punt or field goal: the kicking units line up (see live/kicks.js).
+    setupKick(lp, makePlayer);
+    lp.formationIssues = [];
+  } else {
+    resolveSpacing(lp);
+    setupOffense(lp);
+    for (const p of lp.players) p.home = { x: p.x, y: p.y };
+    lp.formationIssues = validateFormation(lp);
+  }
   if (opts.from) walkIn(lp, opts.from);
+  // The returner and the punter come on from the sideline straight to their spots.
+  if (lp.kick && opts.from) for (const p of [lp.kick.returner, lp.kicker]) if (p && dist(p, p.home) > 12) { p.x = p.home.x; p.y = p.home.y; }
   lp.ball.holder = lp.off.C ?? lp.off.QB;
   syncBall(lp);
   // Coach mode (opts.watch): the user called the play and the AI plays every Pokémon.
   if (opts.watch) lp.control = null;
+  // A kick: the receiving side has the returner; the kicking side takes a cover man once it is away.
+  else if (lp.kick) lp.control = lp.user === d && lp.kick.returner ? lp.kick.returner : null;
   else if (lp.user === o) lp.control = lp.off.QB;
   else if (lp.user === d) lp.control = lp.def.MLB ?? lp.players.find((p) => p.side === 'def');
   return lp;
@@ -325,7 +338,7 @@ export function snap(lp) {
   if (!lp.set) { lp.snapQueued = true; return; }
   lp.phase = 'live';
   lp.t = 0;
-  const qb = lp.off.QB, c = lp.off.C;
+  const qb = lp.snapTo ?? lp.off.QB, c = lp.off.C;
   if (isGun(lp.formation) && c && qb) {
     // The ball flies back from the center to the quarterback.
     lp.ball = { state: 'snap', holder: null, x: c.x + 0.4, y: c.y, z: 0.3, from: { x: c.x + 0.4, y: c.y }, t0: 0, T: 0.22 + dist(c, qb) * 0.02 };
@@ -415,6 +428,7 @@ export function step(lp, input = null) {
   for (const p of lp.players) orient(lp, p);
   snapFlight(lp);
   ballFlight(lp);
+  if (lp.kick) kickStep(lp);
   if (lp.phase === 'live' && !lp.tackle) contacts(lp);
   if (lp.phase === 'live') tackleStep(lp);
   if (lp.phase === 'live') boundaries(lp);
@@ -499,7 +513,7 @@ export function setCarrier(lp, p) {
   for (const q of lp.players) {
     if (q === p) continue;
     if (q.side !== p.side) { q.role = 'pursue'; q.react = q.eng ? 0 : 0.1 + (100 - (q.a.spd + q.a.awr) / 2) * 0.003; }
-    else if (q.role === 'route' || q.role === 'qb' || q.role === 'handoff' || q.role === 'idle' || q.role === 'carrier') {
+    else if (q.role === 'route' || q.role === 'qb' || q.role === 'handoff' || q.role === 'idle' || q.role === 'carrier' || (lp.kick && q.role?.[0] === 'k') || q.role === 'returner') {
       q.role = q.side === 'off' && p.side === 'off' && lp.kind === 'run' && q.slot === 'QB' ? 'fake' : 'escort';
     }
   }
@@ -611,7 +625,7 @@ function think(lp, p) {
     case 'rush': return rushWant(lp, p);
     case 'cover': return coverWant(lp, p);
     case 'pursue': return pursueWant(lp, p, c);
-    default: return null;
+    default: return lp.kick ? kickWant(lp, p) ?? null : null;
   }
 }
 
@@ -1042,13 +1056,13 @@ function blocks(lp) {
   // New engagements
   for (const b of lp.players) {
     if (b.eng || b.stun > 0 || b.carrier) continue;
-    const blocker = b.side === lp.carrierTeam && ['passblock', 'runblock', 'stalk', 'escort', 'lead'].includes(b.role)
+    const blocker = b.side === lp.carrierTeam && ['passblock', 'runblock', 'stalk', 'escort', 'lead', 'kblock'].includes(b.role)
       || (b.role === 'route' && b.route?.[b.wp]?.block != null);
     if (!blocker) continue;
     for (const d of lp.players) {
       if (d.side === b.side || d.eng || d.carrier || d.stun > 0 || d.shedT > 0) continue;
       // Linemen get their hands on anyone who comes within arm's length; nobody runs through them.
-      const line = b.role === 'passblock' || b.role === 'runblock';
+      const line = b.role === 'passblock' || b.role === 'runblock' || b.role === 'kblock';
       if (dist(b, d) > Math.max(ENGAGE, b.r + d.r + (line ? 0.45 : 0.08))) continue;
       engage(lp, b, d);
       break;
@@ -1105,7 +1119,7 @@ function blocks(lp) {
     if (chance(g, rate * DT)) {
       // The move fits the body: big and strong bull rushes, light and quick swims, the rest rip.
       const move = mass > 0.25 && d.a.str >= d.a.acc ? 'bull' : d.a.acc > 70 || mass < -0.3 ? 'swim' : 'rip';
-      const target = lp.carrierSet ? lp.carrier : lp.off.QB;
+      const target = lp.carrierSet ? lp.carrier : lp.snapTo ?? lp.off.QB;
       const side = sgn((target.y - b.y) * 0.3 + (d.y - b.y)) || 1;
       const ux = target.x - d.x, l = len(ux, side) || 1;
       d.shed = { move, t: 0, sx: (ux / l) * 0.5, sy: side * 0.9, speed: move === 'swim' ? 4.2 : 3.2 };
@@ -1115,7 +1129,7 @@ function blocks(lp) {
     // The pair drifts toward whoever is winning. In pass protection the rusher drives toward the
     // quarterback, slowed by the blocker sitting on the cup's edge; in a run block the blocker
     // drives the defender away from the hole.
-    const target = lp.carrierSet ? lp.carrier : lp.off.QB;
+    const target = lp.carrierSet ? lp.carrier : lp.snapTo ?? lp.off.QB;
     let ux = target.x - d.x, uy = target.y - d.y; const l = len(ux, uy) || 1; ux /= l; uy /= l;
     let push = clamp((passPro ? 0.12 : -0.35) + R.diff * 0.05 + mass * 0.45, -2.2, 2.2);
     if (passPro) {
@@ -1364,7 +1378,7 @@ export function finish(lp, end) {
   lp.phase = 'dead';
   lp.deadAt = lp.t;
   lp.end = end;
-  lp.result = buildResult(lp, end);
+  lp.result = lp.kick ? kickResult(lp, end) : buildResult(lp, end);
 }
 
 function buildResult(lp, end) {

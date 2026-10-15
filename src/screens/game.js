@@ -3,7 +3,7 @@
 import { DEF_SLOTS, OFF_SLOTS, SLOTS, ST_SLOTS } from '../ratings.js';
 import { WEATHER, bestMultiplier, effectLabel } from '../types.js';
 import { DEF_PLAYS, OFF_PLAYS, absSpot, aiDefenseCall, aiOffenseCall, clockText, downText, fgDistance, fgOdds, quarterText, runPlay, spotText } from '../engine.js';
-import { DEF_FORMATIONS, FORMATIONS, worldSpots } from '../live.js';
+import { DEF_FORMATIONS, FORMATIONS, liveKick, worldSpots } from '../live.js';
 import { CAMERA_LIMITS, CAMERA_MODES, CAMERA_SHOTS } from '../camera3d.js';
 import * as LG from '../league.js';
 import { render, setScreen } from '../app.js';
@@ -386,7 +386,7 @@ export function doCall(call) {
   S.csTab = null; S.csPage = 0;
   // Coach mode: you call it, the AI plays it (and snaps it after a beat).
   const formation = g.poss === us ? formFor(off) : aiFormation(off), defFormation = g.poss === us ? aiFront(def) : frontFor(def);
-  if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) { startLive(off, def, { userSide: us, watch: !!S.watch, autoQB: !!S.watch, autoSnap: S.watch || g.poss !== us ? 1.6 : null, formation, defFormation }); return; }
+  if (stage && (['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]))) { startLive(off, def, { userSide: us, watch: !!S.watch, autoQB: !!S.watch, autoSnap: S.watch || g.poss !== us ? 1.6 : null, formation, defFormation }); return; }
   S.busy = true;
   if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
   const entry = runPlay(g, off, def);
@@ -403,7 +403,7 @@ export function autoAdvance() {
     if (!S.game || S.game.final || S.screen !== 'game' || L3.lp) return;
     if (stage && L3.flow !== 'PLAY_SELECTION') { autoAdvance(); return; }
     const off = aiOffenseCall(g), def = aiDefenseCall(g);
-    if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) {
+    if (stage && (['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]))) {
       S.coachDown = true;
       startLive(off, def, { userSide: userSide(), watch: true, autoQB: true, autoSnap: 1.4, formation: aiFormation(off), defFormation: aiFront(def) });
       return;

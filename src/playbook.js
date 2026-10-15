@@ -8,6 +8,8 @@ export const ART_COLORS = ['#ffd23f', '#4fc3f7', '#ff7a59', '#c792ff', '#7fdc93'
 const cache = new Map();
 
 export function formationName(call, form = null) {
+  const k = OFF_PLAYS[call]?.kind;
+  if (k === 'punt' || k === 'fg') return k === 'punt' ? 'Punt' : 'Field goal';
   const f = form && FORMATIONS[form] ? form : PLAY_FORMATION[call];
   return f ? FORMATIONS[f].name : OFF_PLAYS[call]?.kind === 'punt' ? 'Punt' : OFF_PLAYS[call]?.kind === 'fg' ? 'Field goal' : '';
 }

@@ -677,6 +677,10 @@ export class Stage {
     // Reaching for a pass that is about to arrive (the target, and a defender playing it).
     const F = lp.thrown;
     if (p.act === 'REACH' && F) { const left = F.t0 + F.T - lp.t; s.reach = clampN(1 - left / 0.5, 0, 1); s.reachHigh = lp.ball.z > p.h * 0.9 ? 0.35 : 0; }
+    // The kick: the leg swings through the ball as it leaves.
+    const KK = lp.kick;
+    s.kickU = KK && p === lp.kicker && KK.kickedAt != null && lp.t - KK.kickedAt < 0.55 ? clampN((lp.t - KK.kickedAt + 0.2) / 0.75, 0, 1) : null;
+    if (KK && !KK.punt && p === lp.holder && lp.phase === 'live' && (KK.kickedAt == null || lp.t - KK.kickedAt < 0.6)) s.dive = 0.35;
     // Going up for the ball: lifted off the ground on the jump's arc, arms up.
     s.jumpZ = p.jump != null ? 4 * clampN(p.jump / p.jumpT, 0, 1) * (1 - clampN(p.jump / p.jumpT, 0, 1)) * p.jumpH : 0;
     if (p.act === 'JUMP') { s.reach = Math.max(s.reach ?? 0, clampN(p.jump / (p.jumpT * 0.4), 0, 1)); s.reachHigh = 0; }
@@ -961,6 +965,25 @@ export class Stage {
       near(k, 5);
       f.shot = 'run';
       set('TACKLE');
+    } else if (b.state === 'air' && lp.kick?.F) {
+      // A kick in the air: the ball, where it comes down (or the posts) and who is around there.
+      const T = lp.kick.F;
+      const u = clampN((lp.t - T.t0) / T.T, 0, 1);
+      this.world(T.sx + (T.tx - T.sx) * (0.3 + u * 0.7), T.sy + (T.ty - T.sy) * (0.3 + u * 0.7), 0, f.focus);
+      const bw = this.world(b.x, b.y, b.z);
+      pt(bw.x, bw.y, bw.z);
+      const land = this.world(T.tx, T.ty);
+      pt(land.x, lp.kick.punt ? 0 : 4, land.z);
+      near({ x: T.tx, y: T.ty }, lp.kick.punt ? 8 : 3);
+      if (u < 0.3) near({ x: T.sx, y: T.sy }, 4);
+      f.shot = 'pass';
+      set('PASS_FLIGHT');
+    } else if (lp.kick && !lp.carrierSet && b.state === 'loose') {
+      this.world(b.x, b.y, 0, f.focus);
+      pt(f.focus.x, 0, f.focus.z);
+      near(b, 8);
+      f.shot = 'run';
+      set('RUN');
     } else if (b.state === 'air' && lp.thrown) {
       const T = lp.thrown;
       const u = clampN((lp.t - T.t0) / T.T, 0, 1);
@@ -994,8 +1017,8 @@ export class Stage {
     } else {
       // The pocket: the passer, both lines and the routes (the deep ones counted at most
       // eighteen yards out, so the shot widens with them without leaving the pocket).
-      const q = lp.off.QB ?? b;
-      this.world(Math.max(q.x, -9) + 3, q.y * 0.4, 0, f.focus);
+      const q = lp.snapTo ?? lp.off.QB ?? b;
+      this.world(Math.max(q.x, lp.kick ? -16 : -9) + 3, q.y * 0.4, 0, f.focus);
       for (const p of lp.players) {
         if (p.side === 'off' || Math.abs(p.y) < 9 && p.x < 8) body(p, los.x + this.dir * 18);
       }
