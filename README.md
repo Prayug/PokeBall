@@ -100,6 +100,7 @@ Ratings decide games: in the live game a strong lineup (about 80 overall) beats 
 | --- | --- |
 | `src/engine.js` | Play-by-play simulation: line battles, coverage, completions, tackles, clock, scoring, AI play calling |
 | `src/live.js` | Live plays: 22 Pokémon moving in real time with blocking, routes, man and zone coverage, throws, catches and tackles |
+| `src/live/defense.js`, `src/live/passing.js` | The defensive calls (`DEF_SCHEMES`) with rush, coverage and pursuit; routes, the quarterback's reads, throws, the ball's flight and catches |
 | `src/field3d.js` | The 3D stage: players, ball, play art, markers and effects, driven by the live play |
 | `src/stadium3d.js` | Field, stands, crowd, lights and weather |
 | `src/camera3d.js` | Gameplay, tactical, broadcast and player-focus cameras |
@@ -113,7 +114,9 @@ Ratings decide games: in the live game a strong lineup (about 80 overall) beats 
 | `src/league.js` | Snake draft, AI drafters, schedule, standings, playoffs, league leaders |
 | `src/ratings.js` | Base stats to football attributes, the 22 slots, position overalls, auto depth chart |
 | `src/types.js` | Type chart, type traits, weather and the curated abilities |
-| `src/app.js`, `src/index.html` | The screens and styles |
+| `src/app.js`, `src/index.html` | The entry point (rendering and the click, key and form handlers) and the styles |
+| `src/state.js`, `src/ui.js` | The shared UI state with save and preference storage; small view helpers such as `esc`, `sprite` and `teamBadge` |
+| `src/screens/` | One module per screen: `home`, `draft` (and grades), `depth`, `season` (and box scores), `offseason`, `game`, the play-call sheet (`callsheet`) and the live 3D game loop and input (`live3d`) |
 | `src/data.js`, `src/sprites.js`, `src/sprites3d.js` | Generated Pokémon data, menu sprites and the index of the animated sprite strips (do not edit by hand) |
 | `dist/models3d/` | The 3D models, two Pokémon per file, loaded on demand (not in git: `npm run models` downloads them) |
 | `build/fetch_models3d.mjs`, `build/models3d.json` | Downloads the models release into `dist/models3d/`, or packs it for a new release; which release to use |
