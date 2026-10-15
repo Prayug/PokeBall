@@ -13,7 +13,7 @@
 // Usage: node test/scenarios.mjs [--report path.json]   (SWEEP=n sets the sweep size, default 150)
 import { writeFileSync } from 'node:fs';
 import { createLeague, aiChoosePick, makePick, teamForGame } from '../src/league.js';
-import { createGame, runLivePlay, DEF_PLAYS } from '../src/engine.js';
+import { createGame, runLivePlay, DEF_PLAYS, OFF_PLAYS } from '../src/engine.js';
 import { createLivePlay, snap, step, playState, playSeconds, validateFormation, holdPoint, flightAt, ACTIONS, DT, SIDE } from '../src/live.js';
 
 const L = createLeague({ seed: 7, rounds: 26 });
@@ -147,7 +147,7 @@ const S = [
     check: () => [] },
   { name: 'sack', off: ['post', 'pa_deep', 'curl'], def: ['pass_blitz', 'run_blitz'], ok: ({ r }) => r.kind === 'sack',
     check: ({ r }) => (r.yards >= 0 ? [`sack for ${r.yards}`] : []) },
-  { name: 'open-field tackle', off: ['slant', 'inside_run', 'out', 'screen'], ok: ({ lp }) => lp.end.how === 'tackle' && lp.spotX > 6,
+  { name: 'open-field tackle', off: ['slant', 'inside_run', 'out', 'screen'], ok: ({ lp, r }) => lp.end.how === 'tackle' && !r.turnover && lp.spotX > 6,
     check: ({ lp, r }) => (Math.abs(r.yards - Math.round(lp.spotX)) > 1 ? [`gain ${r.yards} does not match the spot ${lp.spotX.toFixed(1)}`] : []) },
   { name: 'touchdown', off: ['slant', 'inside_run', 'te_seam'], setup: { spot: 93 }, ok: ({ lp }) => lp.end.how === 'td',
     check: () => [] },
@@ -211,7 +211,7 @@ for (const [i, C] of S.entries()) {
   report.push({ scenario: C.name, ok, seed: hit?.seed ?? null, off: hit?.off ?? null, def: hit?.def ?? null, text: hit?.r.text ?? null, problems });
 }
 // The same frame checks over a sweep of every run and pass call against every defense.
-const offs = ['inside_run', 'outside_run', 'draw', 'qb_sneak', 'slant', 'out', 'curl', 'te_seam', 'post', 'pa_deep', 'screen'];
+const offs = Object.keys(OFF_PLAYS).filter((k) => ['run', 'pass'].includes(OFF_PLAYS[k].kind));
 const sweepN = Number(process.env.SWEEP ?? 150);
 let sweepBad = 0;
 for (let seed = 5000; seed < 5000 + sweepN; seed++) {

@@ -1,12 +1,15 @@
 // PokeBall UI: home, draft room, grades, depth chart, season hub and game screen.
-import { PLAYERS, SLOTS, SLOT, SLOT_KEYS, OFF_SLOTS, DEF_SLOTS, ATTRS, BASELINE, autoDepthChart, unitRatings, applyGrowth } from './ratings.js';
+import { PLAYERS, SLOTS, SLOT, SLOT_KEYS, OFF_SLOTS, DEF_SLOTS, ST_SLOTS, ATTRS, BASELINE, autoDepthChart, unitRatings, applyGrowth } from './ratings.js';
 import { SPRITES } from './sprites.js';
 import { TYPE_COLORS, TYPE_TRAITS, ABILITIES, WEATHER, effectLabel, bestMultiplier } from './types.js';
 import { OFF_PLAYS, DEF_PLAYS, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, simUntil, spotText, downText, clockText,
-  quarterText, fgDistance, fgChance, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights, manualSub } from './engine.js';
-import { createLivePlay, snap, step as stepLive, playSeconds, worldSpots, playState, DT } from './live.js';
+  quarterText, fgDistance, fgChance, fgOdds, absSpot, createGame, offenseLean, passWeights, runWeights, defenseWeights, manualSub } from './engine.js';
+import { createLivePlay, snap, hurry, step as stepLive, playSeconds, worldSpots, playState, DT, FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT } from './live.js';
+import { formationsFor } from './formations.js';
+import { measureVersion } from './body.js';
 import { Stage, webglAvailable } from './field3d.js';
-import { CAMERA_MODES, CAMERA_SHOTS, CAMERA_LIMITS, cameraDefaults } from './camera3d.js';
+import { initAudio, setSound } from './audio.js';
+import { CAMERA_MODES, CAMERA_SHOTS, CAMERA_LIMITS, CAMERA_ALIASES, cameraDefaults } from './camera3d.js';
 import { diagram, formationName } from './playbook.js';
 import * as LG from './league.js';
 
@@ -18,10 +21,11 @@ const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').mat
 const S = {
   screen: 'home', league: null, game: null, gameMeta: null,
   draft: { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false },
-  depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 22, legendaries: false, typeCap: true, clock: true },
+  depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 24, legendaries: false, typeCap: true, clock: true },
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
-  menuOpen: false, cam: 'broadcast', weatherFx: true, quality: 'auto',
-  names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'pre',
+  menuOpen: false, cam: 'gameplay', weatherFx: true, quality: 'auto',
+  names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
+  sound: true, seenHelp: false, helpOpen: false,
 };
 let timers = { draft: null, clock: null, auto: null, banner: null };
 
@@ -75,23 +79,29 @@ function loadPrefs() {
     const p = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
     if (p) {
       S.coach = !!p.coach; S.watch = p.watch ?? S.coach; Object.assign(S.setup, p.setup ?? {});
-      if (CAMERA_MODES.some(([k]) => k === p.cam)) S.cam = p.cam;
+      // Version 2 cameras: the old behind-the-offense "broadcast" is now "gameplay", the old
+      // sideline shot is "broadcast" and behind-the-QB is "player focus".
+      const cam = p.camV >= 2 ? p.cam : p.cam === 'broadcast' ? 'gameplay' : CAMERA_ALIASES[p.cam] ?? p.cam;
+      if (CAMERA_MODES.some(([k]) => k === cam)) S.cam = cam;
       if (p.weatherFx != null) S.weatherFx = !!p.weatherFx;
       if (['auto', 'high', 'low'].includes(p.quality)) S.quality = p.quality;
       if (p.names != null) S.names = !!p.names;
       if (p.pips != null) S.pips = !!p.pips;
-      if (p.camShots) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
+      if (p.sound != null) S.sound = !!p.sound;
+      if (p.seenHelp) S.seenHelp = true;
+      // Lens settings saved before version 3 belong to the older framing and are dropped.
+      if (p.camShots && p.camV === 4) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
     }
   } catch { /* ignore */ }
 }
 function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 4, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, camShots: S.cal })); } catch { /* ignore */ }
 }
 
 // ---------- small view helpers ----------
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const P = (id) => PLAYERS[id];
-const ATTR_SHORT = { spd: 'SPD', acl: 'ACL', agi: 'AGI', str: 'STR', blk: 'BLK', rush: 'RSH', arm: 'THR', acc: 'ACC', hnd: 'CTH', cov: 'COV', tkl: 'TKL', awr: 'AWR', sta: 'STA' };
+const ATTR_SHORT = { spd: 'SPD', acl: 'ACL', agi: 'AGI', str: 'STR', blk: 'BLK', rush: 'RSH', arm: 'THR', acc: 'ACC', hnd: 'CTH', cov: 'COV', tkl: 'TKL', awr: 'AWR', sta: 'STA', kpw: 'KPW', kac: 'KAC' };
 function sprite(id, cls = '') {
   return `<img class="spr ${cls}" src="${SPRITES[id]}" alt="${esc(P(id).name)}" loading="lazy" draggable="false">`;
 }
@@ -154,8 +164,8 @@ function renderHome() {
           <label class="short">Abbreviation<input id="f-abbr" maxlength="3" value="${esc(st.abbr)}"></label>
         </div>
         <fieldset><legend>Draft length</legend>
-          <label class="pill"><input type="radio" name="rounds" value="22" ${st.rounds === 22 ? 'checked' : ''}> 22 rounds, starters only</label>
-          <label class="pill"><input type="radio" name="rounds" value="26" ${st.rounds === 26 ? 'checked' : ''}> 26 rounds, with 4 bench</label>
+          <label class="pill"><input type="radio" name="rounds" value="24" ${st.rounds === 24 ? 'checked' : ''}> 24 rounds, starters, kicker and punter</label>
+          <label class="pill"><input type="radio" name="rounds" value="28" ${st.rounds === 28 ? 'checked' : ''}> 28 rounds, with 4 bench</label>
         </fieldset>
         <label class="check"><input type="checkbox" id="f-typecap" ${st.typeCap ? 'checked' : ''}> At most 4 Pokémon of one primary type</label>
         <label class="check"><input type="checkbox" id="f-legend" ${st.legendaries ? 'checked' : ''}> Include legendaries, Ultra Beasts and Paradox Pokémon</label>
@@ -284,7 +294,7 @@ function rosterSlotsHtml(team) {
     const id = team.slots[k];
     return `<li><span class="slot">${k}</span>${id ? `${sprite(id, 'xs')}<span>${esc(P(id).name)}</span>${ovr(P(id).ovr[k])}` : '<span class="muted">Open</span>'}</li>`;
   }).join('');
-  return `<div class="slots"><ul>${col(OFF_SLOTS)}</ul><ul>${col(DEF_SLOTS)}</ul></div>
+  return `<div class="slots"><ul>${col(OFF_SLOTS)}</ul><ul>${col(DEF_SLOTS)}${col(ST_SLOTS)}</ul></div>
     ${team.bench.length ? `<p class="muted small">Bench: ${team.bench.map((id) => esc(P(id).name)).join(', ')}</p>` : ''}`;
 }
 
@@ -409,13 +419,14 @@ const FORMATION = [
   ['DE', 3, 3], ['DT2', 5, 3], ['DT1', 7, 3], ['LE', 9, 3],
   ['WR1', 1, 5], ['LT', 4, 5], ['LG', 5, 5], ['C', 6, 5], ['RG', 7, 5], ['RT', 8, 5], ['TE', 9, 5], ['WR2', 11, 5],
   ['WR3', 2, 6], ['QB', 6, 6],
-  ['RB', 6, 7],
+  ['RB', 6, 7], ['K', 3, 7], ['P', 9, 7],
 ];
 function renderDepth() {
   const me = user();
   const u = unitRatings(me.lineup);
   const cell = ([k, col, row]) => {
     const id = me.lineup[k];
+    if (id == null) return `<button class="dslot ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}"><span class="slot">${k}</span><span class="dn muted">Open</span></button>`;
     const p = P(id);
     const misfit = p.best[0] !== k && p.ovr[p.best[0]] - p.ovr[k] >= 6;
     return `<button class="dslot ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}">
@@ -434,7 +445,7 @@ function renderDepth() {
       ${FORMATION.map(cell).join('')}
     </div></div>
     <div class="card"><h3>Bench</h3><div class="benchrow">${me.bench.length ? me.bench.map((id) => `<button class="dslot bench" data-act="dbench" data-id="${id}">${sprite(id, 'md')}<span class="dn">${esc(P(id).name)}</span>
-      ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 26 rounds to carry 4 backups.</p>'}</div></div>
+      ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 28 rounds to carry 4 backups.</p>'}</div></div>
     ${Object.keys(S.league.condition ?? {}).length ? '<p class="small muted">Sore Pokémon start the next game below full energy, and the bench subs in as they tire. A Pokémon who is out sits the next game when the bench can cover him; with no bench he plays hurt.</p>' : ''}
     <div class="actions"><button class="btn" data-act="autodepth">Auto-arrange for best overall</button>
     <button class="btn primary" data-act="go" data-to="${S.league.phase === 'grades' ? 'grades' : 'season'}">Done</button></div>
@@ -514,6 +525,7 @@ function scoutHtml(L, myId, oppId) {
     <p class="small muted">${esc(R.coachNote)}</p>
     <div class="opprow"><span class="muted small">Their offense</span>${lineupRow(OFF_SLOTS)}</div>
     <div class="opprow"><span class="muted small">Their defense</span>${lineupRow(DEF_SLOTS)}</div>
+    <div class="opprow"><span class="muted small">Their kickers</span>${lineupRow(ST_SLOTS)}</div>
     <div class="edges"><div><h4>Your best type edges</h4>${R.best.length ? `<ul>${R.best.map(edgeRow).join('')}</ul>` : '<p class="muted small">None this week.</p>'}</div>
     <div><h4>Where they have the edge</h4>${R.worst.length ? `<ul>${R.worst.map(edgeRow).join('')}</ul>` : '<p class="muted small">Nothing to worry about.</p>'}</div></div>
     <h4>Weather</h4><ul class="weather">${weather}</ul>
@@ -724,12 +736,13 @@ function scoreboard(g) {
 }
 
 // Play families for the call sheet: a short label and a colored edge per group.
-const DEF_GROUPS = [['front', 'Front', ['base', 'goal_line']], ['blitz', 'Blitz', ['run_blitz', 'pass_blitz']],
-  ['cover', 'Coverage', ['cover2', 'cover3', 'man_press', 'prevent']]];
+const DEF_GROUPS = [['front', 'Man', ['base', 'cover1_robber', 'cover2_man', 'man_press', 'goal_line']],
+  ['cover', 'Zone', ['cover2', 'tampa2', 'cover3', 'cover4', 'prevent']],
+  ['blitz', 'Pressure', ['run_blitz', 'pass_blitz', 'mug', 'nickel_blitz', 'fire_zone', 'cover0']]];
 // Number keys for the visible calls in order; kicks get letters.
 const CALL_KEYS = [['Digit1', '1'], ['Digit2', '2'], ['Digit3', '3'], ['Digit4', '4'], ['Digit5', '5'], ['Digit6', '6'],
   ['Digit7', '7'], ['Digit8', '8'], ['Digit9', '9'], ['Digit0', '0'], ['Minus', '-']];
-const KICK_KEYS = { punt: ['KeyP', 'P'], fg: ['KeyF', 'F'] };
+const KICK_KEYS = { punt: ['KeyP', 'P'], fg: ['KeyF', 'F'] };  // the other kicks take number keys on their page
 
 // The calls on the sheet right now, grouped, each with its key. Also marks the one that fits
 // the down: the heaviest weight in the AI's own tables, read without rolling g.rng.
@@ -739,8 +752,8 @@ function callSheet(g) {
   let groups, fit;
   if (onOff) {
     const fg = fgDistance(g);
-    const shown = Object.keys(OFF_PLAYS).filter((k) => (k !== 'punt' && k !== 'fg') || g.down === 4 || (k === 'fg' && fg <= 60));
     const kind = (k) => OFF_PLAYS[k].kind;
+    const shown = Object.keys(OFF_PLAYS).filter((k) => (kind(k) !== 'punt' && kind(k) !== 'fg') || g.down === 4 || (kind(k) === 'fg' && fg <= 60));
     groups = [['run', 'Run', shown.filter((k) => kind(k) === 'run')], ['pass', 'Pass', shown.filter((k) => kind(k) === 'pass')],
       ['kick', 'Kicking', shown.filter((k) => kind(k) === 'punt' || kind(k) === 'fg')]];
     const lean = offenseLean(g);
@@ -758,14 +771,51 @@ function callSheet(g) {
   return { onOff, groups: keyed, fit };
 }
 
+// Formations: the offense picks one for its call (or leaves it to the play's own), the defense
+// picks its front (or leaves it to the call's). An AI side mixes its looks.
+function formFor(call) {
+  const ok = formationsFor(call);
+  if (!ok.length) return null;
+  return S.formPick && ok.includes(S.formPick) ? S.formPick : PLAY_FORMATION[call];
+}
+function frontFor(call) { return S.frontPick ?? CALL_FRONT[call] ?? '43'; }
+// The AI's pick is a fixed function of the game and the play number (not Math.random), so a
+// game started from the same seed lines up the same way every time.
+function aiRoll(call) {
+  const g = S.game;
+  let h = ((g?.seed ?? 1) ^ Math.imul((g?.playNo ?? 0) + 1, 0x9E3779B1)) >>> 0;
+  for (let i = 0; i < call.length; i++) h = Math.imul(h ^ call.charCodeAt(i), 0x85EBCA6B) >>> 0;
+  h ^= h >>> 15; h = Math.imul(h, 0xC2B2AE35) >>> 0; h ^= h >>> 13;
+  return (h >>> 0) / 2 ** 32;
+}
+function aiFormation(call) {
+  const ok = formationsFor(call);
+  if (!ok.length) return null;
+  const r = aiRoll(call);
+  return r < 0.6 ? PLAY_FORMATION[call] : ok[Math.floor(((r - 0.6) / 0.4) * ok.length) % ok.length];
+}
+function aiFront(call) {
+  if (call === 'goal_line') return 'goal';
+  const r = aiRoll(call);
+  return r < 0.7 ? CALL_FRONT[call] : ['43', 'nickel'][Math.floor(((r - 0.7) / 0.3) * 2) % 2];
+}
+function cycleForm(onOff) {
+  const keys = [null, ...Object.keys(onOff ? FORMATIONS : DEF_FORMATIONS)];
+  const k = onOff ? 'formPick' : 'frontPick';
+  S[k] = keys[(keys.indexOf(S[k] ?? null) + 1) % keys.length];
+  render();
+}
+
 // The 3D game's play-call panel: a few big cards at a time. Plays sit in categories (runs,
 // short passes, deep passes, kicks; on defense fronts, blitzes and coverages) with tabs to
 // move between them, so each card has room for readable play art, the name, one line on
 // what it does, run or pass, and its key. Every call keeps its number key from any tab, and
 // the panel opens on the category of the call that fits the down.
-const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'draw', 'qb_sneak']], ['short', 'Short pass', ['screen', 'slant', 'out', 'curl']],
-  ['deep', 'Deep pass', ['te_seam', 'post', 'pa_deep']], ['kick', 'Special teams', ['punt', 'fg']]];
-const CS_PER_PAGE = 6;
+const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'power', 'counter', 'toss', 'dive', 'draw']],
+  ['qbrun', 'QB runs', ['read_option', 'qb_power', 'qb_draw', 'qb_sneak']],
+  ['short', 'Quick', ['slant', 'out', 'stick', 'curl_flat', 'mesh', 'screen', 'bubble']],
+  ['mid', 'Intermediate', ['curl', 'smash', 'dagger', 'levels', 'flood', 'y_cross', 'te_seam']],
+  ['deep', 'Shots', ['four_verts', 'post', 'pa_boot', 'pa_deep']], ['kick', 'Special teams', ['punt', 'coffin_punt', 'fake_punt', 'fg', 'fake_fg']]];
 function csTabs(g) {
   const { onOff, groups, fit } = callSheet(g);
   const byCall = new Map(groups.flatMap(([fam, , cs]) => cs.map((c) => [c.call, { ...c, fam }])));
@@ -774,6 +824,11 @@ function csTabs(g) {
   // Anything not placed in a tab (new plays) lands in the last one.
   const placed = new Set(tabs.flatMap(([, , cs]) => cs.map((c) => c.call)));
   for (const c of byCall.values()) if (!placed.has(c.call)) tabs[tabs.length - 1][2].push(c);
+  // Number keys count from 1 within each tab (kicks keep their letters), like a playbook page.
+  for (const [, , cs] of tabs) {
+    let n = 0;
+    for (const c of cs) { const key = KICK_KEYS[c.call] && onOff ? KICK_KEYS[c.call] : CALL_KEYS[n++]; c.code = key?.[0]; c.label = key?.[1]; }
+  }
   const fitTab = tabs.find(([, , cs]) => cs.some((c) => c.call === fit))?.[0] ?? tabs[0][0];
   const cur = tabs.some(([k]) => k === S.csTab) ? S.csTab : fitTab;
   return { onOff, tabs, fit, cur };
@@ -782,31 +837,39 @@ function callSheetHtml(g) {
   const { onOff, tabs, fit, cur } = csTabs(g);
   const fg = fgDistance(g);
   const side = onOff ? 'off' : 'def';
-  const tab = tabs.find(([k]) => k === cur);
-  const page = Math.min(S.csPage ?? 0, Math.max(0, Math.ceil(tab[2].length / CS_PER_PAGE) - 1));
-  const shown = tab[2].slice(page * CS_PER_PAGE, page * CS_PER_PAGE + CS_PER_PAGE);
-  const pages = Math.ceil(tab[2].length / CS_PER_PAGE);
-  const card = ({ call, label, fam }) => {
+  const curCalls = new Set(tabs.find(([k]) => k === cur)[2].map((c) => c.call));
+  const card = ({ call, label: key, fam }) => {
+    const label = curCalls.has(call) || KICK_KEYS[call] ? key : null;
     const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
     const kind = onOff ? p.kind : fam;
-    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
-    const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick' }[kind] : { front: 'Front', blitz: 'Blitz', cover: 'Coverage' }[kind];
-    const form = onOff ? formationName(call) : '';
-    return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
-      <span class="pc-art">${diagram(g, call, side)}</span>
-      <span class="pc-top"><em class="pc-kind">${tag}</em>${form ? `<span class="pc-form">${esc(form)}</span>` : ''}${label ? `<kbd>${label}</kbd>` : ''}</span>
-      <span class="pname">${p.name}</span><span class="pblurb">${esc(extra)}</span>
-      ${call === fit ? '<em class="fittag">Fits the down</em>' : ''}</button>`;
+    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgOdds(g) * 100)}%` : p.blurb;
+    const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick' }[kind] : { front: 'Man', blitz: 'Blitz', cover: 'Zone' }[kind];
+    const form = onOff ? formationName(call, formFor(call)) : DEF_FORMATIONS[frontFor(call)]?.short ?? '';
+    return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" title="${esc(extra)}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
+      <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call))}${label ? `<kbd>${label}</kbd>` : ''}${call === fit ? '<em class="fittag">Fits</em>' : ''}</span>
+      <span class="pname">${p.name}</span>
+      <span class="pc-top"><em class="pc-kind">${tag}</em>${form ? `<span class="pc-form">${esc(form)}</span>` : ''}</span>
+      <span class="pblurb">${esc(extra)}</span></button>`;
   };
-  const who = onOff ? 'Call your offense' : `${esc(g.teams[g.poss].abbr)} ball · call your defense`;
-  return `<div class="callsheet${S.csFold ? ' folded' : ''}" role="dialog" aria-label="Play call">
-    <div class="cs-head"><b>${downText(g)}</b><span>${who}</span>
-      <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
-      <span class="cs-keys"><kbd>←</kbd><kbd>→</kbd> category · number keys call · <kbd>H</kbd> hide</span>
-      <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>
-    <div class="cs-cards">${shown.map(card).join('')}</div>
-    ${pages > 1 ? `<div class="cs-pages"><button class="btn tiny" data-act="cspage" data-d="-1" ${page ? '' : 'disabled'}>Previous</button><span>${page + 1} / ${pages}</span><button class="btn tiny" data-act="cspage" data-d="1" ${page < pages - 1 ? '' : 'disabled'}>Next</button></div>` : ''}
-  </div>`;
+  const who = onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
+  const head = `<div class="cs-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>
+      <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur && !S.csAll ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
+      ${formSelect(onOff)}
+      <button class="btn tiny cs-all" data-act="csall" aria-pressed="${!!S.csAll}">${S.csAll ? 'Fewer' : 'All plays'} <kbd>X</kbd></button>
+      <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>`;
+  // The strip: the plays of one category in a row, each a real play diagram with its name.
+  // The expanded playbook (X): every category at once.
+  const body = S.csAll
+    ? `<div class="cs-book">${tabs.map(([k, label, cs]) => `<section><h4>${label}</h4><div class="cs-cards">${cs.map(card).join('')}</div></section>`).join('')}</div>`
+    : `<div class="cs-cards">${tabs.find(([k]) => k === cur)[2].map(card).join('')}</div>`;
+  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${body}</div>`;
+}
+// The formation (offense) or front (defense) for the call, as one compact control.
+function formSelect(onOff) {
+  const opts = onOff ? Object.entries(FORMATIONS).map(([k, f]) => [k, f.short]) : Object.entries(DEF_FORMATIONS).map(([k, f]) => [k, f.short]);
+  const cur = (onOff ? S.formPick : S.frontPick) ?? '';
+  return `<label class="cs-formsel"><span>${onOff ? 'Formation' : 'Front'} <kbd>Z</kbd></span><select id="cs-form" aria-label="${onOff ? 'Formation' : 'Front'}">
+    <option value="" ${cur === '' ? 'selected' : ''}>Play default</option>${opts.map(([k, l]) => `<option value="${k}" ${cur === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
 }
 function csMove(d) {
   const g = S.game;
@@ -823,7 +886,7 @@ function playCards(g, { keys = false } = {}) {
   const fg = fgDistance(g);
   const card = ({ call, label }, fam) => {
     const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
-    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgChance(fg) * 100)}%` : p.blurb;
+    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgOdds(g) * 100)}%` : p.blurb;
     return `<button class="play f-${fam} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}">
       <b>${p.name}</b><span>${extra}</span>${call === fit ? '<em class="fittag">Fits this down</em>' : ''}${keys && label ? `<kbd>${label}</kbd>` : ''}</button>`;
   };
@@ -886,8 +949,10 @@ function renderGame() {
     if (g.final) overlay = controls.replace('class="card ', 'class="card ov-final ');
     else if (L3.lp) {
       const lp = L3.lp;
-      const mine = lp.user === lp.o ? `${formationName(L3.off)} · ${OFF_PLAYS[L3.off].name}` : DEF_PLAYS[L3.def].name;
-      if (lp.phase === 'pre') overlay = `<div class="pill lined"><span class="pl-play">${esc(mine)}</span>
+      const offTxt = `${FORMATIONS[lp.formation]?.name ?? ''}`, defTxt = `${DEF_FORMATIONS[lp.defFormation]?.name ?? ''}`;
+      const mine = lp.user === lp.o ? `${offTxt} · ${OFF_PLAYS[L3.off].name}` : `${defTxt} · ${DEF_PLAYS[L3.def].name}`;
+      const theirs = lp.user === lp.o ? `vs ${defTxt}` : `vs ${offTxt}`;
+      if (lp.phase === 'pre') overlay = `<div class="pill lined"><span class="pl-play">${esc(mine)}<small>${esc(theirs)}</small></span>
         <button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap' : 'Start'} <kbd>Space</kbd></button>
         ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change <kbd>Esc</kbd></button>'}</div>`;
     } else if (decide) overlay = callSheetHtml(g);
@@ -927,7 +992,7 @@ function broadcastBar(g) {
   const [H, A] = g.teams;
   const scored = (i) => (L3.scoreFlash?.[i] ?? 0) > performance.now() ? 'scored' : '';
   const team = (t, i) => `<div class="bc-team ${g.poss === i && !g.final ? 'has' : ''} ${scored(i)}" style="--team:${t.color}"><span class="bc-abbr">${esc(t.abbr)}</span><span class="bc-score">${g.score[i]}</span>${g.poss === i && !g.final ? '<span class="bc-poss" title="Has the ball" aria-label="Has the ball"></span>' : ''}</div>`;
-  const info = g.final ? `<div class="bc-cell bc-down">FINAL</div>` : `<div class="bc-cell bc-q">${quarterText(g.quarter)}</div><div class="bc-cell bc-clock" id="gclock">${clockText(g.clock)}</div>
+  const info = g.final ? `<div class="bc-cell bc-down">FINAL</div>` : `<div class="bc-cell bc-q" title="Quarter">${g.quarter <= 4 ? `${['1st', '2nd', '3rd', '4th'][g.quarter - 1].toUpperCase()}<small>QTR</small>` : quarterText(g.quarter)}</div><div class="bc-cell bc-clock" id="gclock">${clockText(g.clock)}</div>
     <div class="bc-cell bc-down">${downText(g)}</div><div class="bc-cell bc-pc" id="pclock" title="Play clock">:${String(Math.ceil(L3.pclock ?? 40)).padStart(2, '0')}</div>
     <div class="bc-cell bc-spot">${spotText(g)}</div>`;
   return `<div class="bcast" id="bcast">${team(A, 1)}${team(H, 0)}${info}</div>`;
@@ -962,11 +1027,12 @@ function menuHtml(g, simBtns, coachBox) {
     <h4>Skip ahead</h4><div class="gm-row">${simOff ? simBtns.replaceAll('data-act="sim"', 'data-act="sim" disabled') : simBtns}</div>
     <h4>Camera <kbd>C</kbd></h4><div class="gm-row seg">${CAMERA_MODES.map(([k, l]) => `<button class="btn tiny ${S.cam === k ? 'on' : ''}" data-act="cam" data-cam="${k}" aria-pressed="${S.cam === k}">${l}</button>`).join('')}</div>
     <h4>Graphics</h4><div class="gm-row seg">${[['auto', 'Auto'], ['high', 'High'], ['low', 'Fast']].map(([k, l]) => `<button class="btn tiny ${S.quality === k ? 'on' : ''}" data-act="quality" data-q="${k}" aria-pressed="${S.quality === k}">${l}</button>`).join('')}</div>
+    <label class="check"><input type="checkbox" id="g-sound" ${S.sound ? 'checked' : ''}> Sound: crowd, whistle and hits</label>
     <label class="check"><input type="checkbox" id="g-wx" ${S.weatherFx ? 'checked' : ''}> Weather effects (${WEATHER[g.weather].name})</label>
     <label class="check"><input type="checkbox" id="g-names" ${S.names ? 'checked' : ''}> Name and position over your player</label>
     <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}> Team markers under every player</label>
     <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}> Debug view: position labels, formation check, camera calibration <kbd>\`</kbd></label>
-    ${keysHelp()}
+    <div class="gm-row"><button class="btn tiny" data-act="help">Controls <kbd>?</kbd></button><button class="btn tiny" data-act="replay" ${replayReady() ? '' : 'disabled'}>Replay last play <kbd>Y</kbd></button></div>
     <button class="btn tiny" data-act="details">Box score and play-by-play</button>
   </div>`;
 }
@@ -980,14 +1046,14 @@ function debugHtml() {
   const slider = (k, label, unit) => {
     const [lo, hi] = CAMERA_LIMITS[k];
     const v = S.cal[S.calShot][k];
-    return `<label class="cal"><span>${label}</span><input type="range" id="cal-${k}" min="${lo}" max="${hi}" step="0.5" value="${v}"><output id="calv-${k}">${v}${unit}</output></label>`;
+    return `<label class="cal"><span>${label}</span><input type="range" id="cal-${k}" min="${lo}" max="${hi}" step="${k === 'zoom' ? 0.05 : 0.5}" value="${v}"><output id="calv-${k}">${v}${unit}</output></label>`;
   };
   return `<div class="dbg card" aria-label="Debug view">
     <h4>Debug <span class="muted" id="dbg-state">${L3.flow ?? ''}</span></h4>
     <p class="small ${issues.length ? 'bad' : 'good'}">${lp ? (issues.length ? `Formation: ${issues.length} problem${issues.length === 1 ? '' : 's'}: ${esc(issues.slice(0, 3).join('; '))}` : 'Formation check passed: 11 on 11, 7 on the line, no overlaps') : 'No formation on the field'}</p>
-    <h4>Broadcast camera</h4>
+    <h4>Camera lenses</h4>
     <div class="gm-row">${CAMERA_SHOTS.map(([k, n]) => `<button class="btn tiny${S.calShot === k ? ' on' : ''}" data-act="calshot" data-k="${k}">${n}</button>`).join('')}</div>
-    ${slider('distance', 'Distance', ' yd')}${slider('height', 'Height', ' yd')}${slider('pitch', 'Pitch', '°')}${slider('fov', 'Field of view', '°')}
+    ${slider('pitch', 'Pitch', '°')}${slider('fov', 'Field of view', '°')}${slider('zoom', 'Zoom out', '×')}
     <button class="btn tiny" data-act="calreset">Reset camera</button>
   </div>`;
 }
@@ -1054,28 +1120,31 @@ function lineupHtml(g) {
         const lbl = effectLabel(m);
         return `<li><button class="subslot" data-act="subin" data-id="${id}" ${can ? '' : 'disabled'}>${sprite(id, 'xs')}<span class="cn">${esc(P(id).name)}</span><span class="types">${typeChips(P(id).types)}</span>${ovr(P(id).ovr[sel])}
           <span class="en">${Math.round(t.energy[id] ?? 100)}%</span>${lbl ? `<span class="eff ${m > 1 ? 'se' : m === 0 ? 'ne' : 'nve'}">${lbl}</span>` : ''}</button></li>`;
-      }).join('')}</ul>` : '<p class="muted small">Nobody on the bench. A 26-round league carries four backups.</p>'}
+      }).join('')}</ul>` : '<p class="muted small">Nobody on the bench. A 28-round league carries four backups.</p>'}
       <button class="btn tiny" data-act="subcancel">Cancel</button></div>`;
   }
   return `<p class="small muted">Pick a slot, then a bench Pokémon. Your subs stay in until you send the starter back, and the auto-sub leaves those slots alone.${can ? '' : ' Subs wait until the play is over.'}</p>
     <div class="subgrid"><div><h4>Offense</h4><ul class="sublist">${OFF_SLOTS.map(slotRow).join('')}</ul></div>
-    <div><h4>Defense</h4><ul class="sublist">${DEF_SLOTS.map(slotRow).join('')}</ul></div></div>${pickList}`;
+    <div><h4>Defense</h4><ul class="sublist">${DEF_SLOTS.map(slotRow).join('')}</ul><h4>Special teams</h4><ul class="sublist">${ST_SLOTS.map(slotRow).join('')}</ul></div></div>${pickList}`;
 }
 
 function keysHelp() {
-  return `<details class="keys"><summary>Controls</summary><div class="keygrid">
-    <span><kbd>1</kbd>-<kbd>9</kbd> <kbd>0</kbd> <kbd>-</kbd> between plays: call the play on that card</span>
-    <span><kbd>C</kbd> change camera · <kbd>M</kbd> menu · <kbd>Esc</kbd> change the play</span>
-    <span><kbd>Space</kbd> snap, juke with the ball, dive to tackle</span>
+  return `<div class="keygrid">
+    <span><kbd>1</kbd>-<kbd>8</kbd> between plays: call that play on the open page · <kbd>←</kbd> <kbd>→</kbd> turn the page</span>
+    <span><kbd>C</kbd> change camera (gameplay, tactical, broadcast, player) · <kbd>M</kbd> menu · <kbd>Esc</kbd> change the play</span>
+    <span><kbd>Space</kbd> snap (hurries everyone to the line), juke with the ball, dive to tackle</span>
     <span><kbd>W A S D</kbd> or arrows: move your player</span>
     <span><kbd>Shift</kbd> sprint</span>
-    <span><kbd>1</kbd>-<kbd>5</kbd> throw to that receiver</span>
+    <span><kbd>1</kbd>-<kbd>5</kbd> throw: tap for touch, hold for a bullet, <kbd>Shift</kbd> + number for a lob</span>
+    <span>Hold a direction as you throw to place the ball: up leads him, down brings it back, sideways away from the defender</span>
+    <span><kbd>Space</kbd> while the ball is in the air: go up and attack it</span>
     <span><kbd>T</kbd> throw it away</span>
     <span><kbd>E</kbd> truck through a tackler</span>
     <span><kbd>R</kbd> spin move</span>
     <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
+    <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
-  </div></details>`;
+  </div>`;
 }
 
 function logHtml(g) {
@@ -1152,7 +1221,8 @@ function doCall(call) {
   S.coachDown = false;
   S.csTab = null; S.csPage = 0;
   // Coach mode: you call it, the AI plays it (and snaps it after a beat).
-  if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) { startLive(off, def, { userSide: us, watch: !!S.watch, autoQB: !!S.watch, autoSnap: S.watch || g.poss !== us ? 1.6 : null }); return; }
+  const formation = g.poss === us ? formFor(off) : aiFormation(off), defFormation = g.poss === us ? aiFront(def) : frontFor(def);
+  if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) { startLive(off, def, { userSide: us, watch: !!S.watch, autoQB: !!S.watch, autoSnap: S.watch || g.poss !== us ? 1.6 : null, formation, defFormation }); return; }
   S.busy = true;
   if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
   const entry = runPlay(g, off, def);
@@ -1171,7 +1241,7 @@ function autoAdvance() {
     const off = aiOffenseCall(g), def = aiDefenseCall(g);
     if (stage && ['run', 'pass'].includes(OFF_PLAYS[off].kind)) {
       S.coachDown = true;
-      startLive(off, def, { userSide: userSide(), watch: true, autoQB: true, autoSnap: 1.4 });
+      startLive(off, def, { userSide: userSide(), watch: true, autoQB: true, autoSnap: 1.4, formation: aiFormation(off), defFormation: aiFront(def) });
       return;
     }
     S.busy = true;
@@ -1222,7 +1292,7 @@ function ensureStage() {
   if (stage || !webglAvailable()) return;
   try {
     stage = new Stage();
-  } catch { stage = null; return; }
+  } catch (e) { console.error("stage", e); stage = null; return; }
   stage.setCameraMode(S.cam);
   stage.setWeatherFx(S.weatherFx);
   stage.rig.setCalibration(S.cal);
@@ -1232,6 +1302,10 @@ function ensureStage() {
   stageWrap.className = 'stagewrap';
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
     <div class="lower3" id="lower3" aria-live="polite"></div>
+    <div class="ov-badge" id="replay-badge" hidden>Replay</div>
+    <button class="hud-replay" id="replay-btn" data-act="replay" hidden>Replay <kbd>Y</kbd></button>
+    <div class="ov-pause" id="pause-ov" hidden><div><b>Paused</b><span>Press <kbd>P</kbd> or <kbd>Esc</kbd> to resume</span><button class="btn" data-act="resume">Resume</button></div></div>
+    <div class="ov-help" id="help-ov" hidden><div class="card"><h3>Controls</h3>${keysHelp()}<button class="btn primary" data-act="helpok">Got it</button></div></div>
     <div class="dbg-hud" id="dbg-hud"></div>
     <div class="touch" id="touch" aria-hidden="true"><div class="stick" id="stick"><span></span></div>
       <div class="tbtns"><button data-key="Space">Snap / Juke / Dive</button><button data-key="KeyE">Truck</button><button data-key="KeyR">Spin</button><button data-key="KeyQ">Switch</button>
@@ -1260,7 +1334,7 @@ function fitStage() {
 // Keep the line of scrimmage clear of the call sheet: the view shifts up by part of it.
 function fitDock() {
   const sheet = document.querySelector('.game.g3d .callsheet:not(.folded)');
-  stage?.setInset(sheet ? sheet.offsetHeight * 0.55 : 0);
+  stage?.setInset(sheet ? sheet.offsetHeight + 10 : 0);
 }
 
 // Between plays, both teams get up and jog from where the last play ended to the new spot.
@@ -1275,7 +1349,7 @@ function showPreview() {
   const lp = createLivePlay(g, g.poss === us ? 'slant' : 'inside_run', 'base', { userSide: us, from: L3.spots ?? undefined });
   g.rng = saved;
   lp.control = null; lp.preview = true;
-  L3.preview = { key, lp, g };
+  L3.preview = { key, lp, g, mv: measureVersion };
   L3.spots = null;
   stage.setPlay(lp);
   if (first) stage.snapCamera();
@@ -1286,11 +1360,16 @@ function startLive(off, def, opts) {
   // Line up from wherever the players are standing in the preview.
   const from = L3.preview?.lp ? worldSpots(L3.preview.lp) : L3.spots ?? undefined;
   L3.before = { poss: g.poss, down: g.down, toGo: g.toGo, spot: g.spot, score: [...g.score] };
+  if (L3.replay) stopReplay();
+  // The replay recording: the game as it was before the play (its random seed included) and
+  // every simulation step's input, so the play can be run again exactly, step for step.
+  L3.rec = { g: structuredClone(g), off, def, opts: { ...opts, from }, log: [], done: false };
   L3.lp = createLivePlay(g, off, def, { ...opts, from });
+  L3.paused = false;
   L3.off = off; L3.def = def; L3.acc = 0; L3.deadT = 0; L3.ev = 0; L3.committed = null;
   L3.autoSnap = opts.autoSnap ?? null;
   L3.pclock = Math.max(L3.pclock, 10);
-  L3.edges.clear();
+  L3.edges.clear(); L3.hold = null; L3.lob = null;
   S.menuOpen = false;
   hideBanner();
   stage.setPlay(L3.lp);
@@ -1301,6 +1380,10 @@ function startLive(off, def, opts) {
 function doSnap() {
   const lp = L3.lp;
   if (!lp || lp.phase !== 'pre') return;
+  L3.rec?.log.push({ snap: true, control: lp.control ? [lp.control.side, lp.control.slot] : null });
+  // The play as it stands at the snap. Lining up depends on the measured model footprints, which
+  // change as models finish loading, so the replay starts from this copy rather than lining up again.
+  if (L3.rec) try { L3.rec.atSnap = structuredClone(lp); } catch { L3.rec.atSnap = null; }
   snap(lp);
   L3.autoSnap = null;
   render();
@@ -1312,6 +1395,7 @@ function commitPlay() {
   const lp = L3.lp, g = S.game, b = L3.before;
   const entry = runLivePlay(g, L3.off, L3.def, lp.result, playSeconds(lp));
   L3.committed = entry;
+  if (L3.rec) { L3.rec.done = true; L3.rec.end = endKey(lp); }
   const big = entry.highlight === 'td' || entry.kind === 'score' || entry.turnover || entry.kind === 'turnover';
   L3.hold = lp.end?.how === 'td' ? 3.2 : big ? 2.6 : lp.end?.how === 'incomplete' ? 1.6 : 2.0;
   L3.tickerUntil = performance.now() + 6500;
@@ -1341,6 +1425,7 @@ function endResult() {
 // For plays resolved without the live field (punts, field goals): the same result beat.
 function afterLivePlay(entry) {
   const g = S.game, b = L3.before;
+  L3.rec = null;
   L3.before = null;
   L3.pclock = 40;
   const now = performance.now();
@@ -1412,11 +1497,24 @@ function readInput(lp) {
   const up = (k.has('ArrowUp') || k.has('KeyW') ? 1 : 0) - (k.has('ArrowDown') || k.has('KeyS') ? 1 : 0) + (L3.stick?.up ?? 0);
   const right = (k.has('ArrowRight') || k.has('KeyD') ? 1 : 0) - (k.has('ArrowLeft') || k.has('KeyA') ? 1 : 0) + (L3.stick?.right ?? 0);
   const m = stage.toPlayFrame(up, right);
-  const throwKey = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].find((d) => e.has(d));
+  // Throws: tap a receiver's number for a touch pass, hold it for a bullet, Shift with it for a
+  // lob. The stick at release places the ball.
+  const shift = k.has('ShiftLeft') || k.has('ShiftRight');
+  const pressed = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].find((d) => e.has(d));
+  let throwKey = null, throwType = null;
+  if (pressed) {
+    if (shift || L3.lob === pressed) { throwKey = pressed; throwType = 'lob'; L3.hold = null; L3.lob = null; }
+    else L3.hold = { key: pressed, t0: performance.now() };
+  }
+  if (L3.hold && !throwKey) {
+    const held = performance.now() - L3.hold.t0;
+    if (!k.has(L3.hold.key)) { throwKey = L3.hold.key; throwType = 'touch'; L3.hold = null; }
+    else if (held >= 220) { throwKey = L3.hold.key; throwType = 'bullet'; L3.hold = null; }
+  }
   const inp = {
-    mx: m.mx, my: m.my, sprint: k.has('ShiftLeft') || k.has('ShiftRight'),
+    mx: m.mx, my: m.my, sprint: shift && !throwKey,
     juke: e.has('Space'), dive: e.has('Space'), truck: e.has('KeyE'), spin: e.has('KeyR'),
-    throwTo: throwKey ? ['WR1', 'WR2', 'WR3', 'TE', 'RB'][Number(throwKey.slice(5)) - 1] : null,
+    throwTo: throwKey ? ['WR1', 'WR2', 'WR3', 'TE', 'RB'][Number(throwKey.slice(5)) - 1] : null, throwType,
     throwAway: e.has('KeyT'), switchTo: e.has('KeyQ') || e.has('Tab') ? 'ball' : null,
   };
   e.clear();
@@ -1435,7 +1533,8 @@ function hudTip(lp) {
   }
   if (lp.phase === 'dead') return '';
   if (!c) return 'Watching the AI run your call';
-  if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'run') return '1-5 throw to that receiver · T throw away · arrows move';
+  if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'run') return '1-5 tap touch · hold bullet · Shift lob · arrows place the ball · T away';
+  if (lp.thrown && lp.ball.state === 'air' && lp.thrown.target === c) return 'Ball in the air · arrows adjust · Space go up for it';
   if (c.carrier) return 'Arrows run · Shift sprint · Space juke · R spin · E truck';
   if (c.side === 'def') return 'Arrows move · Shift sprint · Space dive/tackle · Q switch to the ball';
   return 'Arrows move · Shift sprint';
@@ -1461,17 +1560,22 @@ function loop(now) {
   const lp = L3.lp;
   const g = S.game;
   let sim = null;
-  if (lp) {
+  const hold = isPaused();
+  if (lp && hold) {
+    // Paused: the play stands still (the clocks with it) until it is resumed.
+    sim = lp;
+    L3.acc = 0;
+  } else if (lp) {
     sim = lp;
     if (lp.phase === 'pre') {
       // Fixed-step the walk to the line, like the live play.
       L3.acc += dt;
-      while (L3.acc >= DT) { stepLive(lp, null); L3.acc -= DT; }
+      while (L3.acc >= DT) { stepLive(lp, null); L3.rec?.log.push(null); L3.acc -= DT; }
       if (lp.phase !== 'pre') render();
       // Snap only once set, and only on a press made in this state (no carried-over keys).
       // A press while the line is still settling is kept and snaps the moment it is set.
       const ready = lp.set && now - L3.flowAt > 250;
-      if (L3.edges.has('Space')) L3.snapWant = true;
+      if (L3.edges.has('Space')) { L3.snapWant = true; if (!lp.set) hurry(lp); }
       if (L3.snapWant && ready) { L3.edges.clear(); L3.snapWant = false; doSnap(); }
       else if (L3.edges.has('KeyQ') || L3.edges.has('Tab')) {
         L3.edges.clear();
@@ -1486,7 +1590,9 @@ function loop(now) {
     } else {
       L3.acc += dt;
       while (L3.acc >= DT) {
-        stepLive(lp, lp.phase === 'live' ? readInput(lp) : null);
+        const inp = lp.phase === 'live' ? readInput(lp) : null;
+        stepLive(lp, inp);
+        L3.rec?.log.push(inp);
         L3.acc -= DT;
       }
       if (lp.phase === 'dead') {
@@ -1498,6 +1604,18 @@ function loop(now) {
   } else if (L3.resultUntil > now) {
     // A kick or field goal result: hold the field for a beat.
     L3.acc = 0;
+  } else if (L3.replay) {
+    // The replay: the recorded steps again, at half speed, from the broadcast camera.
+    const R = L3.replay, log = L3.rec.log;
+    sim = R.lp;
+    R.acc += dt * 0.5;
+    while (R.acc >= DT && R.i < log.length) { stepLive(R.lp, log[R.i++]); R.acc -= DT; }
+    if (R.i >= log.length) {
+      R.end = (R.end ?? 0) + dt;
+      // The tests check the replay ends exactly where the play did.
+      if (R.end > 1.6) { L3.lastReplay = { end: endKey(R.lp), want: L3.rec.end }; stopReplay(); sim = null; }
+    }
+    L3.acc = R.acc;
   } else if (L3.preview?.lp) {
     if (L3.resultUntil) { L3.resultUntil = 0; render(); }
     // Between plays: the teams get up and walk to the new spot.
@@ -1506,7 +1624,15 @@ function loop(now) {
     L3.acc += dt;
     while (L3.acc >= DT) { stepLive(pv, null); L3.acc -= DT; }
     if (L3.resetUntil && (pv.set || now > L3.resetUntil)) { L3.resetUntil = 0; render(); }
-    if (g && !g.final && needsUser(g) && !S.busy && L3.flow === 'PLAY_SELECTION') L3.pclock = Math.max(0, L3.pclock - dt);
+    // Models that finished loading report their real size: line the preview up again by it
+    // (they walk the last steps over), so the spacing is by what is actually drawn.
+    if (L3.preview.mv !== measureVersion && L3.flow === 'PLAY_SELECTION' && now - (L3.preview.rebuilt ?? 0) > 1500) {
+      const spots = worldSpots(pv), mv = measureVersion;
+      L3.preview = null; L3.spots = spots;
+      showPreview();
+      if (L3.preview) { L3.preview.mv = mv; L3.preview.rebuilt = now; }
+    }
+    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && L3.flow === 'PLAY_SELECTION') L3.pclock = Math.max(0, L3.pclock - dt);
   }
   if (g && !g.final) setFlow(flowNow(now));
   // The game clock runs during the play and stops on the whistle.
@@ -1520,7 +1646,7 @@ function loop(now) {
   if (tk && now > L3.tickerUntil && !tk.classList.contains('gone')) tk.classList.add('gone');
   const pc = document.getElementById('pclock');
   if (pc) {
-    const txt = `:${String(Math.ceil(L3.pclock)).padStart(2, '0')}`;
+    const txt = `:${String(Math.min(40, Math.ceil(L3.pclock))).padStart(2, "0")}`;
     if (pc.textContent !== txt) { pc.textContent = txt; pc.classList.toggle('low', L3.pclock <= 5); }
   }
   const tip = document.getElementById('hud-tip');
@@ -1530,8 +1656,61 @@ function loop(now) {
   const ct = L3.lp && L3.lp.phase === 'live' ? `${OFF_PLAYS[L3.off].name} vs ${DEF_PLAYS[L3.def].name}` : '';
   if (call && call.textContent !== ct) call.textContent = ct;
   if (L3.flashT && now > L3.flashT) { L3.flashT = 0; const f = document.getElementById('hud-flash'); if (f) f.className = 'hud-flash'; }
-  stage.frame(now, sim && sim.phase !== undefined ? L3.acc / DT : 1);
+  syncOverlays();
+  stage.frame(now, sim && sim.phase !== undefined && !hold ? Math.min(1, L3.acc / DT) : 1);
   if (S.debug) debugHud();
+}
+
+// ---------- pause, replay and the controls card ----------
+function endKey(lp) { return `${lp.end?.how ?? lp.phase}@${(lp.spotX ?? lp.ball.x).toFixed(2)},${lp.ball.y.toFixed(2)}`; }
+function isPaused() { return !!L3.lp && L3.lp.phase !== 'dead' && (L3.paused || S.helpOpen || (S.menuOpen && L3.lp.phase === 'live')); }
+function togglePause() {
+  if (!L3.lp || L3.lp.phase === 'dead') return;
+  L3.paused = !L3.paused;
+  L3.keys.clear(); L3.edges.clear();
+}
+function replayReady() { return !!(stage && L3.rec?.done && !L3.lp && !L3.replay && L3.rec.log.some((e) => e?.snap)); }
+function startReplay() {
+  if (!replayReady()) return;
+  const r = L3.rec;
+  let i = 0;
+  while (i < r.log.length && !r.log[i]?.snap) i++;
+  const m = r.log[i++];
+  let lp;
+  if (r.atSnap) lp = structuredClone(r.atSnap);
+  else {
+    // Walk to the line instantly; the replay starts at the snap.
+    lp = createLivePlay(structuredClone(r.g), r.off, r.def, r.opts);
+    for (let k = 0; k < i - 1; k++) stepLive(lp, null);
+  }
+  lp.preview = true;
+  lp.control = m?.control ? lp[m.control[0]]?.[m.control[1]] ?? null : null;
+  snap(lp);
+  L3.replay = { lp, i, acc: 0 };
+  S.menuOpen = false;
+  document.body.classList.add('pb-replay');
+  stage.setPlay(lp);
+  stage.setCameraMode('broadcast');
+  stage.snapCamera();
+  render();
+  syncOverlays();
+}
+function stopReplay() {
+  if (!L3.replay) return;
+  L3.replay = null;
+  document.body.classList.remove('pb-replay');
+  stage.setCameraMode(S.cam);
+  if (L3.preview?.lp) stage.setPlay(L3.preview.lp); else showPreview();
+  stage.snapCamera();
+  render();
+}
+function closeHelp() { S.helpOpen = false; S.seenHelp = true; savePrefs(); syncOverlays(); }
+function syncOverlays() {
+  const set = (id, show) => { const el = document.getElementById(id); if (el && el.hidden === show) el.hidden = !show; };
+  set('pause-ov', !!L3.lp && L3.paused && L3.lp.phase !== 'dead');
+  set('replay-badge', !!L3.replay);
+  set('replay-btn', replayReady() && L3.flow === 'PLAY_SELECTION');
+  set('help-ov', !!S.helpOpen);
 }
 
 // Developer-only diagnostics, drawn over the field while the debug view is on: the flow
@@ -1586,12 +1765,22 @@ function onKey(e, down) {
   if (e.target.closest?.('input, select, textarea')) return;
   const code = e.code;
   if (down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (S.helpOpen) {
+      if (code === 'Escape' || code === 'Enter' || code === 'Space' || code === 'Slash') { e.preventDefault(); closeHelp(); }
+      return;
+    }
+    if (code === 'Slash') { e.preventDefault(); S.helpOpen = true; syncOverlays(); return; }
+    if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
+    if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
+    if (code === 'KeyP') { e.preventDefault(); togglePause(); return; }
     if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
     if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; render(); return; }
+    if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
     if (code === 'Escape') {
       if (S.menuOpen) { S.menuOpen = false; render(); return; }
+      if (L3.paused || L3.lp?.phase === 'live') { e.preventDefault(); togglePause(); return; }
       if (L3.lp?.phase === 'pre' && !S.coachDown) { recall(); return; }
     }
   }
@@ -1599,17 +1788,23 @@ function onKey(e, down) {
   if (!L3.lp && down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
     const g = S.game;
     if (!g.final && needsUser(g) && !S.busy) {
-      const hit = callSheet(g).groups.flatMap(([, , cs]) => cs).find((c) => c.code === code);
+      const { tabs, cur } = csTabs(g);
+      const hit = (tabs.find(([k]) => k === cur)?.[2] ?? []).find((c) => c.code === code)
+        ?? tabs.flatMap(([, , cs]) => cs).find((c) => KICK_KEYS[c.call] && c.code === code);
       if (hit) { e.preventDefault(); doCall(hit.call); return; }
       if (code === 'ArrowLeft' || code === 'ArrowRight') { e.preventDefault(); csMove(code === 'ArrowLeft' ? -1 : 1); return; }
+      if (code === 'KeyZ') { e.preventDefault(); cycleForm(g.poss === userSide()); return; }
     }
   }
   const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'Tab',
     'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(code);
   if (!game) return;
+  if (isPaused()) { e.preventDefault(); return; }
   if (!L3.lp) { if (code === 'Space' && down && e.target === document.body) e.preventDefault(); return; }
   e.preventDefault();
   if (down) { if (!L3.keys.has(code) || !e.repeat) L3.edges.add(code); L3.keys.add(code); }
+  // Shift held as a number goes down: a lob (remembered, in case Shift is let go first).
+  if (down && code.startsWith('Digit') && e.shiftKey) L3.lob = code;
 }
 
 function bindTouch(root) {
@@ -1629,7 +1824,10 @@ function bindTouch(root) {
 
 function startGame(game, meta) {
   S.game = game; S.gameMeta = meta; S.gameTab = 'log'; S.busy = false; S.subSel = null;
-  L3.lp = null; L3.preview = null; L3.spots = null; L3.pclock = 40;
+  L3.lp = null; L3.preview = null; L3.spots = null; L3.pclock = 40; L3.rec = null; L3.paused = false;
+  if (L3.replay) stopReplay();
+  // The first game shows the controls once.
+  if (!S.seenHelp) S.helpOpen = true;
   setScreen('game');
   autoAdvance();
 }
@@ -1707,7 +1905,10 @@ function onClick(e) {
     }
     case 'quick': {
       applyGrowth({});
-      const seed = Math.floor(Math.random() * 2 ** 31);
+      // ?seed=N in the address replays the same quick game (rosters, weather, coin toss): the
+      // screenshot tests compare builds on exactly the same game state.
+      let seed = Math.floor(Math.random() * 2 ** 31);
+      try { const m = /[?&#]seed=(\d+)/.exec(location.search + location.hash); if (m) seed = Number(m[1]); } catch { /* no location */ }
       const Q = LG.quickRosters(seed);
       const [a, b] = Q.teams;
       a.name = S.setup.name || 'Pallet Starters'; a.abbr = (S.setup.abbr || 'PAL').toUpperCase();
@@ -1751,16 +1952,21 @@ function onClick(e) {
     }
     case 'finishgame': finishLeagueGame(); break;
     case 'call': doCall(el.dataset.call); break;
-    case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; render(); break;
-    case 'cspage': S.csPage = Math.max(0, (S.csPage ?? 0) + Number(el.dataset.d)); render(); break;
+    case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; S.csAll = false; render(); break;
     case 'calshot': S.calShot = el.dataset.k; render(); break;
     case 'calreset': S.cal = cameraDefaults(); stage?.rig.setCalibration(S.cal); savePrefs(); render(); break;
     case 'snap': doSnap(); break;
     case 'recall': recall(); break;
     case 'menu': S.menuOpen = !S.menuOpen; render(); break;
     case 'cam': setCamera(el.dataset.cam); break;
+    case 'help': S.menuOpen = false; S.helpOpen = true; render(); break;
+    case 'helpok': closeHelp(); break;
+    case 'resume': L3.paused = false; syncOverlays(); break;
+    case 'replay': startReplay(); break;
     case 'mode': setMode(el.dataset.mode); break;
     case 'csfold': S.csFold = !S.csFold; render(); break;
+    case 'csall': S.csAll = !S.csAll; S.csFold = false; render(); break;
+    case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
     case 'quality': S.quality = el.dataset.q; stage?.setQuality(S.quality); savePrefs(); render(); break;
     case 'details': S.menuOpen = false; render(); document.querySelector('.game.g3d .below')?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' }); break;
     case 'sim': {
@@ -1814,7 +2020,7 @@ function onInput(e) {
     S.cal[S.calShot][k] = Number(t.value);
     stage?.rig.setCalibration(S.cal);
     const o = document.getElementById(`calv-${k}`);
-    if (o) o.textContent = `${S.cal[S.calShot][k]}${k === 'pitch' || k === 'fov' ? '°' : ' yd'}`;
+    if (o) o.textContent = `${S.cal[S.calShot][k]}${k === 'pitch' || k === 'fov' ? '°' : '×'}`;
     savePrefs();
   }
 }
@@ -1824,6 +2030,8 @@ function onChange(e) {
   if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
+  if (t.id === 'cs-form') { const v = t.value || null; if (S.game?.poss === userSide()) S.formPick = v; else S.frontPick = v; t.blur(); render(); }
+  if (t.id === 'g-sound') { S.sound = t.checked; setSound(S.sound); savePrefs(); }
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
   if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }
   if (t.id === 'g-pips') { S.pips = t.checked; if (stage) stage.showPips = S.pips; savePrefs(); }
@@ -1843,7 +2051,7 @@ function onSubmit(e) {
   S.setup = {
     name: f.querySelector('#f-name').value.trim() || 'Pallet Starters',
     abbr: (f.querySelector('#f-abbr').value.trim() || 'PAL').toUpperCase().slice(0, 3),
-    rounds: Number(f.querySelector('input[name="rounds"]:checked')?.value ?? 22),
+    rounds: Number(f.querySelector('input[name="rounds"]:checked')?.value ?? 24),
     typeCap: f.querySelector('#f-typecap').checked,
     legendaries: f.querySelector('#f-legend').checked,
     clock: f.querySelector('#f-clock').checked,
@@ -1883,6 +2091,8 @@ function render() {
 
 function start(data) {
   loadPrefs();
+  initAudio();
+  setSound(S.sound);
   try { if (/[?&#]debug\b/.test(location.search + location.hash)) S.debug = true; } catch { /* no location */ }
   const snap = data?.state;
   if (snap?.league || snap?.game) {

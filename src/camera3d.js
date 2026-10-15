@@ -1,36 +1,59 @@
-// The football camera. Every mode works out where it wants to be from the play (the line,
-// the ball, the carrier, a pass in the air) and the rig eases toward it, so cuts between
-// modes and between pre-snap, live and dead-ball framing are smooth.
-//   broadcast: Madden-style, high behind the offense, centered on the ball
-//   sideline:  TV sideline shot from the near side, following the ball across the field
-//   qb:        low behind the quarterback (and then behind the ball carrier)
-//   tactical:  high and far back, most of the field in view
+// The football cameras. One rig, four views, each working out every frame what it has to
+// show and where to stand to show it, then easing there on critically damped springs, so a
+// change of shot, of view or of possession never jumps:
+//   gameplay:  the default. Low behind the quarterback, Madden style: the quarterback near the
+//              bottom of the screen, both lines across the middle, the linebackers and nearby
+//              receivers above them, with the field running away to the far end zone. It frames by fitting: the players that matter
+//              this moment (the formation before the snap, the pocket and the routes, the ball
+//              in the air, the ball carrier and whoever is near him) are projected through the
+//              lens and the camera backs off just far enough for all of them to fit, so a
+//              wide formation or a tall Pokémon pulls it back and a tight run brings it in.
+//   tactical:  the same idea from much higher and steeper, like an all-22 coaching view, with
+//              position labels on the field (see field3d.js).
+//   broadcast: the TV sideline shot: above and outside the near sideline at a moderate
+//              diagonal, panning with the play (and the replay camera).
+//   player:    behind the Pokémon you control (or the ball carrier), far enough back to see
+//              defenders coming. It never turns with the player: it always looks down the field.
+// The rig never leaves the stadium bowl (the end walls and the press box), never sits inside a
+// Pokémon and never rolls.
 import * as THREE from 'three';
 
 export const CAMERA_MODES = [
-  ['broadcast', 'Broadcast'],
-  ['sideline', 'Sideline'],
-  ['qb', 'Behind the QB'],
+  ['gameplay', 'Gameplay'],
   ['tactical', 'Tactical'],
+  ['broadcast', 'Broadcast'],
+  ['player', 'Player focus'],
 ];
+// Old saved names.
+export const CAMERA_ALIASES = { sideline: 'broadcast', qb: 'player' };
 
-const v = new THREE.Vector3();
-
-// The broadcast camera's setups, one per moment of a play: how far behind the focus it sits,
-// how high, how steeply it looks down and its lens. Low and behind the quarterback like a
-// game broadcast's "all-22 behind the offense" shot, so the stands and the horizon stay in
-// the frame and the Pokémon read at their size; the pass setup sits a little higher and wider
-// for the routes, the run setup tighter on the carrier, the post-play shot closer still.
-// The debug calibration panel edits these live.
-export const CAMERA_SHOTS = [['pre', 'Pre-snap'], ['pass', 'Passing'], ['run', 'Running'], ['post', 'Post-play']];
+// Per-view lens settings, editable live from the debug panel: how steeply the camera looks
+// down (pitch), its vertical field of view, and an extra zoom factor on the fitted distance.
+export const CAMERA_SHOTS = CAMERA_MODES;
 export const CAMERA_DEFAULTS = {
-  pre: { distance: 14.5, height: 9.5, pitch: 22, fov: 50 },
-  pass: { distance: 15.5, height: 10.5, pitch: 23, fov: 52 },
-  run: { distance: 13.5, height: 9, pitch: 22, fov: 50 },
-  post: { distance: 12.5, height: 8, pitch: 21, fov: 48 },
+  gameplay: { pitch: 27, fov: 48, zoom: 1 },
+  tactical: { pitch: 60, fov: 40, zoom: 1 },
+  broadcast: { pitch: 25, fov: 30, zoom: 1.12 },
+  player: { pitch: 26, fov: 52, zoom: 1 },
 };
-export const CAMERA_LIMITS = { distance: [6, 45], height: [2.5, 40], pitch: [5, 70], fov: [25, 75] };
+export const CAMERA_LIMITS = { pitch: [10, 75], fov: [25, 75], zoom: [0.6, 1.8] };
 export const cameraDefaults = () => JSON.parse(JSON.stringify(CAMERA_DEFAULTS));
+
+// The stadium bowl (world yards; see stadium3d.js): the walls stand at x = -24 and 124 and
+// z = ±37, and the seats rise from them about 0.6 yards per yard for 19 yards. The camera may
+// go back over the stands, like a broadcast camera on the upper deck, but always above the
+// seats (never inside them), and never past the back of the bowl.
+const BOUND_X0 = -40, BOUND_X1 = 140, BOUND_Z = 54;
+export function bowl(pos) {
+  pos.x = Math.min(BOUND_X1, Math.max(BOUND_X0, pos.x));
+  pos.z = Math.min(BOUND_Z, Math.max(-BOUND_Z, pos.z));
+  const past = Math.max(Math.abs(pos.z) - 35.5, -23 - pos.x, pos.x - 123);
+  if (past > 0) pos.y = Math.max(pos.y, 3 + Math.min(past, 20) * 0.62 + 3);
+  return pos;
+}
+
+const D2R = Math.PI / 180;
+const _v = new THREE.Vector3(), _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3();
 
 // One step of a critically damped spring pulling x toward target (angular frequency w).
 function spring(x, v, target, w, dt) {
@@ -44,123 +67,210 @@ function spring(x, v, target, w, dt) {
   }
 }
 
+// Where points land on screen for a camera at pos looking at look (fov in degrees, aspect):
+// the extents in normalized device coordinates. Points behind the lens count as off screen.
+function extents(pos, look, fov, aspect, pts, out) {
+  _f.subVectors(look, pos).normalize();
+  _r.crossVectors(_f, _u.set(0, 1, 0)).normalize();
+  _u.crossVectors(_r, _f);
+  const ty = Math.tan((fov * D2R) / 2), tx = ty * aspect;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, behind = false;
+  for (const p of pts) {
+    _v.set(p.x - pos.x, p.y - pos.y, p.z - pos.z);
+    const z = _v.dot(_f);
+    if (z < 0.5) { behind = true; continue; }
+    const sx = _v.dot(_r) / (z * tx), sy = _v.dot(_u) / (z * ty);
+    if (sx < x0) x0 = sx; if (sx > x1) x1 = sx; if (sy < y0) y0 = sy; if (sy > y1) y1 = sy;
+  }
+  out.x0 = x0; out.x1 = x1; out.y0 = y0; out.y1 = y1; out.behind = behind;
+  return out;
+}
+
 export class CameraRig {
   constructor(camera) {
     this.camera = camera;
-    this.mode = 'broadcast';
+    this.mode = 'gameplay';
     this.pos = new THREE.Vector3(20, 14, 0);
     this.look = new THREE.Vector3(35, 0, 0);
     this.wantPos = new THREE.Vector3();
     this.wantLook = new THREE.Vector3();
-    this.zoom = 1; // extra pull-back for deep passes, eased
-    this.shake = 0;
-    this.fov = 42;
-    this.cal = cameraDefaults();
     this.vPos = new THREE.Vector3();
     this.vLook = new THREE.Vector3();
+    this.shake = 0;
+    this.kick = 0;
+    this.cal = cameraDefaults();
     this.shot = 'PRE_SNAP';
+    this.dist = 30;        // the fitted distance, eased so the zoom breathes rather than pops
+    this.wantFov = 46;
+    this.ext = {};
   }
 
   setCalibration(c) {
-    for (const [shot] of CAMERA_SHOTS) for (const k of Object.keys(CAMERA_LIMITS)) {
-      const v = Number(c?.[shot]?.[k]);
-      if (Number.isFinite(v)) this.cal[shot][k] = Math.min(CAMERA_LIMITS[k][1], Math.max(CAMERA_LIMITS[k][0], v));
+    for (const [m] of CAMERA_MODES) for (const k of Object.keys(CAMERA_LIMITS)) {
+      const v = Number(c?.[m]?.[k]);
+      if (Number.isFinite(v)) this.cal[m][k] = Math.min(CAMERA_LIMITS[k][1], Math.max(CAMERA_LIMITS[k][0], v));
     }
   }
 
-  setMode(m) { if (CAMERA_MODES.some(([k]) => k === m)) this.mode = m; }
+  setMode(m) {
+    m = CAMERA_ALIASES[m] ?? m;
+    if (CAMERA_MODES.some(([k]) => k === m)) this.mode = m;
+  }
 
-  // f: framing for this frame. focus = where the action is (world x, z); fwd = +1 or -1, the
-  // way the offense attacks; spread = how much field must be in view (yards); pre = before
-  // the snap; tight = zoom toward a finished play; qb = the quarterback's world position.
+  // Fit: the camera looks along a fixed heading (yaw: unit ground vector hx, hz) at a pitch,
+  // aimed at a point on the turf. Find the aim point along the heading and the distance back
+  // so every point is on screen inside the safe area (sx in ±sxMax, sy in [syMin, syMax]).
+  // The aim moves until the points sit centered between the safe edges vertically; then the
+  // distance is the least that fits them. Returns { aim, dist }.
+  fit(pts, hx, hz, pitch, fov, aspect, center, safe, dMin, dMax) {
+    const cp = Math.cos(pitch * D2R), sp = Math.sin(pitch * D2R);
+    const aim = new THREE.Vector3(center.x, 0, center.z);
+    const pos = new THREE.Vector3();
+    const place = (d) => {
+      const back = d * cp;
+      return bowl(pos.set(aim.x - hx * back, d * sp, aim.z - hz * back));
+    };
+    const E = this.ext;
+    const fits = (d) => {
+      extents(place(d), aim, fov, aspect, pts, E);
+      return !E.behind && E.x0 >= -safe.x && E.x1 <= safe.x && E.y0 >= safe.y0 && E.y1 <= safe.y1;
+    };
+    let d = dMax;
+    for (let round = 0; round < 3; round++) {
+      // Binary search for the least distance that fits.
+      let lo = dMin, hi = dMax;
+      if (!fits(hi)) { d = hi; } else {
+        for (let i = 0; i < 14; i++) { const m = (lo + hi) / 2; if (fits(m)) hi = m; else lo = m; }
+        d = hi;
+      }
+      // Recenter vertically: slide the aim along the heading toward the empty side.
+      extents(place(d), aim, fov, aspect, pts, E);
+      const mid = (E.y0 + E.y1) / 2, want = (safe.y0 + safe.y1) / 2;
+      const off = mid - want;
+      if (Math.abs(off) < 0.03) break;
+      const slide = off * d * 0.45;
+      aim.x += hx * slide; aim.z += hz * slide;
+    }
+    return { aim, dist: d, pos: place(d).clone() };
+  }
+
+  // f: framing for this frame (see Stage.framing): fwd (+1 or -1, the way the offense attacks),
+  // pts (world points that must be in view), focus (where the action is), carrier/control
+  // positions, pre (before the snap).
   target(f, aspect) {
+    const C = this.cal[this.mode] ?? this.cal.gameplay;
     const s = f.fwd;
-    const narrow = aspect < 1.1 ? 1.45 : aspect < 1.5 ? 1.15 : 1;
-    const z = this.zoom * narrow;
-    const fx = f.focus.x, fz = f.focus.z;
+    const narrow = aspect < 1.1;
+    const fov = (narrow ? C.fov * 1.12 : C.fov) + this.kick * 4;
+    this.wantFov = fov;
+    // The players this shot frames: before the snap, the box (see Stage.framing) for the
+    // gameplay and broadcast cameras; during the play, the action.
+    const box = f.nBox ? f.pts.slice(0, f.nBox) : f.pts;
+    // Keep the players above the call sheet when it is up (inset: its share of the height).
+    const lift = (sf) => (f.inset > 0.01 ? { ...sf, y0: Math.max(sf.y0, -1 + 2 * f.inset + 0.05) } : sf);
     switch (this.mode) {
-      case 'sideline': {
-        const back = (30 + f.spread * 0.5) * z;
-        this.wantPos.set(fx - s * 2, 12 + f.spread * 0.18, Math.min(60, fz + back));
-        this.wantLook.set(fx + s * 3, 0, fz * 0.7);
+      case 'broadcast': {
+        // The TV camera: above and outside the near sideline, a little behind the offense, so
+        // it looks across and slightly down the field at a moderate diagonal. Before the snap it
+        // frames the box tightly; during the play it pans with the ball and backs off as the
+        // action spreads (a deep throw), then tracks the ball carrier.
+        const hx = s * 0.42, hz = -1, hl = Math.hypot(hx, hz);
+        const R = this.fit(box, hx / hl, hz / hl, C.pitch, fov, aspect, { x: f.focus.x, z: f.focus.z * 0.6 }, lift({ x: 0.86, y0: -0.7, y1: 0.5 }), 18, 80);
+        this.place(R, f, C.zoom);
         break;
       }
-      case 'qb': {
-        const a = f.qb ?? f.focus;
-        const back = (f.pre ? 7.5 : 8.5) * z;
-        this.wantPos.set(a.x - s * back, 3.6 + (z - 1) * 4, a.z * 0.9);
-        this.wantLook.set(a.x + s * 14, 0.6, a.z * 0.6);
-        break;
-      }
-      case 'tactical': {
-        const back = (22 + f.spread * 0.4) * z;
-        this.wantPos.set(fx - s * back, 42 * z, fz * 0.5);
-        this.wantLook.set(fx + s * 8, 0, fz * 0.5);
+      case 'player': {
+        // Behind your Pokémon, looking the way his team is going.
+        const a = f.control ?? f.focus;
+        const dir = f.controlDir ?? s;
+        const pitch = C.pitch, back = 12 * C.zoom;
+        this.applyDist(back, f);
+        this.wantLook.set(a.x + dir * 9, 0, a.z * 0.92);
+        const h = Math.max(4.2, (back + 9) * Math.tan(pitch * D2R));
+        this.wantPos.set(a.x - dir * back, h, a.z * 0.97);
         break;
       }
       default: {
-        // Behind the offense, from this moment's setup; widened a little for spread
-        // formations and long passes rather than shrinking anyone.
-        const C = this.cal[f.shot] ?? this.cal.pre;
-        const k = z * (1 + Math.max(0, f.spread - 14) * 0.012);
-        const back = C.distance * k, high = C.height * k;
-        // Where the view's center lands, ahead of the camera, from the pitch.
-        const ahead = high / Math.tan((C.pitch * Math.PI) / 180) - back;
-        this.wantPos.set(fx - s * back, high, fz * 0.7);
-        this.wantLook.set(fx + s * ahead, 0, fz * 0.9);
-        this.wantFov = C.fov;
+        // Gameplay: low behind the quarterback, the box filling the screen with the
+        // quarterback near the bottom, both lines across the middle and the linebackers and
+        // nearby receivers above them. During the play the framing follows the action (the
+        // pocket and the routes, the ball in the air, the carrier) and backs off only as far
+        // as it has to.
+        // Tactical: high over the line of scrimmage, everyone in view, labels on.
+        const tac = this.mode === 'tactical';
+        const pts = tac ? f.pts : box;
+        const safe = tac ? { x: 0.92, y0: -0.84, y1: 0.7 } : f.pre ? { x: 0.94, y0: -0.86, y1: 0.42 } : { x: 0.86, y0: -0.76, y1: 0.45 };
+        const R = this.fit(pts, s, 0, C.pitch, fov, aspect, { x: f.focus.x + s * (tac ? 3 : 2), z: f.focus.z * (tac ? 0.5 : 0.75) },
+          lift(safe), tac ? 24 : 9, tac ? 95 : 64);
+        this.place(R, f, C.zoom);
       }
     }
+    // Never outside the stadium bowl, never inside the seats.
+    bowl(this.wantPos);
+  }
+
+  // Aim where the fit says and back off along the same line by the eased distance.
+  place(R, f, zoom) {
+    this.applyDist(R.dist * zoom, f);
+    const k = this.dist / Math.max(1e-3, R.dist);
+    this.wantLook.copy(R.aim);
+    this.wantPos.subVectors(R.pos, R.aim).multiplyScalar(k).add(R.aim);
+  }
+
+  // Ease the fitted distance: it may pull back quickly (something important is leaving the
+  // frame) but comes in slowly, so the view does not pump during a play.
+  applyDist(d, f) {
+    if (f.snap) { this.dist = d; return; }
+    const out = d > this.dist;
+    this.dist += (d - this.dist) * (1 - Math.exp(-this.dt * (out ? 3.2 : f.pre ? 2 : 1.1)));
   }
 
   update(dt, f, aspect, obstacles, snap = false) {
-    // Deep balls widen the shot; it eases back in once the ball comes down.
-    const zWant = 1 + Math.min(0.55, Math.max(0, (f.deep ?? 0) - 12) * 0.022);
-    this.zoom += (zWant - this.zoom) * (1 - Math.exp(-dt * 2.2));
+    this.dt = dt;
+    f.snap = snap;
     this.target(f, aspect);
     // Never inside a Pokémon: lift the camera over anything close to it.
     for (const o of obstacles) {
       const d = Math.hypot(this.wantPos.x - o.x, this.wantPos.z - o.z);
-      if (d < o.r + 1.4) this.wantPos.y = Math.max(this.wantPos.y, o.h + 1.6);
+      if (d < o.r + 1.6) this.wantPos.y = Math.max(this.wantPos.y, o.h + 1.8);
     }
-    this.wantPos.y = Math.max(this.wantPos.y, 1.8);
-    // Occlusion: a body standing between the lens and the focus, near the lens, would fill the
+    this.wantPos.y = Math.max(this.wantPos.y, 2.5);
+    // Occlusion: a body standing close to the lens between it and the aim would fill the
     // frame; rise until the sight line clears his head.
     {
       const lx = this.wantLook.x - this.wantPos.x, lz = this.wantLook.z - this.wantPos.z, L = Math.hypot(lx, lz) || 1;
       for (const o of obstacles) {
         const ox = o.x - this.wantPos.x, oz = o.z - this.wantPos.z;
         const along = (ox * lx + oz * lz) / L;
-        if (along < 0.5 || along > L * 0.45) continue;
+        if (along < 0.5 || along > L * 0.4) continue;
         const across = Math.abs(ox * lz - oz * lx) / L;
-        if (across > o.r + 0.5) continue;
-        // Height of the sight line at his distance, if the camera were at this height.
+        if (across > o.r + 0.6) continue;
         const y0 = this.wantPos.y, yAt = y0 + (this.wantLook.y - y0) * (along / L);
-        if (yAt < o.h + 0.4) this.wantPos.y += Math.min(4, (o.h + 0.4 - yAt) / Math.max(0.2, 1 - along / L));
+        if (yAt < o.h + 0.5) this.wantPos.y += Math.min(4, (o.h + 0.5 - yAt) / Math.max(0.2, 1 - along / L));
       }
     }
     // Critically damped springs on the lens and the aim point: smooth starts and stops, no
-    // velocity jump when the shot changes. Tighter while the ball is live.
-    const w = f.pre ? 4 : f.shot === 'pass' ? 3.6 : 4.5;
+    // velocity jump when the shot changes. A little tighter while the ball is live.
+    const w = f.pre ? 3.2 : f.shot === 'pass' ? 3 : 3.6;
     if (snap) { this.pos.copy(this.wantPos); this.look.copy(this.wantLook); this.vPos.set(0, 0, 0); this.vLook.set(0, 0, 0); }
-    else { spring(this.pos, this.vPos, this.wantPos, w, dt); spring(this.look, this.vLook, this.wantLook, w * 1.35, dt); }
+    else { spring(this.pos, this.vPos, this.wantPos, w, dt); spring(this.look, this.vLook, this.wantLook, w * 1.3, dt); }
     this.camera.position.copy(this.pos);
     if (this.shake > 0.004) {
       this.camera.position.x += (Math.random() - 0.5) * this.shake;
       this.camera.position.y += (Math.random() - 0.5) * this.shake * 0.6;
       this.shake *= Math.exp(-dt * 9);
     }
+    this.camera.up.set(0, 1, 0);
     this.camera.lookAt(this.look);
-    // kick (0..1): the controlled player is sprinting, so the lens widens a touch for speed.
-    const fov = (this.mode === 'qb' ? 52 : this.mode === 'tactical' ? 38 : this.mode === 'broadcast' ? (this.wantFov ?? 50) : 42) + (this.kick ?? 0) * 5;
+    const fov = this.wantFov;
     if (Math.abs(this.camera.fov - fov) > 0.01) { this.camera.fov += (fov - this.camera.fov) * (snap ? 1 : 1 - Math.exp(-dt * 3)); this.camera.updateProjectionMatrix(); }
   }
 
   // Screen up and screen right as world directions on the turf.
   groundAxes() {
-    v.subVectors(this.look, this.pos); v.y = 0;
-    const l = Math.hypot(v.x, v.z) || 1;
-    const ux = v.x / l, uz = v.z / l;
+    _v.subVectors(this.look, this.pos); _v.y = 0;
+    const l = Math.hypot(_v.x, _v.z) || 1;
+    const ux = _v.x / l, uz = _v.z / l;
     return { up: { x: ux, z: uz }, right: { x: -uz, z: ux } };
   }
 }

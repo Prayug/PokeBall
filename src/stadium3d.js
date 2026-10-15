@@ -11,6 +11,7 @@ export const HALF_W = FIELD_W / 2;
 const PX = 20; // field texture pixels per yard
 const WALL_Z = 37, WALL_X0 = -24, WALL_X1 = 124;
 const ROWS = 18, ROW_D = 1.05, ROW_H = 0.62, DECK_Y = 2.2;
+const AISLE = 16, CLUB_ROW = 9, CLUB_GAP = 1.4;
 
 export class Stadium {
   constructor(scene, renderer) {
@@ -151,6 +152,23 @@ export class Stadium {
     // Clean turf: soft mowing stripes every five yards and only a whisper of grain, so the
     // lines and the players read first.
     for (let i = 0; i < 24; i++) { x.fillStyle = i % 2 ? '#3b8a46' : '#357f40'; x.fillRect(i * 5 * PX, 0, 5 * PX, H); }
+    // Real turf is never one flat color: broad soft patches a shade lighter or darker, and
+    // wear between the hashes where the lines meet every snap.
+    let sd = 99;
+    const rr = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+    for (let k = 0; k < 140; k++) {
+      const px = rr() * W, py = rr() * H, rad = (2 + rr() * 6) * PX;
+      const g = x.createRadialGradient(px, py, 0, px, py, rad);
+      const light = rr() < 0.5;
+      g.addColorStop(0, light ? 'rgba(170,210,120,0.07)' : 'rgba(10,40,15,0.08)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      x.fillStyle = g; x.fillRect(px - rad, py - rad, rad * 2, rad * 2);
+    }
+    for (let yd = 12; yd <= 88; yd += 2) {
+      const px = X(yd + (rr() - 0.5) * 2), py = Y((rr() - 0.5) * 6), rad = (1.6 + rr() * 2) * PX;
+      const g = x.createRadialGradient(px, py, 0, px, py, rad);
+      g.addColorStop(0, 'rgba(150,140,90,0.06)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      x.fillStyle = g; x.fillRect(px - rad, py - rad, rad * 2, rad * 2);
+    }
     grain(x, W, H, 4, false);
     // End zones
     const ez = (left, team) => {
@@ -243,24 +261,43 @@ export class Stadium {
       wall(WALL_X1 - WALL_X0, 50, -WALL_Z, 0), wall(WALL_X1 - WALL_X0, 50, WALL_Z, Math.PI),
       wall(WALL_Z * 2, WALL_X0, 0, Math.PI / 2), wall(WALL_Z * 2, WALL_X1, 0, -Math.PI / 2),
     ];
-    // Stepped decks: long sides run past the corners, end decks sit between them.
+    // Stepped decks: long sides run past the corners, end decks sit between them. Each row is
+    // a concrete riser with a band of seats on it; stairways (aisles) cut through every
+    // sixteen yards, and a club-level fascia splits the bowl into a lower and an upper deck.
     const parts = [];
-    const deck = (x0, x1, z0, outward, alongX) => {
-      for (let r = 0; r < ROWS; r++) {
-        const y = DECK_Y + r * ROW_H, d = (r + 0.5) * ROW_D + 0.6;
-        const len = Math.abs(x1 - x0);
-        const g = alongX ? new THREE.BoxGeometry(len, ROW_H, ROW_D) : new THREE.BoxGeometry(ROW_D, ROW_H, len);
-        const cx = (x0 + x1) / 2;
-        if (alongX) g.translate(cx, y - ROW_H / 2, z0 + outward * d); else g.translate(z0 + outward * d, y - ROW_H / 2, cx);
-        // Riser color: alternate two concrete tones per row.
-        const col = new THREE.Color(r % 2 ? '#5d6672' : '#6b7480');
-        const n = g.attributes.position.count, arr = new Float32Array(n * 3);
-        for (let i = 0; i < n; i++) col.toArray(arr, i * 3);
-        g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-        parts.push(g);
-      }
+    const colored = (g, col) => {
+      const n = g.attributes.position.count, arr = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) col.toArray(arr, i * 3);
+      g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+      if (g.index) { const ng = g.toNonIndexed(); g.dispose(); return ng; }
+      return g;
     };
-    const ext = ROWS * ROW_D + 2;
+    const place = (g, along, y, out, alongX, z0, outward) => (alongX ? g.translate(along, y, z0 + outward * out) : g.translate(z0 + outward * out, y, along));
+    const box = (alongLen, h, depth, alongX) => (alongX ? new THREE.BoxGeometry(alongLen, h, depth) : new THREE.BoxGeometry(depth, h, alongLen));
+    const seatA = new THREE.Color('#2b3c5c'), seatB = new THREE.Color('#33496f'), stair = new THREE.Color('#8c949e');
+    const deck = (x0, x1, z0, outward, alongX) => {
+      const len = Math.abs(x1 - x0), cx = (x0 + x1) / 2;
+      for (let r = 0; r < ROWS; r++) {
+        const y = DECK_Y + r * ROW_H, d = (r + 0.5) * ROW_D + 0.6 + (r >= CLUB_ROW ? CLUB_GAP : 0);
+        parts.push(colored(place(box(len, ROW_H, ROW_D, alongX), cx, y - ROW_H / 2, d, alongX, z0, outward), new THREE.Color(r % 2 ? '#5d6672' : '#68717d')));
+        // The seats: a low band at the back of each tread, two tones by section.
+        const seat = colored(place(box(len, 0.32, 0.42, alongX), cx, y + 0.16, d + ROW_D * 0.22, alongX, z0, outward), (r >> 2) % 2 ? seatA : seatB);
+        parts.push(seat);
+      }
+      // Stairways: lighter strips down the rows.
+      for (let a = Math.ceil(Math.min(x0, x1) / AISLE) * AISLE; a < Math.max(x0, x1); a += AISLE) {
+        for (let r = 0; r < ROWS; r++) {
+          const y = DECK_Y + r * ROW_H, d = (r + 0.5) * ROW_D + 0.6 + (r >= CLUB_ROW ? CLUB_GAP : 0);
+          parts.push(colored(place(box(1.1, 0.06, ROW_D, alongX), a, y + 0.03, d, alongX, z0, outward), stair));
+        }
+      }
+      // Club level: a deep fascia between the decks.
+      const yc = DECK_Y + CLUB_ROW * ROW_H, dc = CLUB_ROW * ROW_D + 0.6 + CLUB_GAP / 2;
+      parts.push(colored(place(box(len, 1.3, CLUB_GAP + 0.2, alongX), cx, yc - 0.15, dc, alongX, z0, outward), new THREE.Color('#1c232d')));
+      this.clubs.push({ x0, x1, z0, outward, alongX, y: yc, d: CLUB_ROW * ROW_D + 0.6 - 0.12 });
+    };
+    this.clubs = [];
+    const ext = ROWS * ROW_D + 2 + CLUB_GAP;
     deck(WALL_X0 - ext, WALL_X1 + ext, -WALL_Z - 0.3, -1, true);
     deck(WALL_X0 - ext, WALL_X1 + ext, WALL_Z + 0.3, 1, true);
     deck(-WALL_Z, WALL_Z, WALL_X0 - 0.3, -1, false);
@@ -269,7 +306,7 @@ export class Stadium {
     this.root.add(bowl);
     parts.forEach((g) => g.dispose());
     // Back wall and an LED ribbon at the top of the bowl.
-    const topY = DECK_Y + ROWS * ROW_H, back = ROWS * ROW_D + 0.9;
+    const topY = DECK_Y + ROWS * ROW_H, back = ROWS * ROW_D + 0.9 + CLUB_GAP;
     this.ribbonCanvas = document.createElement('canvas');
     this.ribbonCanvas.width = 2048; this.ribbonCanvas.height = 48;
     this.ribbonTex = new THREE.CanvasTexture(this.ribbonCanvas);
@@ -285,27 +322,43 @@ export class Stadium {
       this.ribbons = (this.ribbons ?? []).concat(t);
     };
     const L = WALL_X1 - WALL_X0 + ext * 2;
+    // The club level's face carries the LED ribbon too.
+    for (const c of this.clubs) {
+      const len = Math.abs(c.x1 - c.x0), mid = (c.x0 + c.x1) / 2;
+      const t = this.ribbonTex.clone(); t.repeat.set(len / 80, 1); t.needsUpdate = true;
+      const r = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.9), ribMat.clone()); r.material.map = t;
+      if (c.alongX) { r.position.set(mid, c.y - 0.15, c.z0 + c.outward * c.d); r.rotation.y = c.outward > 0 ? Math.PI : 0; }
+      else { r.position.set(c.z0 + c.outward * c.d, c.y - 0.15, mid); r.rotation.y = c.outward > 0 ? -Math.PI / 2 : Math.PI / 2; }
+      this.root.add(r);
+      this.ribbons = (this.ribbons ?? []).concat(t);
+    }
     backWall(L, 50, -WALL_Z - back, 0); backWall(L, 50, WALL_Z + back, Math.PI);
     backWall(WALL_Z * 2 + back * 2, WALL_X0 - back, 0, Math.PI / 2); backWall(WALL_Z * 2 + back * 2, WALL_X1 + back, 0, -Math.PI / 2);
     this.buildCrowd(ext);
   }
 
   buildCrowd(ext) {
-    // One instance per fan: a body and a head, bobbing in a vertex shader so the crowd costs
-    // nothing on the CPU. Fans leave a few empty seats.
-    // One simple block per fan (the stands are background), spaced a little wider.
-    const geo = new THREE.BoxGeometry(0.5, 0.85, 0.36).translate(0, 0.42, 0);
+    // One instance per fan: a body in a shirt and a head, bobbing in a vertex shader so the
+    // crowd costs nothing on the CPU. Fans leave a few empty seats, the stairways clear, and
+    // fill the lower deck a little more than the upper one.
+    // Few triangles a fan (an open four-sided body and an eight-sided head): there are
+    // thousands of them, and from the field they read as people either way.
+    const body = new THREE.CylinderGeometry(0.19, 0.25, 0.62, 4, 1, true).rotateY(Math.PI / 4).translate(0, 0.31, 0);
+    const head = new THREE.OctahedronGeometry(0.16).translate(0, 0.78, 0);
     const spots = [];
     let seed = 7;
     const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
     const row = (x0, x1, z0, outward, alongX) => {
       for (let r = 0; r < ROWS; r++) {
-        const y = DECK_Y + r * ROW_H, d = (r + 0.5) * ROW_D + 0.6;
-        for (let s = x0 + 0.4; s < x1; s += 0.9) {
-          if (rnd() < 0.12) continue;
-          const jitter = (rnd() - 0.5) * 0.18;
-          if (alongX) spots.push([s + jitter, y, z0 + outward * d, outward > 0 ? Math.PI : 0]);
-          else spots.push([z0 + outward * d, y, s + jitter, outward > 0 ? -Math.PI / 2 : Math.PI / 2]);
+        const y = DECK_Y + r * ROW_H, d = (r + 0.5) * ROW_D + 0.6 + (r >= CLUB_ROW ? CLUB_GAP : 0) + 0.05;
+        const empty = r < CLUB_ROW ? 0.08 : 0.16;
+        for (let s = x0 + 0.4; s < x1; s += 0.62) {
+          const a = ((s % AISLE) + AISLE) % AISLE;
+          if (a < 0.8 || a > AISLE - 0.8) continue;
+          if (rnd() < empty) continue;
+          const jitter = (rnd() - 0.5) * 0.12;
+          if (alongX) spots.push([s + jitter, y, z0 + outward * d, outward > 0 ? Math.PI : 0, r]);
+          else spots.push([z0 + outward * d, y, s + jitter, outward > 0 ? -Math.PI / 2 : Math.PI / 2, r]);
         }
       }
     };
@@ -314,42 +367,55 @@ export class Stadium {
     row(-WALL_Z, WALL_Z, WALL_X0 - 0.3, -1, false);
     row(-WALL_Z, WALL_Z, WALL_X1 + 0.3, 1, false);
     this.crowdUni = { time: { value: 0 }, excite: { value: 0 } };
-    const mat = new THREE.MeshLambertMaterial();
-    mat.onBeforeCompile = (sh) => {
-      sh.uniforms.time = this.crowdUni.time; sh.uniforms.excite = this.crowdUni.excite;
-      sh.vertexShader = 'uniform float time; uniform float excite;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
-        float ph = fract(sin(float(gl_InstanceID) * 12.9898) * 43758.5453);
-        float sp = 2.0 + ph * 3.0;
-        float bob = max(0.0, sin(time * sp + ph * 40.0)) * excite * 0.35;
-        transformed.y += bob;`);
+    const mat = () => {
+      const m = new THREE.MeshLambertMaterial();
+      m.onBeforeCompile = (sh) => {
+        sh.uniforms.time = this.crowdUni.time; sh.uniforms.excite = this.crowdUni.excite;
+        sh.vertexShader = 'uniform float time; uniform float excite;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+          float ph = fract(sin(float(gl_InstanceID) * 12.9898) * 43758.5453);
+          float sp = 2.0 + ph * 3.0;
+          float idle = sin(time * (0.6 + ph) + ph * 30.0) * 0.03;
+          float bob = max(0.0, sin(time * sp + ph * 40.0)) * excite * 0.35;
+          transformed.y += bob + idle;`);
+      };
+      return m;
     };
-    const mesh = new THREE.InstancedMesh(geo, mat, spots.length);
+    const bodies = new THREE.InstancedMesh(body, mat(), spots.length);
+    const heads = new THREE.InstancedMesh(head, mat(), spots.length);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+    const skin = ['#f1c9a5', '#d9a77e', '#b47a52', '#8a5636', '#5e3a24', '#f6dcc4'].map((h) => new THREE.Color(h));
     spots.forEach(([x, y, z, ry], i) => {
-      q.setFromEuler(e.set(0, ry, 0));
-      const s = 0.85 + rnd() * 0.3;
-      m4.compose(v.set(x, y, z), q, one.set(s, s, s));
-      mesh.setMatrixAt(i, m4);
+      q.setFromEuler(e.set(0, ry + (rnd() - 0.5) * 0.4, 0));
+      const s = 0.88 + rnd() * 0.24;
+      m4.compose(v.set(x, y, z), q, one.set(s, s * (0.92 + rnd() * 0.16), s));
+      bodies.setMatrixAt(i, m4); heads.setMatrixAt(i, m4);
+      heads.setColorAt(i, skin[Math.floor(rnd() * skin.length)]);
     });
-    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(spots.length * 3), 3);
-    mesh.frustumCulled = false;
-    this.crowd = mesh;
+    bodies.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(spots.length * 3), 3);
+    heads.instanceColor.needsUpdate = true;
+    bodies.frustumCulled = false; heads.frustumCulled = false;
+    this.crowd = bodies;
+    this.crowdSpots = spots;
     this.crowdSeed = spots.map(() => rnd());
-    this.root.add(mesh);
+    this.root.add(bodies, heads);
   }
 
+  // Crowd colors: each end and each half of the sidelines is a team's section, mostly in its
+  // colors (shades of them: replica jerseys, lighter and darker), with plenty of white, black,
+  // grey and other shirts mixed in, and a neutral section at midfield.
   paintCrowd(teams) {
     const c = new THREE.Color(), cols = [new THREE.Color(teams[0].color), new THREE.Color(teams[1].color)];
-    const neutral = ['#e8e4dc', '#30343a', '#9aa3ad', '#c9b48a', '#5d6f8a'].map((h) => new THREE.Color(h));
+    const other = ['#f4f2ec', '#f4f2ec', '#22262c', '#3a3f47', '#9aa3ad', '#c9b48a', '#5d6f8a', '#7a3b3b', '#2f5d3a', '#e0c24a'].map((h) => new THREE.Color(h));
     const n = this.crowd.count;
     for (let i = 0; i < n; i++) {
-      const r = this.crowdSeed[i];
-      // Clear team sections: the home fans hold the near sideline and their end zone, the
-      // visitors half of the far sideline and the other end.
-      const p = this.crowd.instanceMatrix.array[i * 16 + 12], z = this.crowd.instanceMatrix.array[i * 16 + 14];
-      const away = p > 100 || (p >= 0 && z > 0 && p > 50);
-      if (r < 0.82) c.copy(cols[away ? 1 : 0]); else c.copy(neutral[Math.floor(r * 100) % neutral.length]);
-      c.offsetHSL(0, -0.05, (this.crowdSeed[(i * 7) % n] - 0.5) * 0.18);
+      const r = this.crowdSeed[i], [x, , z, , row] = this.crowdSpots[i];
+      const away = x > 100 || (x >= 0 && x <= 100 && z > 0 ? x > 56 : z < 0 && x > 64);
+      const mid = x > 44 && x < 56;
+      const teamShare = mid ? 0.35 : row < CLUB_ROW ? 0.62 : 0.55;
+      if (r < teamShare) {
+        c.copy(cols[away ? 1 : 0]);
+        c.offsetHSL((this.crowdSeed[(i * 13) % n] - 0.5) * 0.03, -0.08, (this.crowdSeed[(i * 7) % n] - 0.5) * 0.26);
+      } else c.copy(other[Math.floor(this.crowdSeed[(i * 11) % n] * other.length)]).offsetHSL(0, 0, (this.crowdSeed[(i * 5) % n] - 0.5) * 0.1);
       this.crowd.setColorAt(i, c);
     }
     this.crowd.instanceColor.needsUpdate = true;
@@ -427,13 +493,13 @@ export class Stadium {
     if (this.weather?.obj) { this.scene.remove(this.weather.obj); this.weather.obj.geometry.dispose(); this.weather.obj.material.dispose(); }
     this.weather = { kind: want };
     const look = {
-      clear: ['#3f7fc8', '#cfe5f5', 1.35, 2.1, '#fff6e8', 120, 420],
-      sun: ['#2f78d0', '#ffe9c2', 1.4, 2.5, '#ffe2b0', 140, 460],
+      clear: ['#3f7fc8', '#cfe5f5', 1.12, 2.5, '#fff3e0', 120, 420],
+      sun: ['#2f78d0', '#ffe9c2', 1.15, 2.8, '#ffe2b0', 140, 460],
       rain: ['#5b6675', '#9aa6b3', 1.15, 1.2, '#dfe6f0', 70, 260],
       hail: ['#7e8fa3', '#d6e0ea', 1.25, 1.4, '#eef4ff', 80, 300],
       sand: ['#b39468', '#e3c99a', 1.2, 1.6, '#ffe0b0', 70, 260],
     }[want] ?? null;
-    const [top, hor, hemi, sun, sunCol, f0, f1] = look ?? ['#3f7fc8', '#cfe5f5', 1.35, 2.1, '#fff6e8', 120, 420];
+    const [top, hor, hemi, sun, sunCol, f0, f1] = look ?? ['#3f7fc8', '#cfe5f5', 1.12, 2.5, '#fff3e0', 120, 420];
     this.skyUni.top.value.set(top); this.skyUni.horizon.value.set(hor);
     this.scene.fog.color.set(hor); this.scene.fog.near = f0; this.scene.fog.far = f1;
     this.hemi.intensity = hemi; this.sun.intensity = sun; this.sun.color.set(sunCol);
