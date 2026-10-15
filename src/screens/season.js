@@ -1,0 +1,215 @@
+// Season hub: matchup and scouting report, standings, leaders, playoffs, awards, history,
+// the stored box score of a finished game, and finishing a league game.
+import { DEF_SLOTS, OFF_SLOTS, ST_SLOTS } from '../ratings.js';
+import { WEATHER } from '../types.js';
+import { clockText, quarterText, simUntil } from '../engine.js';
+import * as LG from '../league.js';
+import { setScreen } from '../app.js';
+import { S } from '../state.js';
+import { P, edgeRow, esc, sprite, teamBadge, user } from '../ui.js';
+import { tradeCardHtml } from './draft.js';
+import { boxHtml } from './game.js';
+
+// ---------- season ----------
+export function renderSeason() {
+  const L = S.league;
+  const me = user();
+  const st = LG.standings(L);
+  const lead = LG.leaders(L);
+  let main = '';
+  if (L.phase === 'season') {
+    const gm = LG.userGame(L);
+    const opp = L.teams[gm.home === me.id ? gm.away : gm.home];
+    main = `<div class="card matchup">
+      <p class="eyebrow">Season ${L.season ?? 1} · Week ${L.week + 1} of ${L.schedule.length}</p>
+      <div class="vs">${teamBlock(L.teams[gm.away])}<span class="at">at</span>${teamBlock(L.teams[gm.home])}</div>
+      <p class="muted">${esc(opp.name)} coach: ${esc(opp.coachName)}</p>
+      <div class="actions"><button class="btn primary" data-act="playweek">Play the game</button><button class="btn" data-act="simweek">Simulate it</button></div>
+    </div>${scoutHtml(L, me.id, opp.id)}${tradeCardHtml(L)}`;
+  } else if (L.phase === 'playoffs') {
+    const P_ = L.playoffs;
+    const mine = P_.games.find((g) => g.home === me.id || g.away === me.id);
+    main = `<div class="card matchup"><p class="eyebrow">${P_.round === 0 ? 'Semifinals' : 'Championship'}</p>
+      ${bracketHtml(L)}
+      <div class="actions">${mine ? '<button class="btn primary" data-act="playweek">Play your playoff game</button><button class="btn" data-act="simweek">Simulate it</button>'
+        : '<p class="muted">You missed this round. Watch it play out.</p><button class="btn primary" data-act="simweek">Simulate the round</button>'}</div></div>
+      ${mine ? scoutHtml(L, me.id, mine.home === me.id ? mine.away : mine.home) : ''}`;
+  } else if (L.phase === 'done') {
+    main = championHtml(L, st);
+  } else if (L.phase === 'offseason') {
+    main = `<div class="card matchup"><p class="eyebrow">Season ${L.season} offseason</p><h2>Training camp is open</h2>
+      <div class="actions"><button class="btn primary" data-act="go" data-to="offseason">Make your cuts</button></div></div>`;
+  }
+  const results = L.results.map((r, i) => ({ r, i })).reverse();
+  return `<section class="season">
+    <h1>${esc(me.name)} · ${record(st.find((r) => r.id === me.id))}</h1>
+    <div class="season-grid">
+      <div class="col">${main}
+        <div class="card"><h3>Results ${results.length ? '<span class="muted small">Open a game for its box score</span>' : ''}</h3>${results.length ? `<ul class="results scroll">${results.map(({ r, i }) => resultLine(r, i)).join('')}</ul>` : '<p class="muted">No games played yet.</p>'}</div>
+        ${historyHtml(L)}
+      </div>
+      <div class="col">
+        <div class="card"><h3>Standings</h3><div class="tablewrap"><table class="stand"><thead><tr><th>Team</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">PF</th><th class="num">PA</th><th class="num">Diff</th></tr></thead>
+          <tbody>${st.map((r, i) => { const t = L.teams[r.id]; return `<tr class="${t.user ? 'me' : ''} ${i === 3 ? 'cut' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="num">${r.w}</td><td class="num">${r.l}</td><td class="num">${r.t}</td><td class="num">${r.pf}</td><td class="num">${r.pa}</td><td class="num">${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`; }).join('')}</tbody></table></div>
+          <p class="small muted">Top 4 make the playoffs.</p></div>
+        <div class="card"><h3>League leaders</h3><div class="leaders">${Object.entries(lead).map(([k, rows]) => `<div><h4>${k}</h4><ol>${rows.slice(0, 3).map((r) => `<li>${sprite(r.id, 'xs')}<span>${esc(P(r.id).name)}</span><em>${L.teams[r.team].abbr}</em><b>${statFor(k, r)}</b></li>`).join('') || '<li class="muted">None yet</li>'}</ol></div>`).join('')}</div></div>
+        <div class="card"><h3>Your save</h3><p class="small muted">Download the league to keep it safe or move it to another browser. Import it from the home screen.</p>
+          <div class="actions"><button class="btn" data-act="exportsave">Export save</button><button class="btn" data-act="recap">Download recap</button></div></div>
+      </div>
+    </div>
+  </section>`;
+}
+
+function scoutHtml(L, myId, oppId) {
+  const R = LG.scoutReport(L, myId, oppId);
+  const opp = L.teams[oppId];
+  const lineupRow = (slots) => slots.map((k) => `<span class="sl" title="${esc(P(R.opp.lineup[k]).name)} (${k})">${sprite(R.opp.lineup[k], 'sm')}<em>${k}</em></span>`).join('');
+  const W = WEATHER;
+  const weather = R.weather.length ? R.weather.map((w) => `<li>${sprite(w.id, 'xs')} ${esc(P(w.id).name)} (${w.side === 'you' ? 'yours' : 'theirs'}) brings ${W[w.weather].name.toLowerCase()} most games: ${esc(W[w.weather].text)}.</li>`).join('')
+    : '<li class="muted">No weather setters in either lineup. Expect clear skies most weeks.</li>';
+  const health = R.health.length ? `<h4>Your health</h4><ul class="health">${R.health.map((h) => `<li>${sprite(h.id, 'xs')} ${esc(P(h.id).name)} ${h.out ? '<span class="cond out">Out this week</span>' : `<span class="cond sore">Starts at ${h.energy}%</span>`}</li>`).join('')}</ul>` : '';
+  return `<div class="card scout"><h3>Scouting report <span class="muted">${teamBadge(opp)} ${esc(opp.name)}</span></h3>
+    <p class="plan"><b>Game plan.</b> ${esc(R.plan)} ${esc(R.lean)}</p>
+    <p class="small muted">${esc(R.coachNote)}</p>
+    <div class="opprow"><span class="muted small">Their offense</span>${lineupRow(OFF_SLOTS)}</div>
+    <div class="opprow"><span class="muted small">Their defense</span>${lineupRow(DEF_SLOTS)}</div>
+    <div class="opprow"><span class="muted small">Their kickers</span>${lineupRow(ST_SLOTS)}</div>
+    <div class="edges"><div><h4>Your best type edges</h4>${R.best.length ? `<ul>${R.best.map(edgeRow).join('')}</ul>` : '<p class="muted small">None this week.</p>'}</div>
+    <div><h4>Where they have the edge</h4>${R.worst.length ? `<ul>${R.worst.map(edgeRow).join('')}</ul>` : '<p class="muted small">Nothing to worry about.</p>'}</div></div>
+    <h4>Weather</h4><ul class="weather">${weather}</ul>
+    ${health}
+  </div>`;
+}
+
+function bracketHtml(L) {
+  const B = LG.bracket(L);
+  if (!B) return '';
+  const side = (id, seed, score, winner) => id == null ? '<div class="bteam tbd">To be decided</div>'
+    : `<div class="bteam ${winner === id ? 'won' : winner != null ? 'lost' : ''} ${L.teams[id].user ? 'me' : ''}"><em>${seed}</em>${teamBadge(L.teams[id])}<span>${esc(L.teams[id].name)}</span><b>${score ?? ''}</b></div>`;
+  const game = (g) => `<div class="bgame">${side(g.home, g.seeds[0], g.homeScore, g.winner)}${side(g.away, g.seeds[1], g.awayScore, g.winner)}</div>`;
+  return `<div class="bracket"><div class="bround"><h4>Semifinals</h4>${B.semis.map(game).join('')}</div>
+    <div class="bround"><h4>Championship</h4>${game(B.final)}</div>
+    <div class="bround champcol"><h4>Champion</h4>${B.champion != null ? `<div class="bteam won">${teamBadge(L.teams[B.champion])}<span>${esc(L.teams[B.champion].name)}</span></div>` : '<div class="bteam tbd">To be decided</div>'}</div></div>`;
+}
+
+function seasonFinish(L, id) {
+  if (L.champion === id) return 'Won the championship';
+  const B = LG.bracket(L);
+  if (!B) return 'Missed the playoffs';
+  if (B.final.home === id || B.final.away === id) return 'Lost in the championship';
+  if (B.semis.some((g) => g.home === id || g.away === id)) return 'Lost in the semifinals';
+  return 'Missed the playoffs';
+}
+
+function awardsHtml(L, list) {
+  if (!list.length) return '';
+  return `<ul class="awards">${list.map((a) => `<li>${sprite(a.id, 'md')}<span><em>${esc(a.label)}</em><b>${esc(P(a.id).name)}</b> ${teamBadge(L.teams[a.team])}<span class="small muted">${esc(a.line)}</span></span></li>`).join('')}</ul>`;
+}
+
+function championHtml(L, st) {
+  const champ = L.teams[L.champion], me = user();
+  const mine = st.find((r) => r.id === me.id);
+  const myStats = Object.entries(L.seasonStats).filter(([, s]) => s.team === me.id);
+  const star = myStats.length ? myStats.reduce((a, b) => (LG.impact(b[1]) > LG.impact(a[1]) ? b : a)) : null;
+  return `<div class="card matchup champ"><p class="eyebrow">Season ${L.season ?? 1} complete</p><h2>${esc(champ.name)} are champions</h2>
+    <div class="champrow">${Object.values(champ.lineup).slice(0, 6).map((id) => sprite(id, 'md')).join('')}</div>
+    <h4>Your season</h4>
+    <p>${esc(me.name)} went ${record(mine)}, scored ${mine.pf} and allowed ${mine.pa}. ${seasonFinish(L, me.id)}.
+      ${star ? ` Team star: ${esc(P(Number(star[0])).name)}, ${esc(LG.statLine(star[1]))}.` : ''}</p>
+    <h4>Awards</h4>${awardsHtml(L, LG.awards(L))}
+    <h4>Playoff bracket</h4>${bracketHtml(L)}
+    <div class="actions"><button class="btn primary" data-act="offseason">Start the offseason</button><button class="btn" data-act="recap">Download recap</button><button class="btn" data-act="newleague">Start a new league</button></div>
+    <p class="small muted">The offseason keeps all eight rosters. Pokémon who played a lot of snaps develop, every team cuts ${LG.CUTS}, and a rookie draft refills the roster, worst record first.</p></div>`;
+}
+
+function historyHtml(L) {
+  if (!L.history?.length) return '';
+  return `<div class="card"><h3>League history</h3><ul class="history">${L.history.slice().reverse().map((h) => {
+    const mvp = h.awards.find((a) => a.key === 'mvp');
+    const mine = h.records.find((r) => L.teams[r.id].user);
+    return `<li><em>Season ${h.season}</em>${teamBadge(L.teams[h.champion])}<span>${esc(L.teams[h.champion].name)} won it all.${mvp ? ` MVP ${esc(P(mvp.id).name)}.` : ''}</span><span class="muted small">You: ${record(mine)}</span></li>`;
+  }).join('')}</ul></div>`;
+}
+
+export function recapText(L) {
+  const st = LG.standings(L);
+  const lines = [`PokeBall · ${user().name} · Season ${L.season ?? 1}`, ''];
+  if (L.champion != null) lines.push(`Champion: ${L.teams[L.champion].name}`, '');
+  lines.push('Standings');
+  st.forEach((r, i) => lines.push(`${i + 1}. ${L.teams[r.id].name} ${record(r)} (PF ${r.pf}, PA ${r.pa})`));
+  const B = LG.bracket(L);
+  if (B) {
+    lines.push('', 'Playoffs');
+    for (const g of [...B.semis, B.final]) {
+      if (g.home == null) continue;
+      lines.push(`${L.teams[g.away].name} ${g.awayScore ?? '-'} at ${L.teams[g.home].name} ${g.homeScore ?? '-'}`);
+    }
+  }
+  const aw = LG.awards(L);
+  if (aw.length) {
+    lines.push('', 'Awards');
+    for (const a of aw) lines.push(`${a.label}: ${P(a.id).name} (${L.teams[a.team].abbr}), ${a.line}`);
+  }
+  lines.push('', 'Results');
+  for (const r of L.results) {
+    lines.push(`${r.playoff ? 'Playoffs' : `Week ${r.week + 1}`}: ${L.teams[r.away].abbr} ${r.score[1]} at ${L.teams[r.home].abbr} ${r.score[0]}`);
+  }
+  return lines.join('\n');
+}
+
+// ---------- stored box score ----------
+const STAT_KEYS = ['pa', 'pc', 'py', 'ptd', 'pint', 'sk', 'ra', 'ry', 'rtd', 'rlong', 'fum', 'tg', 'rc', 'rcy', 'rctd', 'rclong', 'tk', 'dsk', 'dint', 'pd', 'ff', 'sn'];
+const fullStats = (s) => Object.fromEntries(STAT_KEYS.map((k) => [k, s[k] ?? 0]));
+
+export function renderResult() {
+  const L = S.league, r = L?.results[S.resultIdx];
+  if (!r?.box) return `<section><p>That game has no box score.</p><button class="btn" data-act="go" data-to="season">Back to the season</button></section>`;
+  const teams = [L.teams[r.home], L.teams[r.away]];
+  const g = {
+    score: r.score, qs: r.quarters,
+    teams: teams.map((t, i) => ({ id: t.id, name: t.name, abbr: t.abbr, color: t.color, team: r.box.team[i],
+      stats: Object.fromEntries(Object.entries(r.box.stats[i]).map(([id, s]) => [id, fullStats(s)])) })),
+  };
+  const winner = r.winner == null ? 'Tie game' : `${L.teams[r.winner].name} win`;
+  return `<section class="result">
+    <p class="eyebrow">${r.playoff ? (r.round === 0 ? 'Semifinal' : 'Championship') : `Week ${r.week + 1}`} · ${WEATHER[r.weather].name}</p>
+    <h1>${esc(teams[1].abbr)} ${r.score[1]}, ${esc(teams[0].abbr)} ${r.score[0]}</h1>
+    <p class="lede">${esc(winner)}. ${esc(teams[1].name)} at ${esc(teams[0].name)}.</p>
+    <div class="card"><h3>Scoring plays</h3>${r.box.scoring.length ? `<ol class="pbp scoring">${r.box.scoring.map((e) => `<li><span class="when">${quarterText(e.q)} ${clockText(e.clock)}</span><span class="sit">${teamBadge(teams[e.team])}</span><span class="txt">${esc(e.text)}</span></li>`).join('')}</ol>` : '<p class="muted">No points scored.</p>'}</div>
+    <div class="card">${boxHtml(g)}</div>
+    <div class="actions"><button class="btn primary" data-act="go" data-to="season">Back to the season</button></div>
+  </section>`;
+}
+function statFor(k, r) { return { 'Passing yards': r.py, 'Rushing yards': r.ry, 'Receiving yards': r.rcy, Sacks: r.dsk, Interceptions: r.dint, Tackles: r.tk }[k]; }
+function record(r) { return r ? `${r.w}-${r.l}${r.t ? `-${r.t}` : ''}` : '0-0'; }
+function teamBlock(t) { return `<div class="tblock" style="--team:${t.color}"><span class="tabbr">${esc(t.abbr)}</span><span>${esc(t.name)}</span></div>`; }
+function resultLine(r, i) {
+  const L = S.league, h = L.teams[r.home], a = L.teams[r.away];
+  const inner = `${r.playoff ? '<em class="po">Playoffs</em>' : `<em>Wk ${r.week + 1}</em>`}${teamBadge(a)} <b class="${r.winner === a.id ? 'won' : ''}">${r.score[1]}</b> at ${teamBadge(h)} <b class="${r.winner === h.id ? 'won' : ''}">${r.score[0]}</b>`;
+  const mine = a.user || h.user ? 'mine' : '';
+  return r.box ? `<li class="${mine}"><button class="resline" data-act="openresult" data-i="${i}">${inner}<span class="open">Box score</span></button></li>` : `<li class="${mine}">${inner}</li>`;
+}
+
+export function finishLeagueGame() {
+  const L = S.league, g = S.game, meta = S.gameMeta;
+  if (!g?.final || !meta) return;
+  if (meta.playoff) {
+    LG.recordResult(L, g, { playoff: true, round: L.playoffs.round });
+    simPlayoffOthers(L, meta.userTeamId);
+    LG.advancePlayoffs(L);
+  } else {
+    LG.recordResult(L, g, { week: L.week });
+    LG.simWeekOthers(L, meta.userTeamId);
+    LG.advanceWeek(L);
+  }
+  S.game = null; S.gameMeta = null;
+  setScreen('season');
+}
+export function simPlayoffOthers(L, skip) {
+  for (const gm of L.playoffs.games) {
+    if (gm.home === skip || gm.away === skip) continue;
+    const g = LG.startLeagueGame(L, gm.home, gm.away, true);
+    simUntil(g, 'game');
+    LG.recordResult(L, g, { playoff: true, round: L.playoffs.round });
+  }
+}
