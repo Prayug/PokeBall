@@ -5,7 +5,7 @@
 // y runs across the field (sidelines at ±SIDE). No DOM access, so tests can run it headless.
 import { traitMod } from './traits.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
-import { OFF_PLAYS, chance, clamp, eff, fumbleCheck, nm, rand, rep, sigmoid, st } from './engine.js';
+import { OFF_PLAYS, aiTempo, chance, clamp, eff, fumbleCheck, nm, oobStops, rand, rep, sigmoid, st } from './engine.js';
 import { bodyOf } from './body.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
 import { DEF_SCHEMES, coverWant, pursueWant, rushWant, setupDefense } from './live/defense.js';
@@ -56,6 +56,8 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
     formation: liveKick(play) ? 'gun_spread' : formationsFor(offCall).includes(opts.formation) ? opts.formation : PLAY_FORMATION[offCall] ?? 'gun_spread',
     defFormation: DEF_FORMATIONS[opts.defFormation] ? opts.defFormation : CALL_FRONT[defCall] ?? '43',
     set: true, snapQueued: false, setT: 0,
+    // The two-minute drill: an AI ball carrier heads for the sideline to stop the clock.
+    clockOut: opts.clockOut ?? (g.phase !== 'pat' && aiTempo(g) === 'hurry' && oobStops(g)),
   };
   const deepCap = lp.goalX + 9;
   const backCap = lp.ownGoalX - 9;
@@ -807,9 +809,11 @@ function carrierWant(lp, p) {
         const w = q.eng ? (k < 1 && dd < q.r + p.r ? 1.2 : 0.35) : 1;
         danger += (w * 2.4) / (0.6 + dd * dd) / Math.max(k, 0.7);
       }
-      if (Math.abs(py) > SIDE - 1) danger += 0.8 / k;
+      if (Math.abs(py) > SIDE - 1 && !lp.clockOut) danger += 0.8 / k;
     }
-    const score = dx * fwd * 1.7 - danger - Math.abs(a) * 0.002;
+    // Saving clock: past the line, angle for the nearer sideline.
+    const out = lp.clockOut && p.x > 1 ? dy * sgn(p.y || 1) * 0.9 : 0;
+    const score = dx * fwd * 1.7 - danger - Math.abs(a) * 0.002 + out;
     if (!best || score > best.score) best = { dx, dy, score };
   }
   const sprint = 1;
@@ -1446,7 +1450,7 @@ function buildResult(lp, end) {
     qs.pa++; qs.pc++; qs.py += counted; rs.tg++; rs.rc++; rs.rcy += counted; rs.rclong = Math.max(rs.rclong, yards);
     let text = `${nm(qb.id)} finds ${nm(c.id)}${extras} for ${yardsWord(yards)}.${tk}`;
     if (se) text += " It's super effective!";
-    const r = { kind: 'pass', yards, carrier: c.id, scorer: c.id, qb: qb.id, text, clockStop: stop, highlight, se };
+    const r = { kind: 'pass', yards, carrier: c.id, scorer: c.id, qb: qb.id, text, clockStop: stop, oob: end.how === 'out', highlight, se };
     if (tackler && end.how === 'tackle') {
       st(g, d, tackler.id).tk++;
       if (chance(g, Math.max(0, 0.006 + Math.min(0, traitMod('stripChance', { c, q: tackler }).v)))) {
@@ -1462,7 +1466,7 @@ function buildResult(lp, end) {
   const how = lp.scramble ? 'scrambles' : { inside: 'runs up the middle', outside: c.y < 0 ? 'runs around the left end' : 'runs around the right end', draw: 'runs the draw', sneak: 'sneaks ahead', qbdraw: 'takes off on the QB draw', qbpower: 'keeps it on QB power', read: c.slot === 'QB' ? 'pulls it on the read and runs' : 'takes the give on the read' }[lp.play.dir] ?? 'runs';
   let text = `${nm(c.id)} ${how}${extras} for ${yardsWord(yards)}.${tk}`;
   if (se) text += " It's super effective!";
-  const r = { kind: 'run', yards, carrier: c.id, scorer: c.id, text, clockStop: stop, highlight: yards >= 20 ? 'big' : yards < 0 ? 'loss' : null, se };
+  const r = { kind: 'run', yards, carrier: c.id, scorer: c.id, text, clockStop: stop, oob: end.how === 'out', highlight: yards >= 20 ? 'big' : yards < 0 ? 'loss' : null, se };
   if (tackler && end.how === 'tackle') {
     st(g, d, tackler.id).tk++;
     if (fumbleCheck(g, o, d, c.id, tackler.id)) {

@@ -43,6 +43,13 @@ export const OFF_PLAYS = {
   fake_punt: { name: 'Fake Punt', kind: 'punt', fake: true, blurb: 'Punter takes off, needs surprise' },
   fg: { name: 'Field goal', kind: 'fg', blurb: '' },
   fake_fg: { name: 'Fake FG', kind: 'fg', fake: true, blurb: 'Holder throws to the tight end' },
+  // Clock plays, the try after a touchdown and the kickoff choices (the run and pass plays
+  // above are the two-point plays).
+  spike: { name: 'Spike', kind: 'spike', blurb: 'Stop the clock, give up a down' },
+  kneel: { name: 'Kneel', kind: 'kneel', blurb: 'Take a knee and let the clock run' },
+  xp: { name: 'Extra point', kind: 'xp', blurb: 'Kick it for one' },
+  kick_deep: { name: 'Kick deep', kind: 'kickoff', blurb: 'Boot it to the end zone' },
+  onside: { name: 'Onside kick', kind: 'kickoff', onside: true, blurb: 'Kick it short and try to get it back' },
 };
 
 // Defensive calls. `sim` is the original call the fast simulator resolves a newer one as.
@@ -131,6 +138,10 @@ export function createGame({ home, away, seed = Date.now(), playoff = false, wea
     poss: 0, spot: 25, down: 1, toGo: 10, phase: 'play', final: false, winner: null,
     playNo: 0, ghostUsed: {}, log: [], drives: [], drive: null, lastPlay: null,
     weather: weather ?? 'clear', firstReceiver: 0,
+    // Clock rules: timeouts left per side this half, whether the clock is running into the
+    // next snap, the two-minute warnings given, and the sides whose try and kickoff choices
+    // wait for a call (the user's team; every other side's are made by the AI on the spot).
+    timeouts: [3, 3], clockRunning: false, warned: {}, manual: [false, false],
   };
   if (!weather) g.weather = pickWeather(g);
   const receiver = chance(g, 0.5) ? 0 : 1;
@@ -228,6 +239,8 @@ export function spotText(g, spot = g.spot, poss = g.poss) {
   return spot < 50 ? `${g.teams[poss].abbr} ${spot}` : `${g.teams[1 - poss].abbr} ${100 - spot}`;
 }
 export function downText(g) {
+  if (g.phase === 'pat') return 'Try';
+  if (g.phase === 'kickoff') return 'Kickoff';
   const ord = ['', '1st', '2nd', '3rd', '4th'][g.down];
   const goal = g.spot + g.toGo >= 100;
   return `${ord} & ${goal ? 'Goal' : g.toGo}`;
@@ -330,12 +343,60 @@ function kickerDistance(g, ti, dist) {
   return dist - (ac - 60) * 0.18 - Math.max(0, dist - 40) * (pw - 60) * 0.012;
 }
 export function fgOdds(g) { return fgChance(kickerDistance(g, g.poss, fgDistance(g))); }
+export function xpOdds(g) { return Math.min(0.995, fgChance(kickerDistance(g, g.poss, 33)) + 0.02); }
 
+// A kickoff (or the free kick after a safety). A side whose choices wait for a call gets the
+// kickoff call (deep or onside); the AI decides on the spot for everyone else.
 function kickoff(g, kicker, freeKick = false) {
+  g.clockRunning = false;
+  if (g.manual?.[kicker] && !g.final) {
+    g.phase = 'kickoff'; g.kick = { kicker, free: freeKick };
+    g.poss = kicker; g.spot = freeKick ? 20 : 35; g.down = 1; g.toGo = 10;
+    return null;
+  }
+  return doKickoff(g, kicker, freeKick, onsideLean(g, kicker) || chance(g, surpriseOnside(g, kicker)));
+}
+
+// The kicking team goes onside when it is behind late and needs the ball back.
+export function onsideLean(g, kicker) {
+  const lead = g.score[kicker] - g.score[1 - kicker];
+  return g.quarter >= 4 && lead < 0 && lead >= -16 && g.clock <= (lead < -8 ? 300 : 180);
+}
+// Once in a long while, a surprise onside kick when it is not expected (never with a lead late).
+function surpriseOnside(g, kicker) {
+  const lead = g.score[kicker] - g.score[1 - kicker];
+  return g.quarter >= 4 && lead > 0 ? 0 : 0.006;
+}
+
+function doKickoff(g, kicker, freeKick, onside) {
   const rec = 1 - kicker;
   const leg = kick(g, kicker, 'K', 'kpw');
-  g.poss = rec; g.down = 1; g.toGo = 10; g.phase = 'play';
+  g.kick = null;
+  g.phase = 'play'; g.down = 1; g.toGo = 10;
+  g.clockRunning = false;
   let text;
+  if (onside) {
+    // The receiving team brings its hands team when it sees it coming; a surprise works far
+    // more often. The kicker's touch decides how well it bounces.
+    const expected = onsideLean(g, kicker);
+    const ac = kick(g, kicker, 'K', 'kac');
+    const p = clamp((expected ? 0.12 : 0.45) + (ac - 60) * 0.003, 0.04, 0.6);
+    const at = (freeKick ? 20 : 35) + between(g, 10, 14);
+    g.clock = Math.max(0, g.clock - 4);
+    const K = specialist(g, kicker, 'K');
+    if (chance(g, p)) {
+      g.poss = kicker; g.spot = at;
+      text = `${K != null ? nm(K) : g.teams[kicker].name} kicks it onside... and ${g.teams[kicker].name} RECOVER at the ${spotText(g)}!`;
+    } else {
+      g.poss = rec; g.spot = 100 - at;
+      text = `${g.teams[kicker].name} try an onside kick. ${g.teams[rec].name} recover at the ${spotText(g)}.`;
+    }
+    g.toGo = Math.min(10, 100 - g.spot);
+    const e = addLog(g, { kind: 'kick', text, head: g.poss === kicker ? 'Onside recovered' : 'Onside kick', highlight: g.poss === kicker ? 'turnover' : null, ball: absSpot(g.poss, g.spot) });
+    startDrive(g);
+    return e;
+  }
+  g.poss = rec;
   if (!freeKick && chance(g, clamp(0.62 + (leg - 60) * 0.008, 0.25, 0.92))) {
     g.spot = 25;
     text = `${g.teams[kicker].name} kick off. Touchback.`;
@@ -347,9 +408,10 @@ function kickoff(g, kicker, freeKick = false) {
     g.clock = Math.max(0, g.clock - 6);
     text = `${g.teams[kicker].name} kick off. Returned to the ${spotText(g)}.`;
   }
-  addLog(g, { kind: 'kick', text, ball: absSpot(g.poss, g.spot) });
-  if (g.spot >= 100) { scoreTD(g, rec, null); return; }
+  const e = addLog(g, { kind: 'kick', text, head: 'Kickoff', ball: absSpot(g.poss, g.spot) });
+  if (g.spot >= 100) { scoreTD(g, rec, null); return e; }
   startDrive(g);
+  return e;
 }
 
 function fgChance(dist) {
@@ -365,15 +427,76 @@ function fgChance(dist) {
 }
 export { fgChance };
 
+// A touchdown: six points, then the try. A side whose choices wait for a call gets the try
+// call (the extra point, or any run or pass from the 2 for two); the AI tries it on the spot.
 function scoreTD(g, ti, scorer) {
   addScore(g, ti, 6);
-  const xp = chance(g, 0.94);
-  if (xp) addScore(g, ti, 1);
   endDrive(g, 'Touchdown');
-  addLog(g, { kind: 'score', text: `Extra point ${xp ? 'is good' : 'is no good'}. ${scoreLine(g)}` });
   if (otOver(g)) return;
-  kickoff(g, ti);
+  g.phase = 'pat'; g.poss = ti; g.spot = 98; g.down = 1; g.toGo = 2; g.clockRunning = false;
+  // A two-point play does not count in anyone's stats: they are put back as they were.
+  g.patStats = g.teams.map((t) => structuredClone({ stats: t.stats, team: t.team }));
+  if (!g.manual?.[ti]) convert(g, aiConvertCall(g), aiDefenseCall(g));
 }
+
+// The try after a touchdown. live: a two-point play's result from the live field.
+function convert(g, offCall, defCall, live = null) {
+  const o = g.poss, d = 1 - o;
+  const play = OFF_PLAYS[offCall];
+  let good, text, pts;
+  const base = { kind: 'play', off: offCall, def: defCall, team: o, spotBefore: g.spot, from: absSpot(o, g.spot), yards: 0, conversion: true };
+  if (!live && !['run', 'pass'].includes(play?.kind)) {
+    const K = specialist(g, o, 'K');
+    good = chance(g, xpOdds(g));
+    pts = 1;
+    if (K != null) { const s = st(g, o, K); s.xpa = (s.xpa ?? 0) + 1; if (good) s.xpm = (s.xpm ?? 0) + 1; }
+    text = `${K != null ? `${nm(K)}'s extra point` : 'The extra point'} is ${good ? 'good' : 'NO GOOD'}.`;
+    base.off = 'xp';
+  } else {
+    const r = live ?? (play.kind === 'run' ? doRun(g, simOff(offCall), simDef(defCall), play.qb === true || (play.qb > 0 && chance(g, play.qb)))
+      : doPass(g, simOff(offCall), simDef(defCall)));
+    good = !r.turnover && g.spot + (r.yards ?? 0) >= 100;
+    pts = 2;
+    base.carrier = r.carrier; base.yards = r.yards ?? 0;
+    text = `Two-point try: ${r.text.replace(/ (Tackled by [^.]*\.|TOUCHDOWN!)/, '')} ${good ? 'The conversion is GOOD!' : 'No good.'}`;
+  }
+  if (g.patStats) {
+    g.patStats.forEach((p, i) => { g.teams[i].stats = p.stats; g.teams[i].team = p.team; });
+    g.patStats = null;
+  }
+  if (good) addScore(g, o, pts);
+  const head = pts === 1 ? (good ? 'Extra point' : 'Extra point no good') : good ? 'Two-point conversion' : 'Two-point try fails';
+  const e = addLog(g, { ...base, kind: 'score', head, highlight: good ? (pts === 2 ? 'td' : null) : 'miss', text: `${text} ${scoreLine(g)}`, to: absSpot(o, good ? 100 : g.spot) });
+  g.phase = 'play';
+  afterScore(g, o);
+  return e;
+}
+
+// After a try or a field goal: the kickoff, or the end of the quarter when the score came
+// with no time left (the try is played even then).
+function afterScore(g, kicker, freeKick = false) {
+  g.clockRunning = false;
+  if (otOver(g)) return;
+  if (g.clock <= 0 && !g.final) {
+    const half = g.quarter === 2 || g.quarter >= 4;
+    endQuarter(g);
+    if (half) return;
+  }
+  kickoff(g, kicker, freeKick);
+}
+
+// Go for two late in the game when the chart says so: down 2, 5, 9, 10, 12 or 13, or up 1,
+// 4, 5 or 12 (the lead after the touchdown, before the try).
+export function convertLean(g) {
+  const o = g.poss, lead = g.score[o] - g.score[1 - o];
+  if (g.quarter < 4) return 'xp';
+  return [-2, -5, -9, -10, -12, -13, 1, 4, 5, 12].includes(lead) ? 'two' : 'xp';
+}
+function aiConvertCall(g) {
+  if (convertLean(g) === 'xp') return 'xp';
+  return chance(g, 0.55) ? pickWeighted(g, passWeights(g)) : pickWeighted(g, runWeights(g));
+}
+
 function addScore(g, ti, pts) {
   g.score[ti] += pts;
   g.qs[ti][g.quarter - 1] = (g.qs[ti][g.quarter - 1] ?? 0) + pts;
@@ -393,9 +516,124 @@ export function quarterTotals(g, ti) {
   return g.qs[ti].map((v, i) => (i < 4 || i < g.quarter ? v ?? 0 : null)).filter((v) => v != null);
 }
 
+// ---------- the clock ----------
+// The clock between plays: after a play that keeps it running, the next snap comes after a
+// runoff that depends on the offense's tempo (no huddle, normal, or bleeding the play clock).
+// A timeout before the snap saves that runoff; the two-minute warning stops it at 2:00.
+export const TEMPOS = [['auto', 'Auto'], ['hurry', 'No huddle'], ['normal', 'Huddle'], ['milk', 'Bleed it']];
+
+// Fill in the clock fields on a game saved before they existed.
+function clockFields(g) {
+  g.timeouts ??= [3, 3]; g.warned ??= {}; g.clockRunning ??= false; g.manual ??= [false, false]; g.phase ??= 'play';
+}
+const lateHalf = (g) => g.quarter === 2 || g.quarter >= 4;
+// Out of bounds stops the clock until the snap only in the last two minutes of the first half
+// and the last five of the second; otherwise it starts again when the ball is spotted.
+export const oobStops = (g) => (g.quarter === 2 && g.clock <= 120) || (g.quarter >= 4 && g.clock <= 300);
+
+// The tempo the AI's offense plays at: no huddle when it needs points before the half or the
+// game runs out, bleeding the clock with a lead late, a normal huddle otherwise.
+export function aiTempo(g) {
+  const o = g.poss, lead = g.score[o] - g.score[1 - o];
+  if (g.quarter === 2 && g.clock <= 120 && g.spot >= 20) return 'hurry';
+  if (g.quarter >= 4 && lead <= 0 && (g.clock <= 150 || (lead < -8 && g.clock <= 420))) return 'hurry';
+  if (g.quarter >= 4 && lead > 0 && g.clock <= 360) return 'milk';
+  return 'normal';
+}
+// Seconds between the whistle and the snap at a tempo; a spike or a hurried field goal unit
+// needs only a few.
+function runoff(g, tempo, call) {
+  const kind = OFF_PLAYS[call]?.kind;
+  if (kind === 'spike') return between(g, 3, 6);
+  if (kind === 'fg' && tempo === 'hurry') return between(g, 6, 10);
+  if (kind === 'kneel' || tempo === 'milk') return between(g, 38, 40);
+  return tempo === 'hurry' ? between(g, 7, 13) : between(g, 32, 40);
+}
+
+// Time runs off between the last play and this snap. Returns false when the quarter ran out
+// first (the call is never played; the next call is made in the new situation).
+export function snapClock(g, tempo = null, call = null) {
+  clockFields(g);
+  if (g.final || g.phase !== 'play' || !g.clockRunning) return true;
+  g.clockRunning = false;
+  const t = tempo && tempo !== 'auto' ? tempo : aiTempo(g);
+  let run = runoff(g, t, call);
+  const q = g.quarter;
+  if (lateHalf(g) && q <= 4 && !g.warned[q] && g.clock > 120 && g.clock - run <= 120) {
+    g.teams[g.poss].team.top += g.clock - 120;
+    g.clock = 120; g.warned[q] = true;
+    addLog(g, { kind: 'info', head: 'Two-minute warning', text: 'Two-minute warning.' });
+    return true;
+  }
+  if (run >= g.clock) {
+    g.teams[g.poss].team.top += g.clock;
+    g.clock = 0;
+    endQuarter(g);
+    return false;
+  }
+  g.clock -= run;
+  g.teams[g.poss].team.top += run;
+  return true;
+}
+
+// A timeout: stops the clock before the next snap and gives everyone a short breather.
+export function callTimeout(g, ti) {
+  clockFields(g);
+  if (g.final || g.phase !== 'play' || g.timeouts[ti] <= 0) return false;
+  g.timeouts[ti]--;
+  const saved = g.clockRunning;
+  g.clockRunning = false;
+  const t = g.teams[ti];
+  for (const id of t.roster) t.energy[id] = Math.min(100, (t.energy[id] ?? 100) + 3);
+  const left = g.timeouts[ti];
+  addLog(g, { kind: 'timeout', team: ti, head: 'Timeout', text: `Timeout, ${t.name}. ${left === 0 ? 'No timeouts left' : `${left} left`}${g.quarter >= 5 ? '' : ' in the half'}.${saved ? ` The clock stops at ${clockText(g.clock)}.` : ''}` });
+  return true;
+}
+
+// The AI's clock management before a snap, for each side it coaches: the offense stops a
+// running clock when it needs points before the half or the game ends; a defense that is
+// behind late stops it to get the ball back with time left.
+export function aiTimeouts(g) {
+  clockFields(g);
+  if (g.final || g.phase !== 'play' || !g.clockRunning) return null;
+  const o = g.poss, d = 1 - o;
+  const lead = g.score[o] - g.score[d];
+  const want = (ti) => {
+    if (g.manual[ti] || g.timeouts[ti] <= 0) return false;
+    if (ti === o) {
+      if (g.quarter === 2) return g.clock <= (g.spot >= 50 ? 90 : 45) && g.spot >= 30;
+      if (g.quarter >= 4) return lead <= 0 && g.clock <= 150;
+      return false;
+    }
+    // A defense down by up to two scores, with the offense running clock.
+    return g.quarter >= 4 && lead > 0 && lead <= 16 && g.clock <= 240 && !(g.quarter >= 5 && !g.playoff && lead > 0 && g.clock < 20);
+  };
+  for (const ti of [o, d]) if (want(ti) && callTimeout(g, ti)) return ti;
+  return null;
+}
+
+// Can the offense run out the clock by kneeling? Each kneel takes a couple of seconds and then
+// the full play clock, unless the defense stops it with a timeout.
+export function canKneelOut(g) {
+  const o = g.poss, lead = g.score[o] - g.score[1 - o];
+  if (lead <= 0 || g.spot <= 3 || g.phase !== 'play') return false;
+  const downs = 5 - g.down;
+  const stops = Math.min(downs, g.timeouts?.[1 - o] ?? 0);
+  const burn = downs * 2 + (downs - stops) * 38 + (g.clockRunning ? 36 : 0);
+  return g.quarter >= 4 && g.clock <= burn;
+}
+
 // ---------- the play ----------
 export function runPlay(g, offCall, defCall) {
   if (g.final) return null;
+  clockFields(g);
+  if (g.phase === 'pat') { g.playNo++; return convert(g, offCall, defCall); }
+  if (g.phase === 'kickoff') {
+    const k = g.kick ?? { kicker: g.poss, free: false };
+    g.playNo++;
+    return doKickoff(g, k.kicker, k.free, !!OFF_PLAYS[offCall]?.onside);
+  }
+  if (g.clockRunning && !snapClock(g, null, offCall)) return null;
   const play = OFF_PLAYS[offCall];
   g.playNo++;
   const base = { kind: 'play', off: offCall, def: defCall, down: g.down, toGo: g.toGo, spotBefore: g.spot,
@@ -403,16 +641,34 @@ export function runPlay(g, offCall, defCall) {
   let r;
   if (play.kind === 'punt') r = doPunt(g, base);
   else if (play.kind === 'fg') r = doFieldGoal(g, base);
+  else if (play.kind === 'spike' || play.kind === 'kneel') r = clockPlay(g, play.kind);
   else if (play.kind === 'run') r = doRun(g, simOff(offCall), simDef(defCall), play.qb === true || (play.qb > 0 && chance(g, play.qb)));
-  else r = doPass(g, simOff(offCall), simDef(defCall));
-  return finishPlay(g, r, base, offCall, defCall, between(g, 4, 8));
+  else if (play.kind === 'pass') r = doPass(g, simOff(offCall), simDef(defCall));
+  else r = clockPlay(g, 'spike');
+  const secs = play.kind === 'spike' ? 1 : play.kind === 'kneel' ? 2 : between(g, 4, 8);
+  return finishPlay(g, r, base, offCall, defCall, secs);
+}
+
+// A spike (an incomplete pass into the ground) or a kneel (a yard lost, the clock running).
+function clockPlay(g, kind) {
+  const o = g.poss, qb = g.teams[o].lineup.QB;
+  const s = st(g, o, qb);
+  if (kind === 'spike') {
+    s.pa++;
+    return { kind: 'pass', yards: 0, carrier: qb, qb, text: `${nm(qb)} spikes the ball to stop the clock.`, clockStop: true, head: 'Spike' };
+  }
+  const yards = -Math.min(1, g.spot - 1);
+  s.ra++; s.ry += yards;
+  return { kind: 'run', yards, carrier: qb, text: `${nm(qb)} takes a knee.`, head: 'Kneel' };
 }
 
 // A run or pass played out on the live field: live.js decides what happened and keeps the
 // player stats; this applies it to the down, distance, score and clock like any other play.
 export function runLivePlay(g, offCall, defCall, r, seconds) {
   if (g.final) return null;
+  clockFields(g);
   g.playNo++;
+  if (g.phase === 'pat') return convert(g, offCall, defCall, r);
   if (r.liveKick) {
     // A punt or field goal played on the field: the kick's own outcome, then the usual bookkeeping.
     const kb = { kind: 'play', off: offCall, def: defCall, down: g.down, toGo: g.toGo, spotBefore: g.spot, from: absSpot(g.poss, g.spot), team: g.poss, yards: 0 };
@@ -424,24 +680,31 @@ export function runLivePlay(g, offCall, defCall, r, seconds) {
 }
 
 function finishPlay(g, r, base, offCall, defCall, playSecs) {
-  const o = g.poss, d = 1 - o;
+  const o = g.poss;
   const play = OFF_PLAYS[offCall];
   const before = { spot: base.spotBefore, down: g.down, toGo: g.toGo, poss: o };
   if (r.special) { before.down = base.down; before.toGo = base.toGo; }
-  const hurry = (g.quarter === 2 || g.quarter >= 4) && g.clock <= 120 && (g.quarter === 2 || g.score[o] <= g.score[d]);
-  const milk = g.quarter >= 4 && g.score[o] > g.score[d] && g.clock < 360;
+  const q = g.quarter, clockBefore = g.clock;
 
-  // Clock
-  let elapsed = playSecs;
-  if (!r.clockStop) elapsed += hurry ? between(g, 8, 14) : milk ? between(g, 34, 39) : between(g, 25, 35);
-  elapsed = Math.min(elapsed, g.clock);
+  // The play's own seconds. Whether the clock keeps running into the next snap: an
+  // incompletion, a score, a change of possession and (late in a half) going out of bounds
+  // stop it.
+  const elapsed = Math.min(playSecs, g.clock);
   g.clock -= elapsed;
   g.teams[o].team.top += elapsed;
+  const stopped = r.oob ? oobStops(g) : !!r.clockStop;
   if (play.kind === 'run' || play.kind === 'pass') applyFatigue(g);
 
   const entry = resolve(g, r, before, offCall, defCall);
+  if (entry && r.oob && !r.special) entry.oob = true;
   g.lastPlay = entry;
-  if (g.clock <= 0 && !g.final) endQuarter(g);
+  g.clockRunning = !stopped && g.poss === o && g.phase === 'play' && g.quarter === q && !g.final;
+  // The two-minute warning, when the play itself ran past 2:00.
+  if (lateHalf(g) && q <= 4 && g.quarter === q && !g.warned[q] && clockBefore > 120 && g.clock <= 120 && g.clock > 0) {
+    g.warned[q] = true; g.clockRunning = false;
+    addLog(g, { kind: 'info', head: 'Two-minute warning', text: 'Two-minute warning.' });
+  }
+  if (g.clock <= 0 && !g.final && g.phase !== 'pat' && g.quarter === q) endQuarter(g);
   return entry;
 }
 
@@ -449,7 +712,7 @@ function resolve(g, r, before, offCall, defCall) {
   const o = before.poss, d = 1 - o;
   const T = g.teams[o].team;
   const base = { kind: 'play', off: offCall, def: defCall, down: before.down, toGo: before.toGo, spotBefore: before.spot,
-    from: absSpot(o, before.spot), carrier: r.carrier, team: o, highlight: r.highlight ?? null, yards: r.yards ?? 0, se: r.se ?? false };
+    from: absSpot(o, before.spot), carrier: r.carrier, team: o, highlight: r.highlight ?? null, yards: r.yards ?? 0, se: r.se ?? false, ...(r.head ? { head: r.head } : {}) };
   if (r.special) return r.entry;
   if (g.drive) { g.drive.plays++; }
   T.plays++;
@@ -493,7 +756,7 @@ function resolve(g, r, before, offCall, defCall) {
     addScore(g, d, 2);
     endDrive(g, 'Safety');
     const e = addLog(g, { ...base, text: text + ` Tackled in the end zone. SAFETY! ${scoreLine(g)}`, to: absSpot(o, 0), highlight: 'safety', kind: 'score' });
-    if (!otOver(g)) kickoff(g, o, true);
+    afterScore(g, o, true);
     return e;
   }
   g.spot = newSpot;
@@ -514,20 +777,21 @@ function resolve(g, r, before, offCall, defCall) {
 
 function endQuarter(g) {
   const q = g.quarter;
-  addLog(g, { kind: 'quarter', text: `End of ${q <= 4 ? `quarter ${q}` : 'overtime'}. ${scoreLine(g)}` });
+  const head = q === 2 ? 'Halftime' : q === 4 ? 'End of regulation' : q > 4 ? 'End of overtime' : `End of the ${['1st', '2nd', '3rd'][q - 1]} quarter`;
+  addLog(g, { kind: 'quarter', head, text: `End of ${q <= 4 ? `quarter ${q}` : 'overtime'}. ${scoreLine(g)}` });
   if (q === 2) {
     endDrive(g, 'Half');
-    g.quarter = 3; g.clock = 900;
+    g.quarter = 3; g.clock = 900; g.timeouts = [3, 3]; g.clockRunning = false;
     for (const t of g.teams) for (const id of t.roster) t.energy[id] = Math.min(100, t.energy[id] + 30);
     addLog(g, { kind: 'info', text: 'Halftime. Everyone gets a breather.' });
     kickoff(g, g.firstReceiver);
     return;
   }
-  if (q === 1 || q === 3) { g.quarter++; g.clock = 900; return; }
+  if (q === 1 || q === 3) { g.quarter++; g.clock = 900; g.clockRunning = false; return; }
   // End of regulation or an overtime period
   if (g.score[0] !== g.score[1] || (q >= 5 && !g.playoff)) { endDrive(g, 'End of game'); finish(g); return; }
   endDrive(g, 'End of regulation');
-  g.quarter++; g.clock = 600;
+  g.quarter++; g.clock = 600; g.timeouts = [2, 2]; g.clockRunning = false;
   for (const t of g.teams) for (const id of t.roster) t.energy[id] = Math.min(100, t.energy[id] + 20);
   addLog(g, { kind: 'info', text: 'Overtime. Next score wins.' });
   kickoff(g, chance(g, 0.5) ? 0 : 1);
@@ -578,7 +842,7 @@ function doFieldGoal(g, base, live = null) {
     addScore(g, o, 3);
     endDrive(g, 'Field goal');
     const entry = addLog(g, { ...base, kind: 'score', highlight: 'fg', text: `${K != null ? `${knm}'s ` : ''}${dist}-yard field goal is GOOD. ${scoreLine(g)}`, to: absSpot(o, 100) });
-    if (!otOver(g)) kickoff(g, o);
+    afterScore(g, o);
     return { special: true, entry, clockStop: true };
   }
   endDrive(g, 'Missed FG');
@@ -747,7 +1011,10 @@ function doRun(g, call, defCall, qbRun = false) {
     }
   }
   const bigPlay = yards >= 20 ? 'big' : yards < 0 ? 'loss' : null;
-  return { kind: 'run', yards, carrier, scorer: carrier, text, clockStop: dir === 'outside' && chance(g, 0.2), highlight: bigPlay, se };
+  // An outside run ends out of bounds now and then; more often when the runner is trying to save clock.
+  const out = !td && dir === 'outside' && chance(g, aiTempo(g) === 'hurry' ? 0.4 : 0.2);
+  if (out) text = text.replace(/ Tackled by [^.]*\./, ' Pushed out of bounds.');
+  return { kind: 'run', yards, carrier, scorer: carrier, text, oob: out, clockStop: out, highlight: bigPlay, se };
 }
 
 function doPass(g, call, defCall) {
@@ -911,8 +1178,10 @@ function doPass(g, call, defCall) {
           returnSpot: 100 - spotAt, highlight: 'turnover', clockStop: true, se: best.se };
       }
     }
-    const out = play.sideline && chance(g, 0.5);
-    return { kind: 'pass', yards, carrier: tgt, scorer: tgt, qb, text, clockStop: out, highlight: yards >= 20 ? 'big' : null, se: best.se };
+    // Sideline routes often end out of bounds; in the two-minute drill receivers get there on purpose.
+    const out = !td && chance(g, (play.sideline ? 0.5 : 0.04) + (aiTempo(g) === 'hurry' ? 0.25 : 0));
+    if (out) text = text.replace(/ Tackled by [^.]*\./, ' Out of bounds.');
+    return { kind: 'pass', yards, carrier: tgt, scorer: tgt, qb, text, oob: out, clockStop: out, highlight: yards >= 20 ? 'big' : null, se: best.se };
   }
 
   // Incomplete or intercepted
@@ -948,7 +1217,9 @@ export function offenseLean(g) {
   const lead = g.score[o] - g.score[d];
   const late = g.quarter >= 4;
   const dist = fgDistance(g);
-  const endOfHalf = (g.quarter === 2 || late) && g.clock <= 8;
+  // The last snap of a half: kick it if in range (a running clock leaves time for a hurried
+  // field goal unit only with a few seconds to spare).
+  const endOfHalf = (g.quarter === 2 || late) && g.clock <= (g.clockRunning ? 22 : 14);
   if (endOfHalf && dist <= 57 && (g.quarter === 2 || (lead <= 0 && lead >= -3))) return 'fg';
   if (g.down === 4) {
     const desperate = late && lead < 0 && (g.clock < 150 || (lead < -8 && g.clock < 420));
@@ -972,7 +1243,26 @@ export function offenseLean(g) {
   return clamp(pPass, 0.1, 0.95);
 }
 
+// The clock call the down asks for, if any: kneel to run out a win, take a knee at the end of
+// the half backed up, or spike a running clock with no timeouts left in the two-minute drill.
+export function clockLean(g) {
+  if (g.phase !== 'play') return null;
+  const o = g.poss, lead = g.score[o] - g.score[1 - o];
+  if (canKneelOut(g)) return 'kneel';
+  if (g.quarter === 2 && g.clock <= 30 && g.spot <= 30 && lead >= -3) return 'kneel';
+  if (!g.clockRunning || (g.timeouts?.[o] ?? 0) > 0 || g.down === 4) return null;
+  const needPts = g.quarter === 2 ? g.spot >= 45 : g.quarter >= 4 && lead <= 0;
+  if (!needPts || g.clock > 45 || g.clock < 6) return null;
+  const inRange = fgDistance(g) <= 52;
+  if (g.down <= 2 || (g.down === 3 && inRange && g.clock <= 20)) return 'spike';
+  return null;
+}
+
 export function aiOffenseCall(g) {
+  if (g.phase === 'pat') return aiConvertCall(g);
+  if (g.phase === 'kickoff') return onsideLean(g, g.kick?.kicker ?? g.poss) || chance(g, surpriseOnside(g, g.kick?.kicker ?? g.poss)) ? 'onside' : 'kick_deep';
+  const cl = clockLean(g);
+  if (cl) return cl;
   const lean = offenseLean(g);
   if (lean === 'punt') {
     // Near midfield the punter angles it for the corner; once in a while a fake on 4th and short.
@@ -997,6 +1287,8 @@ export function passWeights(g) {
     pa_deep: red ? 0.1 : (g.down === 1 ? 0.55 : 0.2) + Math.max(0, speedEdge) / 40,
   };
   if (t.coach === 'speed') { w.post *= 1.4; w.pa_deep *= 1.4; }
+  // The two-minute drill works the sidelines.
+  if (aiTempo(g) === 'hurry') { w.out *= 2; w.screen *= 0.5; }
   if (g.toGo > 15) { w.screen *= 0.5; w.slant *= 0.4; }
   return spread(w, 'pass');
 }
@@ -1060,7 +1352,13 @@ export function defenseWeights(g) {
 
 export function aiDefenseCall(g) { return pickWeighted(g, defenseWeights(g)); }
 
-export function simPlay(g) { return runPlay(g, aiOffenseCall(g), aiDefenseCall(g)); }
+// One AI-called down: timeouts first, then the calls, then the clock runs to the snap.
+export function simPlay(g) {
+  aiTimeouts(g);
+  const off = aiOffenseCall(g), def = aiDefenseCall(g);
+  if (!snapClock(g, null, off)) return null;
+  return runPlay(g, off, def);
+}
 
 export function simUntil(g, stop) {
   const start = { poss: g.poss, quarter: g.quarter, drives: g.drives.length };

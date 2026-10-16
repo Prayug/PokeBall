@@ -8,7 +8,7 @@ import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
 import { S, save, savePrefs, timers } from '../state.js';
 import { esc } from '../ui.js';
-import { autoAdvance, doCall, needsUser, setMode, userSide } from './game.js';
+import { autoAdvance, doCall, needsUser, setMode, userSide, userTimeout } from './game.js';
 import { KICK_KEYS, csMove, csTabs, cycleForm } from './callsheet.js';
 
 function keysHelp() {
@@ -25,6 +25,7 @@ function keysHelp() {
     <span><kbd>E</kbd> truck through a tackler</span>
     <span><kbd>R</kbd> spin move</span>
     <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
+    <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
     <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
   </div>`;
@@ -145,6 +146,8 @@ export function startLive(off, def, opts) {
   // every simulation step's input, so the play can be run again exactly, step for step.
   L3.rec = { g: structuredClone(g), off, def, opts: { ...opts, from }, log: [], done: false };
   L3.lp = createLivePlay(g, off, def, { ...opts, from });
+  // No huddle: everyone sprints straight to the line.
+  if (opts.hurry) hurry(L3.lp);
   L3.paused = false;
   L3.off = off; L3.def = def; L3.acc = 0; L3.deadT = 0; L3.ev = 0; L3.committed = null;
   L3.autoSnap = opts.autoSnap ?? null;
@@ -228,7 +231,7 @@ function resultBanner(e, lp, before) {
   const how = lp?.end?.how;
   const yd = e.yards ?? 0;
   const kickKind = lp?.kick ? lp.kind : ['punt', 'fg'].includes(OFF_PLAYS[e.off]?.kind) && !OFF_PLAYS[e.off]?.fake ? OFF_PLAYS[e.off].kind : null;
-  const yds = how === 'incomplete' || e.kind === 'punt' || e.kind === 'fg' || kickKind ? '' : yd === 0 ? 'No gain' : `${yd > 0 ? '+' : '−'}${Math.abs(yd)} yd${Math.abs(yd) === 1 ? '' : 's'}`;
+  const yds = how === 'incomplete' || e.kind === 'punt' || e.kind === 'fg' || kickKind || e.head || e.conversion ? '' : yd === 0 ? 'No gain' : `${yd > 0 ? '+' : '−'}${Math.abs(yd)} yd${Math.abs(yd) === 1 ? '' : 's'}`;
   const changed = g.poss !== b.poss && !g.final;
   let head = '', tone = '';
   const td = e.highlight === 'td' || (e.kind === 'score' && before && g.score.some((v, i) => v - before.score[i] >= 6));
@@ -246,10 +249,16 @@ function resultBanner(e, lp, before) {
   else if (!changed && g.down === 1 && b.down >= 1 && yd > 0) { head = 'First down'; tone = 'big'; }
   else if (how === 'out') head = 'Out of bounds';
   else head = yd < 0 ? 'Loss' : 'Tackle';
+  // The engine names some results itself: the try, kickoffs, the clock (quarter ends, the
+  // two-minute warning, timeouts).
+  if (e.head) {
+    head = e.head;
+    tone = e.highlight === 'miss' ? 'to' : e.kind === 'score' ? 'td' : e.highlight === 'turnover' ? 'to' : e.kind === 'quarter' || e.kind === 'info' || e.kind === 'timeout' ? 'muted' : '';
+  }
   // Why it happened, when a Pokémon's type, ability or size decided part of the play.
   const notes = (lp?.notes ?? []).filter((n) => n.kind === 'type' || n.kind === 'ability' || n.kind === 'size').slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
   const next = g.final ? 'Final' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
-  const clock = e.clockStop && !td ? 'Clock stopped' : '';
+  const clock = !g.final && g.phase === 'play' && !changed && !td && e.down ? (g.clockRunning ? '' : 'Clock stopped') : '';
   return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed };
 }
 function showBanner(B) {
@@ -567,6 +576,7 @@ export function onKey(e, down) {
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
     if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; render(); return; }
+    if (code === 'KeyT' && !L3.lp && !L3.replay) { e.preventDefault(); userTimeout(); return; }
     if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
     if (code === 'Escape') {
       if (S.menuOpen) { S.menuOpen = false; render(); return; }

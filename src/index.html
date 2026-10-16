@@ -495,6 +495,22 @@ body.g3d-on main { max-width: none; }
 .cs-formsel { flex-direction: row; align-items: center; gap: 6px; font: 600 12px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--chalk-dim); }
 .cs-formsel select { padding: 5px 8px; font: 700 13px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; border-radius: 6px; }
 .cs-head .cs-all { margin-left: auto; }
+/* The clock between plays: running or stopped, timeouts, the timeout button and the tempo. */
+.cs-clock { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 0 2px 8px; font: 600 12px/1.2 var(--f-data); color: #c9d3cc; }
+.cs-clock .clk { text-transform: uppercase; letter-spacing: 0.05em; }
+.cs-clock .clk.run { color: var(--amber); }
+.cs-clock .clk.run::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--amber); animation: clk-pulse 1s ease-in-out infinite; }
+@keyframes clk-pulse { 50% { opacity: 0.3; } }
+.cs-tempo { display: inline-flex; gap: 6px; align-items: center; }
+.cs-tempo select { font: inherit; }
+.tos { display: inline-flex; gap: 3px; align-items: center; }
+.tos i { width: 9px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.18); }
+.tos i.on { background: #ffe27a; }
+.bc-team .tos { margin-left: 2px; }
+.bc-clock.run { color: #fff3c4; }
+.sb-clock.run { color: var(--amber); }
+.pcard.k-xp, .pcard.k-kickoff { --fam: #a7bba9; } .pcard.k-spike, .pcard.k-kneel { --fam: #c792ff; }
+@media (prefers-reduced-motion: reduce) { .cs-clock .clk.run::before { animation: none; } }
 .cs-cards { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
 .cs-book { display: grid; gap: 8px; }
 .cs-book h4 { margin: 0 0 4px; }
