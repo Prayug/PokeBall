@@ -113,7 +113,9 @@ A league is eight teams: yours and seven AI teams, each with a coach style (Spee
 
 **Offseason and development.** Training camp rewards playing time: every 180 snaps a Pokémon played earns +2 to a rating its position uses, up to +8 a season and +16 over a career, and the growth carries into its overalls from then on. The offseason screen shows your camp report and the league's top developers.
 
-**Cuts and the rookie draft.** Every team cuts four. The game suggests your four (the lowest keep-value), and you can pick your own; the AI teams' cuts are listed. Cut Pokémon go back into the pool, and a four-round snake rookie draft refills every roster, worst record picking first and the champion last. Then a new season starts with fresh standings, stats and health.
+**Cuts, free agency and the rookie draft.** Every team cuts four. The game suggests your four (the lowest keep-value), and you can pick your own; the AI teams' cuts are listed. Cut Pokémon join the free agent pool with every Pokémon never drafted. Free agency runs two rounds of sealed bids: each round every team bids on one Pokémon, the highest bid signs and a tie goes to the worse record. Every Pokémon's salary comes from its overall rating (asking price, about (OVR − 50)² / 60 in $M), a signing's contract is its winning bid, and every payroll must fit under one league cap, set each offseason at the biggest payroll after cuts plus a little room, so the thinner rosters have the most to spend. A full roster has to release someone to sign. Then a snake rookie draft fills every open spot, worst record picking first and the champion last, and a new season starts with fresh standings, stats and health.
+
+**Career records.** Season stats fold into career stats when the offseason opens. The Records screen has the Hall of Fame (eligible after three seasons; a career is worth points for production, awards and titles, the bar is 220, and at most two go in a year, the rest wait on the ballot), career leaders, and a record book for the league and each franchise: single-game and single-season bests and the all-time record. Every game goes into an all-time head-to-head book, so when two teams meet in the playoffs the season screen shows a Rivalry card with the series, earlier playoff meetings, the streak and the last meeting; the Records screen lists every playoff rivalry.
 
 **Saves, export and import.** The league saves to the browser's local storage after every change, including a game in progress, and "Continue league" on the home screen picks it up. "Export save" (home and season screens) downloads the whole league as a JSON file; "Import a save" on the home screen loads one from a file or pasted text, replacing the league in that browser. Older saves are brought up to the current format when they load.
 
@@ -144,12 +146,14 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/audio.js` | Synthesized crowd and game sounds |
 | `src/playbook.js` | Play art for the call sheet |
 | `src/league.js` | Snake draft, AI drafters, schedule, standings, playoffs, league leaders |
+| `src/freeagency.js` | Free agency: salaries from overall rating, the league cap, AI bidding and sealed-bid rounds |
+| `src/records.js` | Career stats, the Hall of Fame, franchise record books and the all-time head-to-head behind rivalries |
 | `src/ratings.js` | Base stats to football attributes, the 22 slots, position overalls, auto depth chart |
 | `src/types.js` | Type chart, type traits, weather and the curated abilities |
 | `src/parity.js` | How far form, home field, types and weather can swing a game |
 | `src/app.js`, `src/index.html` | The entry point (rendering and the click, key and form handlers) and the styles |
 | `src/state.js`, `src/ui.js` | The shared UI state with save and preference storage; small view helpers such as `esc`, `sprite` and `teamBadge` |
-| `src/screens/` | One module per screen: `home`, `draft` (and grades), `depth`, `season` (and box scores), `offseason`, `game`, the play-call sheet (`callsheet`) and the live 3D game loop and input (`live3d`) |
+| `src/screens/` | One module per screen: `home`, `draft` (and grades), `depth`, `season` (and box scores), `offseason`, `freeagency`, `records`, `game`, the play-call sheet (`callsheet`) and the live 3D game loop and input (`live3d`) |
 | `src/data.js`, `src/sprites.js`, `src/sprites3d.js` | Generated Pokémon data, menu sprites and the index of the animated sprite strips (do not edit by hand) |
 | `dist/models3d/` | The 3D models, two Pokémon per file, loaded on demand (not in git: `npm run models` downloads them) |
 | `build/fetch_models3d.mjs`, `build/models3d.json` | Downloads the models release into `dist/models3d/`, or packs it for a new release; which release to use |
@@ -168,7 +172,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `test/formations.mjs` | Lines up every offensive formation against every front for eight teams at five spots on the field and runs the formation check on each (`--print` lists the positions) |
 | `src/traits.js` | Abilities and types that act during a live snap |
 | `test/top.mjs` | Lists the top Pokémon at each position |
-| `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness and subs, the playoffs and awards, the offseason, cuts and the rookie draft, then the next season) and checks every step, plus that an exported save plays on to the same results (exits 1 on failure) |
+| `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness and subs, the playoffs and awards, the offseason, cuts, free agency and the rookie draft, then the next season, with career records, the Hall of Fame, record books and rivalries) and checks every step, plus that an exported save plays on to the same results (exits 1 on failure) |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
 
 ## Build
