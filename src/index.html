@@ -370,6 +370,38 @@ textarea { background: var(--turf-deep); border: 1px solid var(--line); color: v
 .lock.auto { color: var(--chalk-dim); }
 .subpick { margin-top: 12px; }
 
+/* Free agency */
+.capbar { height: 8px; background: var(--turf-deep); border-radius: 4px; overflow: hidden; }
+.capbar span { display: block; height: 100%; background: var(--amber); }
+.capall, .faLog, .rivals, .ballot, .rv-facts { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.capall li, .ballot li, .rivals li { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.capall .cn, .ballot .cn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capall li.me, .faLog li.me { box-shadow: inset 3px 0 0 var(--red); padding-left: 6px; }
+.faLog li { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.faLog .cn { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; }
+.faLog .note { flex-basis: 100%; padding-left: 28px; }
+.fa-note { border-radius: var(--r); padding: 10px 14px; margin: 12px 0; border: 1px solid var(--line); background: var(--turf-2); }
+.fa-note.good { border-color: var(--good); color: var(--chalk); box-shadow: inset 4px 0 0 var(--good); }
+.fa-note.bad { border-color: var(--bad); color: var(--chalk); box-shadow: inset 4px 0 0 var(--bad); }
+.fa .lede { margin-bottom: 12px; }
+.fa-bid input[type="number"] { font: 600 18px/1 var(--f-data); width: 120px; }
+
+/* Record book and rivalries */
+.records h3 label.inline { flex-direction: row; align-items: center; text-transform: none; letter-spacing: 0; }
+.records h3 select { padding: 5px 8px; font: 600 14px/1 var(--f-data); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.recs td { padding: 5px 6px; }
+.recs td:first-child { color: var(--chalk-dim); white-space: nowrap; }
+.recs td b { font: 700 17px/1 var(--f-data); color: var(--amber); }
+.recs td .spr { vertical-align: middle; }
+.ballot b { font: 600 13px/1 var(--f-data); color: var(--chalk-dim); }
+.rivals li b, .rv-head b { font: 700 18px/1 var(--f-data); }
+.rivalry { background: linear-gradient(100deg, color-mix(in srgb, var(--ta) 22%, var(--turf-2)), var(--turf-2) 45%, var(--turf-2) 55%, color-mix(in srgb, var(--tb) 22%, var(--turf-2))); }
+.rv-head { display: flex; gap: 10px; align-items: center; justify-content: center; }
+.rv-head b { font-size: 34px; color: var(--amber); }
+.rv-head .tbadge { font-size: 16px; padding: 5px 8px; }
+.rv-facts li { font-size: 14px; }
+
 @media (max-width: 900px) {
   .cards, .draft-grid, .season-grid, .pgrid, .edges, .subgrid, .bracket { grid-template-columns: minmax(0, 1fr); }
   .board .tablewrap { max-height: 60vh; }
@@ -384,6 +416,8 @@ textarea { background: var(--turf-deep); border: 1px solid var(--line); color: v
   .pbp li:not(:has(.sit)) .txt { grid-column: auto; }
   .dslot { width: 76px; }
   .dslot .spr.md { width: 36px; height: 36px; }
+  .fa-table .from, .fa-table .best, .fa-table .type { display: none; }
+  .fa-table .pk { min-width: 0; }
   .board-table .a-arm, .board-table .a-sta, .board-table .a-blk, .board-table .a-tkl, .board-table .a-acl, .board-table .a-agi, .board-table .a-awr, .board-table .a-kpw, .board-table .a-kac { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {

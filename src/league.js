@@ -2,6 +2,8 @@
 import { PLAYERS, ALL_IDS, SLOT, SLOT_KEYS, BASELINE, autoDepthChart, unitRatings } from './ratings.js';
 import { bestMultiplier, matchupModifier, ABILITIES } from './types.js';
 import { createGame, simUntil, summary } from './engine.js';
+import { archiveSeason, ensureRecords, noteGame } from './records.js';
+import { openFreeAgency } from './freeagency.js';
 
 export const AI_TEAMS = [
   { name: 'Cerulean Surf', abbr: 'CER', color: '#2F6FD6', coach: 'speed', coachName: 'Speed Kills' },
@@ -56,6 +58,7 @@ export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', round
     version: 2, seed, rngState: rng.state(), settings: { rounds, legendaries, typeCap, numTeams },
     teams, picks, pickIndex: 0, phase: 'draft', week: 0, schedule: [], results: [], playoffs: null, champion: null,
     seasonStats: {}, season: 1, history: [], growth: {}, condition: {}, rookies: [], trade: null, offseason: null,
+    contracts: {}, cap: null, fa: null, careers: {}, careerSeason: 0, hof: [], records: {}, meetings: [],
   };
 }
 
@@ -67,6 +70,9 @@ export function migrateLeague(L) {
     L.trade ??= null; L.offseason ??= null;
     L.version = 2;
   }
+  // Free agency and career records arrived within version 2: fill them in where missing.
+  L.contracts ??= {}; L.cap ??= null; L.fa ??= null;
+  ensureRecords(L);
   return L;
 }
 
@@ -289,6 +295,7 @@ export function recordResult(L, g, meta) {
       agg.gp = (agg.gp ?? 0) + 1;
     }
   }
+  noteGame(L, L.results[L.results.length - 1]);
 }
 
 export function simWeekOthers(L, skipTeam = 0) {
@@ -469,11 +476,11 @@ export function bracket(L) {
 
 // ---------- trades ----------
 
-function teamStrength(ids) {
+export function teamStrength(ids) {
   const { lineup } = autoDepthChart(ids);
   return SLOT_KEYS.reduce((s, k) => s + (lineup[k] != null ? SLOT[k].value * PLAYERS[lineup[k]].ovr[k] : 0), 0);
 }
-function aiLikes(team, id) {
+export function aiLikes(team, id) {
   const p = PLAYERS[id];
   const grp = SLOT[p.best[0]].group;
   if (team.coach === 'types' && team.favTypes?.some((t) => p.types.includes(t))) return 6;
@@ -542,7 +549,7 @@ export const GROWTH_CAP = 16;
 export const SNAPS_PER_POINT = 180;
 
 // Keep-value for a rostered Pokémon; the lowest values get cut.
-function keepValue(team, id) {
+export function keepValue(team, id) {
   const p = PLAYERS[id];
   const slot = Object.keys(team.lineup).find((k) => team.lineup[k] === id);
   let v = slot ? 100 + SLOT[slot].value * p.ovr[slot] : 0.5 * p.ovr[p.best[0]];
@@ -557,7 +564,9 @@ export function suggestCuts(team, count = CUTS) {
 export function startOffseason(L) {
   if (L.phase !== 'done') return;
   const st = standings(L);
-  L.history.push({ season: L.season, champion: L.champion, awards: awards(L), records: st.map((r) => ({ id: r.id, w: r.w, l: r.l, t: r.t })) });
+  const aw = awards(L);
+  const hof = archiveSeason(L, { awards: aw, standings: st, champion: L.champion });
+  L.history.push({ season: L.season, champion: L.champion, awards: aw, records: st.map((r) => ({ id: r.id, w: r.w, l: r.l, t: r.t })), hof: hof.map((h) => h.id) });
   const growth = { ...L.growth };
   const camp = [];
   for (const [key, s] of Object.entries(L.seasonStats)) {
@@ -587,29 +596,48 @@ export function startOffseason(L) {
   L.phase = 'offseason';
 }
 
-// Apply cuts and open a rookie draft, worst record picking first.
+// Apply cuts and open free agency; the rookie draft follows it.
 export function finishOffseason(L, userCuts) {
   if (L.phase !== 'offseason') return;
-  const last = L.history[L.history.length - 1];
+  // Remember who cut whom for the free agent pool.
+  const cutBy = {};
+  L.contracts ??= {};
   for (const t of L.teams) {
     const cuts = new Set(t.user && userCuts?.length === Math.min(CUTS, t.roster.length) ? userCuts : L.offseason.cuts[t.id]);
+    for (const id of cuts) { cutBy[id] = t.id; delete L.contracts[id]; }
     t.roster = t.roster.filter((id) => !cuts.has(id));
     t.bench = t.bench.filter((id) => !cuts.has(id));
     for (const k of Object.keys(t.lineup)) if (cuts.has(t.lineup[k])) delete t.lineup[k];
     t.slots = { ...t.lineup };
   }
+  L.season++;
+  L.picks = []; L.pickIndex = 0; L.week = 0; L.schedule = []; L.results = []; L.seasonStats = {};
+  L.playoffs = null; L.champion = null; L.condition = {}; L.rookies = []; L.trade = null; L.offseason = null;
+  openFreeAgency(L, cutBy);
+}
+
+// Rookie draft order: worst record first, the champion last.
+export function rookieOrder(L) {
+  const last = L.history[L.history.length - 1];
   const order = last.records.map((r) => r.id).reverse();
   const champ = order.indexOf(last.champion);
   if (champ >= 0) { order.splice(champ, 1); order.push(last.champion); }
-  const rounds = Math.min(CUTS, L.settings.rounds);
+  return order;
+}
+
+// After free agency: a snake rookie draft that fills every roster back to full. A team that
+// signed free agents has fewer picks and sits out the later rounds.
+export function openRookieDraft(L) {
+  const order = rookieOrder(L);
+  const need = Object.fromEntries(L.teams.map((t) => [t.id, Math.max(0, L.settings.rounds - t.roster.length)]));
+  const rounds = Math.max(0, ...Object.values(need));
   L.picks = [];
   for (let r = 0; r < rounds; r++) {
     const row = r % 2 === 0 ? order : [...order].reverse();
-    for (const id of row) L.picks.push({ round: r + 1, team: id, player: null, slot: null });
+    for (const id of row) if (need[id] > r) L.picks.push({ round: r + 1, team: id, player: null, slot: null });
   }
-  L.season++;
-  L.pickIndex = 0; L.phase = 'draft'; L.week = 0; L.schedule = []; L.results = []; L.seasonStats = {};
-  L.playoffs = null; L.champion = null; L.condition = {}; L.rookies = []; L.trade = null; L.offseason = null;
+  L.pickIndex = 0; L.phase = 'draft';
+  if (!L.picks.length) finishDraft(L);
 }
 
 // Quick game: two AI-drafted rosters.
