@@ -91,6 +91,9 @@ for (let n = 0; n < plays; n++) {
     await page.keyboard.press('KeyY');
     const on = await page.evaluate(() => !!window.__pb.L3.replay && !document.getElementById('replay-badge').hidden);
     if (!on) r.problems.push('Y did not start the replay');
+    // The field must draw the replay, not the next play lining up behind it.
+    await page.waitForTimeout(1500);
+    if (!(await page.evaluate(() => !window.__pb.L3.replay || window.__pb.stage.lp === window.__pb.L3.replay.lp))) r.problems.push('the field shows the next play instead of the replay');
     await shot(`${n + 1}-4-replay`);
     await page.waitForFunction(() => !window.__pb.L3.replay, null, { timeout: 240000 }).catch(() => r.problems.push('replay did not finish'));
     const rp = await page.evaluate(() => window.__pb.L3.lastReplay);

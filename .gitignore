@@ -2,3 +2,5 @@ dist/app.js
 node_modules/
 __pycache__/
 test-browser-out/
+dist/models3d/
+dist/models3d.tar.gz

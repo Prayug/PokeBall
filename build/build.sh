@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Bundles src/ into dist/index.html. The animated sprite strips it loads on demand live next to
-# it in dist/sprites3d/ (written by build_sprites3d.py), so ship that folder with the page.
+# it in dist/sprites3d/ (written by build_sprites3d.py), so ship that folder with the page. The 3D
+# models in dist/models3d/ are not in git: `npm run models` downloads them.
 # Needs esbuild: set ESBUILD to its path, or it runs `npx esbuild@0.24.0`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -14,3 +15,4 @@ const js = fs.readFileSync("dist/app.js", "utf8").replace(/<\/script/gi, "<\\/sc
 fs.writeFileSync("dist/index.html", html.replace("<!--APP-->", () => "<script>" + js + "</script>"));
 console.log("dist/index.html", (fs.statSync("dist/index.html").size / 1024).toFixed(0) + " KB");
 '
+[ -d dist/models3d ] || echo 'dist/models3d/ is missing: run "npm run models" to download the 3D models'
