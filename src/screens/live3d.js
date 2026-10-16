@@ -1,6 +1,6 @@
 // The live 3D game: the stage, the play flow state machine, the frame loop, keyboard and touch
 // input, the result banner, pause, replay, the controls card and the debug HUD.
-import { DEF_PLAYS, OFF_PLAYS, clockText, downText, runLivePlay, spotText } from '../engine.js';
+import { DEF_PLAYS, OFF_PLAYS, aiDefenseCall, aiOffenseCall, clockText, downText, runLivePlay, spotText } from '../engine.js';
 import { DT, createLivePlay, hurry, playSeconds, playState, snap, step as stepLive, worldSpots } from '../live.js';
 import { measureVersion } from '../body.js';
 import { Stage, webglAvailable } from '../field3d.js';
@@ -267,6 +267,16 @@ function hideBanner(after = 0) {
   if (after) timers.banner = setTimeout(go, after); else go();
 }
 
+// The play clock ran out on the call sheet: the sideline calls the play for you (the same call
+// the AI would make for your side), and the snap then has what is left of the play clock.
+function playClockCall(g) {
+  const call = g.poss === userSide() ? aiOffenseCall(g) : aiDefenseCall(g);
+  const name = (OFF_PLAYS[call] ?? DEF_PLAYS[call])?.name ?? call;
+  doCall(call);
+  if (!L3.lp && !L3.resultUntil) L3.pclock = 40;
+  flash(`Play clock: ${name}`, 'muted');
+}
+
 function flash(text, tone = '') {
   const el = document.getElementById('hud-flash');
   if (!el || !text) return;
@@ -422,7 +432,10 @@ function loop(now) {
       showPreview();
       if (L3.preview) { L3.preview.mv = mv; L3.preview.rebuilt = now; }
     }
-    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && L3.flow === 'PLAY_SELECTION') L3.pclock = Math.max(0, L3.pclock - dt);
+    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && L3.flow === 'PLAY_SELECTION') {
+      L3.pclock = Math.max(0, L3.pclock - dt);
+      if (L3.pclock <= 0) playClockCall(g);
+    }
   }
   if (g && !g.final) setFlow(flowNow(now));
   // The game clock runs during the play and stops on the whistle.
@@ -562,7 +575,8 @@ export function onKey(e, down) {
     if (code === 'Slash') { e.preventDefault(); S.helpOpen = true; syncOverlays(); return; }
     if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
-    if (code === 'KeyP') { e.preventDefault(); togglePause(); return; }
+    // P pauses a play on the field; between plays it falls through to the call sheet (Punt).
+    if (code === 'KeyP' && L3.lp && L3.lp.phase !== 'dead') { e.preventDefault(); togglePause(); return; }
     if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }

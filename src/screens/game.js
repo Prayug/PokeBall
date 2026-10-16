@@ -100,7 +100,7 @@ export function renderGame() {
         <button class="btn" data-act="sim" data-stop="quarter" ${simOff}>Sim quarter</button>
         <button class="btn" data-act="sim" data-stop="game" ${simOff}>Sim to the end</button>`;
   const coachBox = modeHtml();
-  // On the 3D field the sims tuck into a Skip disclosure on the Coach mode row.
+  // On the 3D field the sims tuck into a Skip disclosure on the Mode row.
   const simrow = live3d ? `<div class="simrow">${coachBox}${S.skipOpen ? simBtns : ''}<button class="btn skip" id="g-skip" data-act="skip" aria-expanded="${!!S.skipOpen}">${S.skipOpen ? 'Hide' : 'Skip'}</button></div>`
     : `<div class="simrow">${coachBox}${simBtns}</div>`;
   let controls, dock = 'call';
@@ -121,7 +121,7 @@ export function renderGame() {
     } else if (decide) head = playCards(g, { keys: live3d }) + (live3d ? '' : presnapHtml(g) + tendenciesHtml(g));
     else {
       dock = 'wait';
-      head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">Coach mode hands you 3rd and 4th downs and the last two minutes</span></div>`;
+      head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">Auto mode hands you 3rd and 4th downs and the last two minutes</span></div>`;
     }
     controls = `<div class="card callcard">${head}${simrow}</div>`;
   }
@@ -191,7 +191,7 @@ function tickerHtml(g) {
 // Who runs the game: Play (you call every play and control your Pokémon), Coach (you call
 // every play and the AI plays it out) or Auto (the AI also calls routine downs; 3rd and 4th
 // downs and the last two minutes of a half are yours).
-const MODES = [['play', 'Play', 'You call the plays and control your Pokémon'], ['coach', 'Coach', 'You call the plays, the AI plays them'], ['auto', 'Auto', 'The AI calls routine downs too']];
+const MODES = [['play', 'Play', 'You call the plays and control your Pokémon'], ['coach', 'Coach', 'You call the plays, the AI plays them'], ['auto', 'Auto', 'The AI calls routine downs too; you call 3rd and 4th downs and the last two minutes']];
 const modeOf = () => (S.coach ? 'auto' : S.watch ? 'coach' : 'play');
 function modeHtml() {
   const cur = modeOf();
