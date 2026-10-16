@@ -3,7 +3,7 @@
 import { PLAYERS, OFF_SLOTS, DEF_SLOTS, unitRatings } from './ratings.js';
 import { TYPE_TRAITS, ABILITIES, WEATHER, bestMultiplier, matchupModifier } from './types.js';
 import { PARITY, formFor } from './parity.js';
-import { PENALTIES, announce, enforce, preSnapFoul, simFouls, stateValue } from './penalties.js';
+import { PENALTIES, announce, enforce, foul, preSnapFoul, simFouls, stateValue } from './penalties.js';
 
 // The playbook. Each run or pass has its kind, the fast simulator's numbers (depth, air yards,
 // target weights) and, for plays added on top of the original eleven, `sim`: the original play
@@ -1481,6 +1481,17 @@ export function defenseWeights(g) {
 export function aiDefenseCall(g) { return pickWeighted(g, defenseWeights(g)); }
 
 // One AI-called down: timeouts first, then the calls, then the clock runs to the snap.
+// The play clock ran out before the offense called a play: the full play clock comes off a
+// running game clock, then a delay of game on the offense (5 yards, repeat the down). Returns
+// the log entry, or null when the quarter ran out first or there is no down to play.
+export function delayOfGame(g) {
+  if (g.final || g.phase !== 'play') return null;
+  if (!snapClock(g, 'milk')) return null;
+  g.playNo++;
+  const base = { kind: 'play', down: g.down, toGo: g.toGo, spotBefore: g.spot, from: absSpot(g.poss, g.spot), team: g.poss, yards: 0 };
+  return finishPlay(g, { kind: 'none', noPlay: true, yards: 0, fouls: [foul('delay_of_game', g.poss, g.teams[g.poss].lineup.QB ?? null)], text: '' }, base, null, null, 0);
+}
+
 export function simPlay(g) {
   aiTimeouts(g);
   const off = aiOffenseCall(g), def = aiDefenseCall(g);

@@ -72,6 +72,23 @@ function forced(rates, fn) {
   check(h.spot === 45 && h.down === 1 && h.toGo === 10, 'offside on 3rd and 4 moves the chains');
 }
 
+// ---------- delay of game (the play clock running out on the call sheet) ----------
+{
+  const g = situation(4, { spot: 40, down: 3, toGo: 2, clock: 600 });
+  g.clockRunning = true;
+  const e = E.delayOfGame(g);
+  check(e?.foul?.type === 'delay_of_game' && g.spot === 35 && g.down === 3 && g.toGo === 7, `delay of game: back 5, repeat the down (${g.down} & ${g.toGo} at ${g.spot})`);
+  check(600 - g.clock >= 38 && 600 - g.clock <= 40, `the full play clock ran off (${600 - g.clock} s)`);
+  check(g.clockRunning, 'the clock starts again on the ready signal');
+  check(/Delay of game/.test(e.text), 'the referee announces it');
+  const late = situation(4, { quarter: 2, clock: 20, spot: 40 });
+  late.clockRunning = true;
+  check(E.delayOfGame(late) == null && late.quarter === 3, 'a delay with the clock running out ends the half instead');
+  const stopped = situation(4, { clock: 300, spot: 6 });
+  E.delayOfGame(stopped);
+  check(stopped.clock === 300 && stopped.spot === 3, 'a stopped clock stays put; half the distance near the goal');
+}
+
 // ---------- accept or decline ----------
 {
   // The user's defense was fouled: the game waits for the call, both outcomes described.
@@ -142,7 +159,7 @@ for (let s = 0; s < GAMES; s++) {
 const per = (k) => (count[k] ?? 0) / teamGames;
 const all = flags.n / teamGames;
 check(all > 1.5 && all < 6, `accepted or enforced flags per team-game in range (${all.toFixed(2)})`);
-for (const k of Object.keys(PENALTIES)) check(per(k) > 0.02, `${k} is called (${per(k).toFixed(2)} per team-game)`);
+for (const k of Object.keys(PENALTIES).filter((x) => x !== 'delay_of_game')) check(per(k) > 0.02, `${k} is called (${per(k).toFixed(2)} per team-game)`);
 check(per('hold_off') > per('opi'), 'holding is called more than offensive interference');
 // Same seed, same game.
 const r1 = game(77), r2 = game(77);

@@ -10,6 +10,7 @@ import { chance, clamp, eff, nm } from './engine.js';
 export const PENALTIES = {
   false_start: { name: 'False start', side: 'off', yards: 5, pre: true },
   offside: { name: 'Offside', side: 'def', yards: 5, pre: true },
+  delay_of_game: { name: 'Delay of game', side: 'off', yards: 5, pre: true },
   hold_off: { name: 'Holding', side: 'off', yards: 10 },
   hold_def: { name: 'Defensive holding', side: 'def', yards: 5, auto: true },
   dpi: { name: 'Pass interference', side: 'def', spot: true, auto: true },

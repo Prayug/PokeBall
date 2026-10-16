@@ -9,7 +9,7 @@ import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
 import { S, save, savePrefs, timers } from '../state.js';
 import { esc } from '../ui.js';
-import { autoAdvance, doCall, needsUser, setMode, userSide, userTimeout } from './game.js';
+import { autoAdvance, doCall, needsUser, playClockOut, setMode, userSide, userTimeout } from './game.js';
 import { KICK_KEYS, csMove, csTabs, cycleForm } from './callsheet.js';
 
 function keysHelp() {
@@ -435,7 +435,12 @@ function loop(now) {
       showPreview();
       if (L3.preview) { L3.preview.mv = mv; L3.preview.rebuilt = now; }
     }
-    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && L3.flow === 'PLAY_SELECTION') L3.pclock = Math.max(0, L3.pclock - dt);
+    // The play clock runs while the call is yours; at :00 it is a delay of game on offense, or
+    // the fitting call is made for you (see playClockOut).
+    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && !S.menuOpen && !L3.replay && L3.flow === 'PLAY_SELECTION') {
+      L3.pclock = Math.max(0, L3.pclock - dt);
+      if (L3.pclock <= 0) { L3.pclock = 40; playClockOut(); }
+    }
   }
   if (g && !g.final) setFlow(flowNow(now));
   // The game clock runs during the play and stops on the whistle.

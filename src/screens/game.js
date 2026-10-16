@@ -2,7 +2,7 @@
 // the field (pre-snap board, tendencies, subs, play-by-play, box score, drives), and calling plays.
 import { DEF_SLOTS, OFF_SLOTS, SLOTS, ST_SLOTS } from '../ratings.js';
 import { WEATHER, bestMultiplier, effectLabel } from '../types.js';
-import { DEF_PLAYS, OFF_PLAYS, absSpot, aiDefenseCall, aiOffenseCall, aiTempo, aiTimeouts, callTimeout, clockText, downText, fgDistance, fgOdds, quarterText, runPlay, snapClock, spotText, xpOdds } from '../engine.js';
+import { DEF_PLAYS, OFF_PLAYS, absSpot, aiDefenseCall, aiOffenseCall, aiTempo, aiTimeouts, callTimeout, clockText, delayOfGame, downText, fgDistance, fgOdds, quarterText, runPlay, snapClock, spotText, xpOdds } from '../engine.js';
 import { DEF_FORMATIONS, FORMATIONS, liveKick, worldSpots } from '../live.js';
 import { CAMERA_LIMITS, CAMERA_MODES, CAMERA_SHOTS } from '../camera3d.js';
 import * as LG from '../league.js';
@@ -422,6 +422,24 @@ function playCall(off, def, tempo, opts) {
   const entry = runPlay(g, off, def);
   if (stage) { S.busy = false; afterLivePlay(entry); return; }
   animatePlay(entry, () => { S.busy = false; save(); render(); autoAdvance(); });
+}
+
+// The play clock ran out on the call sheet. On offense that is a delay of game (the full play
+// clock comes off a running game clock, then 5 yards); otherwise the call that fits is made
+// for you, as a coach's default.
+export function playClockOut() {
+  const g = S.game;
+  if (!g || g.final || S.busy || L3.lp) return;
+  if (g.phase === 'play' && g.poss === userSide()) {
+    if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
+    const e = delayOfGame(g) ?? g.log[g.log.length - 1];
+    S.csTab = null;
+    if (stage) { afterLivePlay(e); return; }
+    save(); render();
+    return;
+  }
+  const { fit } = callSheet(g);
+  if (fit) doCall(fit);
 }
 
 // Your timeout, from the button or T between plays.
