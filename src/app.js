@@ -214,9 +214,10 @@ function onSubmit(e) {
     typeCap: f.querySelector('#f-typecap').checked,
     legendaries: f.querySelector('#f-legend').checked,
     clock: f.querySelector('#f-clock').checked,
+    scheme: f.querySelector('input[name="scheme"]:checked')?.value ?? 'balanced',
   };
   S.league = LG.createLeague({ teamName: S.setup.name, abbr: S.setup.abbr, rounds: S.setup.rounds, legendaries: S.setup.legendaries,
-    typeCap: S.setup.typeCap, seed: Math.floor(Math.random() * 2 ** 31) });
+    typeCap: S.setup.typeCap, scheme: S.setup.scheme, seed: Math.floor(Math.random() * 2 ** 31) });
   S.game = null; S.gameMeta = null;
   S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false };
   setScreen('draft');

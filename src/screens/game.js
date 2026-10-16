@@ -283,7 +283,8 @@ function lineupHtml(g) {
   const can = !g.final && !S.busy && !L3.lp;
   const sel = S.subSel;
   const onField = new Set(Object.values(t.lineup));
-  const bench = t.roster.filter((id) => !onField.has(id));
+  const bench = t.roster.filter((id) => !onField.has(id) && !t.out?.[id]);
+  const hurt = Object.keys(t.out ?? {}).map(Number);
   const across = {};
   for (const [o, d] of LG.MATCHUP_PAIRS) { across[o] ??= d; across[d] ??= o; }
   const slotRow = (k) => {
@@ -307,6 +308,7 @@ function lineupHtml(g) {
       <button class="btn tiny" data-act="subcancel">Cancel</button></div>`;
   }
   return `<p class="small muted">Pick a slot, then a bench Pokémon. Your subs stay in until you send the starter back, and the auto-sub leaves those slots alone.${can ? '' : ' Subs wait until the play is over.'}</p>
+    ${hurt.length ? `<p class="small"><span class="cond hurt">Injured</span> ${hurt.map((id) => `${esc(P(id).name)} (out ${t.out[id]} weeks)`).join(', ')}. They can't return this game.</p>` : ''}
     <div class="subgrid"><div><h4>Offense</h4><ul class="sublist">${OFF_SLOTS.map(slotRow).join('')}</ul></div>
     <div><h4>Defense</h4><ul class="sublist">${DEF_SLOTS.map(slotRow).join('')}</ul><h4>Special teams</h4><ul class="sublist">${ST_SLOTS.map(slotRow).join('')}</ul></div></div>${pickList}`;
 }

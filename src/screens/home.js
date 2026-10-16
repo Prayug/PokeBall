@@ -5,6 +5,7 @@ import { render, setScreen } from '../app.js';
 import { S, loadSaved } from '../state.js';
 import { P, esc, sprite } from '../ui.js';
 import { autoAdvance } from './game.js';
+import { SCHEMES, SCHEME_KEYS } from '../coach.js';
 
 function resumeScreen(L, game) {
   if (game && !game.final) return 'game';
@@ -46,6 +47,9 @@ export function renderHome() {
         <fieldset><legend>Draft length</legend>
           <label class="pill"><input type="radio" name="rounds" value="24" ${st.rounds === 24 ? 'checked' : ''}> 24 rounds, starters, kicker and punter</label>
           <label class="pill"><input type="radio" name="rounds" value="28" ${st.rounds === 28 ? 'checked' : ''}> 28 rounds, with 4 bench</label>
+        </fieldset>
+        <fieldset class="schemes"><legend>Your scheme</legend>
+          ${SCHEME_KEYS.map((k) => `<label class="schemepick"><input type="radio" name="scheme" value="${k}" ${(st.scheme ?? 'balanced') === k ? 'checked' : ''}><b>${esc(SCHEMES[k].name)}</b><span class="small muted">${esc(SCHEMES[k].blurb)}</span></label>`).join('')}
         </fieldset>
         <label class="check"><input type="checkbox" id="f-typecap" ${st.typeCap ? 'checked' : ''}> At most 4 Pokémon of one primary type</label>
         <label class="check"><input type="checkbox" id="f-legend" ${st.legendaries ? 'checked' : ''}> Include legendaries, Ultra Beasts and Paradox Pokémon</label>
