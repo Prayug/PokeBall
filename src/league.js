@@ -154,6 +154,9 @@ export function aiChoosePick(L, teamId = currentPick(L).team) {
 }
 
 export function finishDraft(L) {
+  // The random state as the first draft ended: a shared league (share.js) rebuilds the same
+  // schedule and trade offer from it.
+  if ((L.season ?? 1) === 1) L.draftRng = L.rngState;
   for (const t of L.teams) {
     const { lineup, bench } = autoDepthChart(t.roster);
     // Keep the drafter's slot choices when they fill every slot; otherwise fall back.
@@ -602,6 +605,8 @@ export function finishOffseason(L, userCuts) {
   const champ = order.indexOf(last.champion);
   if (champ >= 0) { order.splice(champ, 1); order.push(last.champion); }
   const rounds = Math.min(CUTS, L.settings.rounds);
+  // The first draft is kept for sharing the league after the rookie draft replaces it.
+  if (L.season === 1) L.firstDraft = { picks: L.picks.map((p) => [p.player, p.slot]), rng: L.draftRng ?? null };
   L.picks = [];
   for (let r = 0; r < rounds; r++) {
     const row = r % 2 === 0 ? order : [...order].reverse();
