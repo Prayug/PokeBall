@@ -639,12 +639,12 @@ function bindTouch(root) {
 }
 
 // What the touch pad shows: nothing between plays, only Pause while you watch the AI run your
-// call, the throw buttons while the quarterback can throw, the ball carrier's and defender's
-// moves otherwise.
+// call, the throw buttons once the quarterback has the ball and can throw, the ball carrier's
+// and defender's moves otherwise.
 function touchMode(lp) {
   if (!lp || lp.phase === 'dead') return 'idle';
   const c = lp.control;
   if (lp.phase === 'live' && !c) return 'watch';
-  if (lp.phase !== 'pre' && c?.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'run') return 'pass';
+  if (lp.phase !== 'pre' && c?.side === 'off' && c.slot === 'QB' && lp.ball.holder === c && lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'run') return 'pass';
   return lp.phase === 'pre' ? 'pre' : 'run';
 }
