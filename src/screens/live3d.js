@@ -9,7 +9,8 @@ import { render } from '../app.js';
 import { S, save, savePrefs, timers } from '../state.js';
 import { esc } from '../ui.js';
 import { autoAdvance, doCall, needsUser, setMode, userSide } from './game.js';
-import { KICK_KEYS, csMove, csTabs, cycleForm } from './callsheet.js';
+import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions } from './callsheet.js';
+import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 
 function keysHelp() {
   return `<div class="keygrid">
@@ -25,6 +26,9 @@ function keysHelp() {
     <span><kbd>E</kbd> truck through a tackler</span>
     <span><kbd>R</kbd> spin move</span>
     <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
+    <span>At the line on offense: <kbd>V</kbd> audible, <kbd>B</kbd> hot route, <kbd>N</kbd> motion, then a number to pick</span>
+    <span>At the line on defense: <kbd>V</kbd> shade the coverage, <kbd>B</kbd> show blitz, <kbd>N</kbd> back out</span>
+    <span><kbd>I</kbd> on the play sheet: type edges and their tendencies</span>
     <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
   </div>`;
@@ -150,7 +154,7 @@ export function startLive(off, def, opts) {
   L3.autoSnap = opts.autoSnap ?? null;
   L3.pclock = Math.max(L3.pclock, 10);
   L3.edges.clear(); L3.hold = null; L3.lob = null;
-  S.menuOpen = false;
+  S.menuOpen = false; S.psPick = null;
   hideBanner();
   stage.setPlay(L3.lp);
   setFlow(L3.lp.set ? 'PRE_SNAP' : 'FORMATION_SETUP');
@@ -166,7 +170,57 @@ export function doSnap() {
   if (L3.rec) try { L3.rec.atSnap = structuredClone(lp); } catch { L3.rec.atSnap = null; }
   snap(lp);
   L3.autoSnap = null;
+  S.psPick = null;
   render();
+}
+
+// ---------- pre-snap adjustments ----------
+// Audible: the same formation and the same defense, a new call; the players stay where they stand.
+function audible(call) {
+  const lp = L3.lp;
+  if (!lp || lp.phase !== 'pre' || !audibles(lp, call).includes(call)) return;
+  const { from, ...opts } = L3.rec?.opts ?? { userSide: lp.user };
+  void from;
+  L3.spots = worldSpots(lp); L3.preview = null; L3.lp = null;
+  startLive(call, L3.def, { ...opts, formation: lp.formation, defFormation: lp.defFormation });
+  flash(`Audible: ${OFF_PLAYS[call].name}`);
+}
+// One adjustment from the buttons or the keys: open a picker (audible, hot route, motion), take
+// a choice from it, or change the defense's look.
+export function presnapAct(act, arg) {
+  const lp = L3.lp;
+  if (!lp || lp.phase !== 'pre' || S.coachDown || lp.user == null) return;
+  if (!lp.set && act !== 'open') { flash('Wait until everyone is set', 'muted'); return; }
+  const mine = lp.user === lp.o;
+  let ok = true, msg = '';
+  switch (act) {
+    case 'open': if (mine) S.psPick = S.psPick?.kind === arg ? null : { kind: arg }; break;
+    case 'aud': S.psPick = null; audible(arg); return;
+    case 'hotpick': S.psPick = { kind: 'hot', slot: arg }; break;
+    case 'hot': ok = hotRoute(lp, S.psPick?.slot, arg); msg = `Hot route: ${S.psPick?.slot} ${arg}`; S.psPick = null; break;
+    case 'motion': ok = startMotion(lp, arg); msg = `${arg} in motion`; S.psPick = null; break;
+    case 'shade': ok = cycleShade(lp); msg = `Shade: ${SHADES.find(([k]) => k === (lp.shade ?? null))[1]}`; break;
+    case 'show': ok = setDisguise(lp, 'show'); msg = lp.disguise === 'show' ? 'Showing blitz' : 'Blitz look off'; break;
+    case 'back': ok = setDisguise(lp, 'back'); msg = lp.disguise === 'back' ? 'Backed out' : 'Blitz look back'; break;
+    default: return;
+  }
+  if (msg) flash(ok ? msg : 'Not on this play', ok ? '' : 'muted');
+  stage?.drawArt?.();
+  render();
+}
+// The keys at the line: V, B and N, and a number for the open picker.
+function presnapKey(code) {
+  const lp = L3.lp;
+  const mine = lp.user === lp.o;
+  const keys = { KeyV: mine ? ['open', 'audible'] : ['shade'], KeyB: mine ? ['open', 'hot'] : ['show'], KeyN: mine ? ['open', 'motion'] : ['back'] };
+  if (keys[code]) { presnapAct(...keys[code]); return true; }
+  const n = /^Digit([1-9])$/.exec(code);
+  if (n && S.psPick) {
+    const o = psOptions(lp)[Number(n[1]) - 1];
+    if (o && !o.off) presnapAct(o.act, o.arg);
+    return true;
+  }
+  return false;
 }
 
 // The whistle has blown: the game takes the result now (score, down and distance, possession,
@@ -319,7 +373,7 @@ function hudTip(lp) {
   }
   if (lp.phase === 'pre') {
     if (!c) return 'Coach mode · Space to snap now · Esc to change the call';
-    return lp.user === lp.o ? `Space snap${lp.kind === 'pass' ? ' · then 1-5 throw' : ''} · Esc change call` : 'Space start · Q pick a defender';
+    return lp.user === lp.o ? `Space snap${lp.kind === 'pass' ? ' · then 1-5 throw' : ''} · V audible · B hot route · N motion · Esc change call` : 'Space start · Q pick a defender · V shade · B show blitz · N back out';
   }
   if (lp.phase === 'dead') return '';
   if (!c) return 'Watching the AI run your call';
@@ -530,6 +584,7 @@ function debugHud() {
 // Back to the call sheet from a lined-up play; the players stay where they are.
 export function recall() {
   if (L3.lp?.phase !== 'pre') return;
+  S.psPick = null;
   L3.spots = worldSpots(L3.lp); L3.preview = null; L3.lp = null;
   render();
 }
@@ -560,6 +615,9 @@ export function onKey(e, down) {
       return;
     }
     if (code === 'Slash') { e.preventDefault(); S.helpOpen = true; syncOverlays(); return; }
+    if (code === 'Escape' && S.psPick) { e.preventDefault(); S.psPick = null; render(); return; }
+    if (L3.lp?.phase === 'pre' && !S.coachDown && L3.lp.user != null && !L3.lp.kick && presnapKey(code)) { e.preventDefault(); return; }
+    if (code === 'KeyI' && !L3.lp) { e.preventDefault(); S.csScout = !S.csScout; S.csFold = false; render(); return; }
     if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
     if (code === 'KeyP') { e.preventDefault(); togglePause(); return; }

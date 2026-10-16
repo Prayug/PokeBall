@@ -35,3 +35,5 @@ jobs:
         run: node test/formations.mjs
       - name: League mode
         run: node test/league.mjs
+      - name: Pre-snap adjustments and difficulty
+        run: node test/presnap.mjs

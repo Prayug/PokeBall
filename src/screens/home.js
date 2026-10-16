@@ -4,7 +4,7 @@ import * as LG from '../league.js';
 import { render, setScreen } from '../app.js';
 import { S, loadSaved } from '../state.js';
 import { P, esc, sprite } from '../ui.js';
-import { autoAdvance } from './game.js';
+import { autoAdvance, difficultyHtml } from './game.js';
 
 function resumeScreen(L, game) {
   if (game && !game.final) return 'game';
@@ -55,6 +55,9 @@ export function renderHome() {
       <div class="card side">
         ${saved?.league ? `<h2>Continue</h2><p>${esc(saved.league.teams[0].name)} · Season ${saved.league.season ?? 1} · ${phaseLabel(saved.league)}</p>
           <div class="actions"><button class="btn" data-act="continue">Continue league</button><button class="btn" data-act="exportsave">Export save</button></div><hr>` : ''}
+        <h2>Difficulty</h2>
+        ${difficultyHtml()}
+        <hr>
         <h2>Quick game</h2>
         <p>Two AI-drafted rosters, kickoff right away. You coach the home side.</p>
         <button class="btn" data-act="quick">Play a quick game</button>

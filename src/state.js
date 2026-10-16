@@ -13,7 +13,7 @@ export const S = {
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
   menuOpen: false, cam: 'gameplay', weatherFx: true, quality: 'auto',
   names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
-  sound: true, seenHelp: false, helpOpen: false,
+  sound: true, seenHelp: false, helpOpen: false, difficulty: 'pro',
 };
 export const timers = { draft: null, clock: null, auto: null, banner: null };
 
@@ -53,13 +53,14 @@ export function loadPrefs() {
       if (p.pips != null) S.pips = !!p.pips;
       if (p.sound != null) S.sound = !!p.sound;
       if (p.seenHelp) S.seenHelp = true;
+      if (['rookie', 'pro', 'legend'].includes(p.difficulty)) S.difficulty = p.difficulty;
       // Lens settings saved before version 3 belong to the older framing and are dropped.
       if (p.camShots && p.camV === 4) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
     }
   } catch { /* ignore */ }
 }
 export function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 4, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 4, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, difficulty: S.difficulty, camShots: S.cal })); } catch { /* ignore */ }
 }
 export function clearTimers() {
   for (const k of Object.keys(timers)) { clearTimeout(timers[k]); clearInterval(timers[k]); timers[k] = null; }

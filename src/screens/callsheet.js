@@ -6,8 +6,11 @@ import { formationsFor } from '../formations.js';
 import { diagram, formationName } from '../playbook.js';
 import { render } from '../app.js';
 import { S } from '../state.js';
-import { esc } from '../ui.js';
+import { edgeRow, esc } from '../ui.js';
 import { userSide } from './game.js';
+import { tendencyFit, tendencyLines, typeEdges } from '../scout.js';
+import { HOT_ROUTES, SHADES, audibles, hotCandidates, motionCandidates } from '../live/presnap.js';
+import { RECEIVERS } from '../live.js';
 
 // Play families for the call sheet: a short label and a colored edge per group.
 const DEF_GROUPS = [['front', 'Man', ['base', 'cover1_robber', 'cover2_man', 'man_press', 'goal_line']],
@@ -18,8 +21,9 @@ const CALL_KEYS = [['Digit1', '1'], ['Digit2', '2'], ['Digit3', '3'], ['Digit4',
   ['Digit7', '7'], ['Digit8', '8'], ['Digit9', '9'], ['Digit0', '0'], ['Minus', '-']];
 export const KICK_KEYS = { punt: ['KeyP', 'P'], fg: ['KeyF', 'F'] };  // the other kicks take number keys on their page
 
-// The calls on the sheet right now, grouped, each with its key. Also marks the one that fits
-// the down: the heaviest weight in the AI's own tables, read without rolling g.rng.
+// The calls on the sheet right now, grouped, each with its key. Also marks the one that fits:
+// what the other team's tendencies on downs like this point to (with why), or, until there is
+// enough of a pattern, the heaviest weight in the AI's own tables, read without rolling g.rng.
 export function callSheet(g) {
   const onOff = g.poss === userSide();
   const heaviest = (w, keys) => keys.filter((k) => w[k] > 0).sort((x, y) => w[y] - w[x])[0];
@@ -37,12 +41,16 @@ export function callSheet(g) {
     groups = DEF_GROUPS;
     fit = heaviest(defenseWeights(g), Object.keys(DEF_PLAYS));
   }
+  const shown = new Set(groups.flatMap(([, , ks]) => ks));
+  const tf = tendencyFit(g, userSide());
+  const why = tf && shown.has(tf.call) ? tf.why : null;
+  if (why) fit = tf.call;
   let n = 0;
   const keyed = groups.filter(([, , ks]) => ks.length).map(([fam, label, ks]) => [fam, label, ks.map((k) => {
     const key = KICK_KEYS[k] && onOff ? KICK_KEYS[k] : CALL_KEYS[n++];
     return { call: k, code: key?.[0], label: key?.[1] };
   })]);
-  return { onOff, groups: keyed, fit };
+  return { onOff, groups: keyed, fit, why };
 }
 
 // Formations: the offense picks one for its call (or leaves it to the play's own), the defense
@@ -91,7 +99,7 @@ const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'power', 'coun
   ['mid', 'Intermediate', ['curl', 'smash', 'dagger', 'levels', 'flood', 'y_cross', 'te_seam']],
   ['deep', 'Shots', ['four_verts', 'post', 'pa_boot', 'pa_deep']], ['kick', 'Special teams', ['punt', 'coffin_punt', 'fake_punt', 'fg', 'fake_fg']]];
 export function csTabs(g) {
-  const { onOff, groups, fit } = callSheet(g);
+  const { onOff, groups, fit, why } = callSheet(g);
   const byCall = new Map(groups.flatMap(([fam, , cs]) => cs.map((c) => [c.call, { ...c, fam }])));
   const tabs = (onOff ? CS_TABS_OFF : DEF_GROUPS).map(([k, label, calls]) => [k, label, calls.filter((c) => byCall.has(c)).map((c) => byCall.get(c))])
     .filter(([, , cs]) => cs.length);
@@ -105,10 +113,10 @@ export function csTabs(g) {
   }
   const fitTab = tabs.find(([, , cs]) => cs.some((c) => c.call === fit))?.[0] ?? tabs[0][0];
   const cur = tabs.some(([k]) => k === S.csTab) ? S.csTab : fitTab;
-  return { onOff, tabs, fit, cur };
+  return { onOff, tabs, fit, why, cur };
 }
 export function callSheetHtml(g) {
-  const { onOff, tabs, fit, cur } = csTabs(g);
+  const { onOff, tabs, fit, why, cur } = csTabs(g);
   const fg = fgDistance(g);
   const side = onOff ? 'off' : 'def';
   const curCalls = new Set(tabs.find(([k]) => k === cur)[2].map((c) => c.call));
@@ -128,9 +136,12 @@ export function callSheetHtml(g) {
   const who = onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
   const head = `<div class="cs-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>
       <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur && !S.csAll ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
+      ${edgesChip(g)}
       ${formSelect(onOff)}
       <button class="btn tiny cs-all" data-act="csall" aria-pressed="${!!S.csAll}">${S.csAll ? 'Fewer' : 'All plays'} <kbd>X</kbd></button>
-      <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>`;
+      <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>
+    ${why ? `<p class="cs-fit"><em class="fittag">Fits</em> <b>${esc((onOff ? OFF_PLAYS : DEF_PLAYS)[fit].name)}</b> ${esc(why)}</p>` : ''}
+    ${S.csScout && !S.csFold ? scoutPanel(g) : ''}`;
   // The strip: the plays of one category in a row, each a real play diagram with its name.
   // The expanded playbook (X): every category at once.
   const body = S.csAll
@@ -153,4 +164,72 @@ export function csMove(d) {
   S.csTab = tabs[(i + d + tabs.length) % tabs.length][0];
   S.csPage = 0;
   render();
+}
+
+// ---------- scouting on the call sheet ----------
+// The type edges for this down as one compact chip (I opens the board: the biggest edges both
+// ways and the other team's tendencies so far).
+function edgesChip(g) {
+  const { good, bad } = typeEdges(g, userSide());
+  return `<button class="cs-chip" data-act="csscout" aria-expanded="${!!S.csScout}" title="Type edges on the field this down: ${good} for you, ${bad} for them">
+    Edges <b class="good">${good}</b><span aria-hidden="true">–</span><b class="bad">${bad}</b> <kbd>I</kbd></button>`;
+}
+function scoutPanel(g) {
+  const us = userSide();
+  const { rows } = typeEdges(g, us);
+  const best = rows.filter((r) => r.edge > 0).sort((a, b) => b.edge - a.edge).slice(0, 3);
+  const worst = rows.filter((r) => r.edge < 0).sort((a, b) => a.edge - b.edge).slice(0, 3);
+  const lines = tendencyLines(g, us);
+  return `<div class="cs-scout">
+    <div><h4>Your edges</h4>${best.length ? `<ul>${best.map(edgeRow).join('')}</ul>` : '<p class="small muted">None this down.</p>'}</div>
+    <div><h4>Their edges</h4>${worst.length ? `<ul>${worst.map(edgeRow).join('')}</ul>` : '<p class="small muted">None this down.</p>'}</div>
+    <div class="tend"><h4>${esc(g.teams[1 - us].abbr)} tendencies</h4>${lines.length ? `<ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul>` : '<p class="small muted">They show up after a few drives.</p>'}</div></div>`;
+}
+
+// ---------- pre-snap adjustments at the line ----------
+// The choices in the open picker, in number-key order (receivers keep their throw numbers).
+// Each is { label, act, arg, on, off }; the same list drives the buttons and the keys.
+export function psOptions(lp) {
+  const P = S.psPick;
+  if (!P || !lp) return [];
+  if (P.kind === 'audible') {
+    const fit = tendencyFit(S.game, userSide())?.call;
+    return audibles(lp, fit).map((c) => ({ label: OFF_PLAYS[c].name, act: 'aud', arg: c, fit: c === fit }));
+  }
+  if (P.kind === 'hot' && !P.slot) {
+    const ok = new Set(hotCandidates(lp));
+    return RECEIVERS.map((k) => ({ label: `${k} · ${routeLabel(lp.off[k])}`, act: 'hotpick', arg: k, off: !ok.has(k) }));
+  }
+  if (P.kind === 'hot') return HOT_ROUTES.map(([k, l]) => ({ label: l, act: 'hot', arg: k, on: lp.off[P.slot]?.routeName === k }));
+  if (P.kind === 'motion') {
+    const ok = new Set(motionCandidates(lp));
+    return RECEIVERS.map((k) => ({ label: k, act: 'motion', arg: k, off: !ok.has(k) }));
+  }
+  return [];
+}
+function routeLabel(p) {
+  if (!p) return '—';
+  if (p.role === 'passblock') return 'Block';
+  if (p.role === 'stalk') return 'Stalk';
+  return HOT_ROUTES.find(([k]) => k === p.routeName)?.[1] ?? (p.routeName ?? '').replace(/^\w/, (c) => c.toUpperCase());
+}
+export function adjustHtml(lp) {
+  if (!lp || lp.phase !== 'pre' || lp.kick || lp.user == null) return '';
+  const b = (act, label, key, { on = false, off = false, arg = '' } = {}) => `<button class="btn tiny ${on ? 'on' : ''}" data-act="ps" data-ps="${act}" data-arg="${arg}" ${off ? 'disabled' : ''} aria-pressed="${on}">${label} <kbd>${key}</kbd></button>`;
+  let row;
+  if (lp.user === lp.o) {
+    const P = S.psPick;
+    const moving = lp.motion ? `In motion: ${lp.motion}` : 'Motion';
+    row = b('open', 'Audible', 'V', { arg: 'audible', on: P?.kind === 'audible' })
+      + b('open', P?.kind === 'hot' && P.slot ? `Hot route: ${P.slot}` : 'Hot route', 'B', { arg: 'hot', on: P?.kind === 'hot', off: lp.kind !== 'pass' })
+      + b('open', moving, 'N', { arg: 'motion', on: P?.kind === 'motion', off: !!lp.motion });
+  } else {
+    const shade = SHADES.find(([k]) => k === (lp.shade ?? null))[1];
+    row = b('shade', `Shade: ${shade}`, 'V', { on: !!lp.shade })
+      + b('show', 'Show blitz', 'B', { on: lp.disguise === 'show' })
+      + b('back', 'Back out', 'N', { on: lp.disguise === 'back', off: !lp.blitz.length });
+  }
+  const opts = psOptions(lp);
+  const pick = opts.length ? `<div class="ps-pick" role="group" aria-label="Pick one">${opts.map((o, i) => `<button class="btn tiny ${o.on ? 'on' : ''} ${o.fit ? 'fit' : ''}" data-act="ps" data-ps="${o.act}" data-arg="${o.arg}" ${o.off ? 'disabled' : ''}>${o.fit ? '<em class="fittag">Fits</em> ' : ''}${esc(o.label)} <kbd>${i + 1}</kbd></button>`).join('')}</div>` : '';
+  return `<div class="ps-bar" role="toolbar" aria-label="Pre-snap adjustments">${row}</div>${pick}`;
 }

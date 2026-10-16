@@ -3,6 +3,7 @@
 import { PLAYERS, OFF_SLOTS, DEF_SLOTS, unitRatings } from './ratings.js';
 import { TYPE_TRAITS, ABILITIES, WEATHER, bestMultiplier, matchupModifier } from './types.js';
 import { PARITY, formFor } from './parity.js';
+import { diffOf, diffUser } from './difficulty.js';
 
 // The playbook. Each run or pass has its kind, the fast simulator's numbers (depth, air yards,
 // target weights) and, for plays added on top of the original eleven, `sim`: the original play
@@ -182,7 +183,9 @@ export function eff(g, ti, id, attr, ctx = {}) {
   else if (w.boost && p.types.includes(w.boost)) m *= 1 + PARITY.weather;
   if (w.nerf && p.types.includes(w.nerf)) m *= 1 - PARITY.weather;
   // Parity: the side's form for the day, home field, and easing off with a big second-half lead.
-  m *= 1 + (g.form?.[ti] ?? 0) + (ti === 0 && !g.neutral ? PARITY.home : 0);
+  // The difficulty scales the form roll and gives the user's side its edge (none at Pro).
+  const D = diffOf(g);
+  m *= 1 + (g.form?.[ti] ?? 0) * D.form + (ti === 0 && !g.neutral ? PARITY.home : 0) + (diffUser(g) === ti ? D.edge : 0);
   const lead = g.score[ti] - g.score[1 - ti];
   if (g.quarter >= 3 && lead > PARITY.coastFrom) m *= 1 - Math.min(PARITY.coastMax, (lead - PARITY.coastFrom) * PARITY.coastPerPoint);
   m *= 0.85 + 0.15 * energyOf(g, ti, id) / 100;

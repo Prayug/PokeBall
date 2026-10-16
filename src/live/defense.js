@@ -154,7 +154,7 @@ export function coverWant(lp, p) {
   if (c) { pursueWant(lp, p, c); return; }
   if (lp.thrown) {
     const T = lp.thrown;
-    if (p.react == null || p.react <= -1) p.react = 0.1 + (100 - (p.a.cov * 0.6 + p.a.awr * 0.4)) * 0.005;
+    if (p.react == null || p.react <= -1) p.react = (0.1 + (100 - (p.a.cov * 0.6 + p.a.awr * 0.4)) * 0.005) * (lp.user === lp.o ? lp.aiRead ?? 1 : 1);
     if (p.react > 0) { p.react -= DT; }
     else if (dist(p, { x: T.tx, y: T.ty }) < 16) return seek(p, { x: T.tx + 0.3, y: T.ty }, 1, 0.2);
   }
@@ -180,8 +180,11 @@ export function coverWant(lp, p) {
     const px = r.x - r.vx * lag * 0.45, py = r.y - r.vy * lag;
     // Keep a cushion over the top that closes as the route develops.
     p.gap0 ??= Math.max(1, p.x - r.x);
-    const cushion = Math.max(r.x > 12 ? 1.4 : 0.4, p.gap0 - lp.t * 5);
-    const tx = px + cushion, ty = py + (r.y > 0 ? -0.4 : 0.4);
+    // A shaded coverage plays with more cushion (over the top) or less (underneath), and
+    // inside or outside leverage (see live/presnap.js).
+    const cushion = Math.max((r.x > 12 ? 1.4 : 0.4) + (p.cushion ?? 0), p.gap0 - lp.t * 5);
+    const lev = p.lev ?? 0.4;
+    const tx = px + cushion, ty = py + (r.y > 0 ? -lev : lev);
     let vx = (tx - p.x) * 3 + r.vx, vy = (ty - p.y) * 3 + r.vy;
     const l = len(vx, vy), cap = p.top;
     if (l > cap) { vx *= cap / l; vy *= cap / l; }

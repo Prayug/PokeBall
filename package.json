@@ -7,9 +7,10 @@
     "models": "node build/fetch_models3d.mjs",
     "balance": "node test/balance.mjs",
     "live": "node test/live.mjs",
-    "test": "node test/plays.mjs && node test/scenarios.mjs && node test/formations.mjs && node test/league.mjs",
+    "test": "node test/plays.mjs && node test/scenarios.mjs && node test/formations.mjs && node test/league.mjs && node test/presnap.mjs",
     "league": "node test/league.mjs",
-    "kicks": "node test/kicks.mjs"
+    "kicks": "node test/kicks.mjs",
+    "presnap": "node test/presnap.mjs"
   },
   "dependencies": {
     "three": "0.160.0"
