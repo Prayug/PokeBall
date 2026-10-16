@@ -57,7 +57,13 @@ Three modes are in the menu: **Play** (you control the quarterback and then the 
 
 ### Abilities and types
 
-What a Pokémon's ability or type does during a snap lives in one table, `src/traits.js`, keyed by the moment it acts (throw accuracy, pressure, catch reach, interception chance, tackle odds, strip chance), so a new trait is one entry. When a trait, a type matchup or a size difference decides part of a play, the result card says so, tagged Type, Ability or Size. "Super effective" only shows when the type matchup actually changed the outcome: the contest is rolled with and without the type modifiers and noted only when they differ.
+Every ability in the pool does something. `ABILITIES` in `src/types.js` gives each one a football effect: rating bonuses, some only in a weather, a quarter, the second half, when leading or trailing, when tired or fresh, at home or in the playoffs; absorbing abilities (Water Absorb, Flash Fire, Levitate and the like) that make one type's hits have no effect, Wonder Guard, Scrappy and Mold Breaker; and named effects such as Intimidate, Pressure, ball hawks, slippery carriers, armor against strips and barbs that keep rushers on a block. A Pokémon whose abilities include one of the original curated set still plays with that one, so saved leagues keep their abilities.
+
+What a Pokémon's ability or type does during a snap lives in one table, `src/traits.js`, keyed by the moment it acts (throw accuracy, pressure, catch reach, interception chance, tackle odds, strip chance, shedding a block), so a new trait is one entry. When a trait, a type matchup, a size difference or the weather decides part of a play, the result card says so, tagged Type, Ability, Size or Weather. "Super effective" only shows in the result when the type matchup actually changed the outcome: the contest is rolled with and without the type modifiers and noted only when they differ.
+
+**Type theater.** On the field, a tackle shows the tackler's typing when it is super effective (a burst in the type's color, a shake and "SUPER EFFECTIVE!" over the pair), and a broken tackle shows why: "not very effective..." or "NO EFFECT" when the tackler's typing barely touched the carrier, or the carrier's own super-effective hit. Each pair shows it once a play.
+
+**Weather as physics.** On top of the rating swings in `src/parity.js`, the weather changes how bodies move on the live field (`src/weather.js`), sparing the types it favors and anything with Overcoat, Air Lock or Immunity. Rain makes the turf slick: wider cuts, and a juke or spin can slip out from under the carrier. Harsh sun's glare costs receivers and defenders a little catch reach. Hail makes legs heavy late in a play and the sprint burst run out sooner. A sandstorm slows reads and every block or tackle attempt wears the players in it down.
 
 ### The 3D field
 
@@ -145,7 +151,8 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/playbook.js` | Play art for the call sheet |
 | `src/league.js` | Snake draft, AI drafters, schedule, standings, playoffs, league leaders |
 | `src/ratings.js` | Base stats to football attributes, the 22 slots, position overalls, auto depth chart |
-| `src/types.js` | Type chart, type traits, weather and the curated abilities |
+| `src/types.js` | Type chart, type traits, weather and every ability's football effect |
+| `src/weather.js` | What each weather does to bodies on the live field |
 | `src/parity.js` | How far form, home field, types and weather can swing a game |
 | `src/app.js`, `src/index.html` | The entry point (rendering and the click, key and form handlers) and the styles |
 | `src/state.js`, `src/ui.js` | The shared UI state with save and preference storage; small view helpers such as `esc`, `sprite` and `teamBadge` |
@@ -170,6 +177,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `test/top.mjs` | Lists the top Pokémon at each position |
 | `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness and subs, the playoffs and awards, the offseason, cuts and the rookie draft, then the next season) and checks every step, plus that an exported save plays on to the same results (exits 1 on failure) |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
+| `test/abilities.mjs` | Checks every ability has an effect the game knows, the absorbing abilities, Wonder Guard, Scrappy and Mold Breaker matchups, the situational conditions, type theater on the live field and the weather's hold on each type |
 
 ## Build
 
