@@ -5,6 +5,8 @@
 // y runs across the field (sidelines at ±SIDE). No DOM access, so tests can run it headless.
 import { traitMod } from './traits.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
+import { bestMatchup } from './types.js';
+import { weatherPhys } from './weather.js';
 import { OFF_PLAYS, chance, clamp, eff, fumbleCheck, nm, rand, rep, sigmoid, st } from './engine.js';
 import { bodyOf } from './body.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
@@ -110,12 +112,15 @@ function makePlayer(g, ti, side, slot, id, lp) {
   const P = PLAYERS[id];
   const B = bodyOf(id);
   const heavy = clamp((P.weight / 10 - 60) / 400, 0, 0.35);
+  // The weather's hold on this body for the play (see weather.js): null when it plays through.
+  const wx = weatherPhys(g.weather, id);
+  if (wx?.awr) a.awr += wx.awr;
   return {
     id, slot, side, ti, x: S.x, y: S.y, vx: 0, vy: 0, px: S.x, py: S.y,
     fx: side === 'off' ? 1 : -1, fy: 0, a, r: B.r, kg: Math.max(1, B.kg), h: B.height,
     // Top speed from Speed; getting there from Acceleration; braking and cutting from Agility.
     // Heavy bodies are slower to get going and to turn.
-    top: 5.6 + 0.04 * a.spd, accel: (6 + 0.03 * a.spd + 0.035 * a.acl) * (1 - heavy), cut: (1.4 + a.agi / 100) * (1 - heavy * 0.8),
+    top: 5.6 + 0.04 * a.spd, accel: (6 + 0.03 * a.spd + 0.035 * a.acl) * (1 - heavy), cut: (1.4 + a.agi / 100) * (1 - heavy * 0.8) * (wx?.cut ?? 1), wx,
     role: 'idle', eng: null, engT: 0, stun: 0, cool: 0, slow: 0, wp: 0, route: null, man: null, zone: null,
     react: 0, manual: false, anim: rand(g) * 8, juke: -1, truck: -1, spin: -1, burst: 1,
     // Authoritative state the renderer, the HUD and the tests read: the action this player is
@@ -568,6 +573,12 @@ function startMove(lp, c, kind) {
   c[kind] = MOVES[kind];
   if (kind === 'spin') c.spinDir = chance(lp.g, 0.5) ? 1 : -1;
   event(lp, kind, '', c);
+  // On slick turf a cut can go out from under him: the move still comes, but he loses his footing.
+  if (kind !== 'truck' && c.wx?.slip && chance(lp.g, c.wx.slip)) {
+    c.slow = 0.5;
+    event(lp, 'slip', `${nm(c.id)} slips on the wet turf`, c);
+    note(lp, 'weather', `${nm(c.id)} slips on the wet turf`, c);
+  }
   return true;
 }
 
@@ -854,6 +865,7 @@ function move(lp, p, dt) {
   const tired = p.carrier ? clamp((Math.abs(p.x - (p.runFrom ?? p.x)) - 12) * 0.004, 0, 0.1) : 0;
   const chase = p.role === 'pursue' ? (lp.carrier && dist(p, lp.carrier) < 8 ? 1.06 : 1.03) : 1;
   let top = p.top * (p.slow > 0 ? 0.6 : 1) * (p.carrier ? 0.96 - tired : chase);
+  if (p.wx?.fade) top *= 1 - clamp((lp.t - 3) * p.wx.fade, 0, 0.06);
   vx *= chase; vy *= chase;
   if (p.juke > 0.15) {
     // A sharp cut sideways.
@@ -874,7 +886,7 @@ function move(lp, p, dt) {
   if (p === lp.control && lp.manual) {
     const i = p.input ?? {};
     p.sprinting = !!i.sprint && p.burst > 0.02 && len(i.mx ?? 0, i.my ?? 0) > 0.1;
-    if (p.sprinting) { top *= 1.1; boost = Math.max(boost, 1.4); p.burst = Math.max(0, p.burst - dt / (2.4 + (p.a.sta ?? 70) / 100)); }
+    if (p.sprinting) { top *= 1.1; boost = Math.max(boost, 1.4); p.burst = Math.max(0, p.burst - (dt * (p.wx?.drain ?? 1)) / (2.4 + (p.a.sta ?? 70) / 100)); }
     else { top *= 0.86; p.burst = Math.min(1, p.burst + dt / 5); }
   }
   p.slow = Math.max(0, p.slow - dt);
@@ -1111,7 +1123,7 @@ function blocks(lp) {
     // and nobody sheds in the first instants of the fit.
     const base = passPro ? 0.46 : lp.carrierSet ? 0.11 : 0.06;
     const quick = clamp((d.a.acc - b.a.acc) / 60, -0.4, 0.5);
-    let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.8 ? 0.25 : 1);
+    let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.8 ? 0.25 : 1) * traitMod('shedRate', { d, b }).v;
     if (!passPro) rate = Math.max(rate, 0.1);
     // Blocks far from the ball break up on their own.
     // (A block well in front of the carrier holds: that is the lane he is about to run through.)
@@ -1169,7 +1181,33 @@ function ease(p, x, y, speed = 6) {
 }
 const SQUARE_K = 1 - Math.exp(-DT * 10);
 
-function engage(lp, b, d) { b.eng = d; d.eng = b; b.engT = 0; d.engT = 0; }
+function engage(lp, b, d) { b.eng = d; d.eng = b; b.engT = 0; d.engT = 0; chip(lp, b); chip(lp, d); }
+
+// Sand chip: contact in a sandstorm wears down anyone the weather does not spare.
+function chip(lp, p) {
+  if (!p.wx?.chip) return;
+  const E = lp.g.teams[p.ti].energy;
+  E[p.id] = Math.max(0, (E[p.id] ?? 100) - p.wx.chip);
+}
+
+// Type theater: when a tackle or a broken tackle goes the attacker's way, its typing shows. On
+// the field this is a burst in the type's colour with "Super effective!", "Not very
+// effective..." or "No effect" over it (see field3d.js); each pair shows it once a play.
+export function typeFx(lp, att, def, only = null) {
+  if (!att || !def) return null;
+  const m = bestMatchup(PLAYERS[att.id], PLAYERS[def.id]);
+  if (m.mult === 1) return null;
+  const fx = m.mult === 0 ? 'immune' : m.mult > 1 ? 'se' : 'nve';
+  if (only && !only.includes(fx)) return null;
+  const key = `${att.id}>${def.id}`;
+  lp.typeFxSeen ??= new Set();
+  if (lp.typeFxSeen.has(key)) return null;
+  lp.typeFxSeen.add(key);
+  const text = { se: "It's super effective!", nve: "It's not very effective...", immune: `It doesn't affect ${nm(def.id)}...` }[fx];
+  event(lp, 'typefx', text, att, def);
+  Object.assign(lp.events[lp.events.length - 1], { fx, type: m.type });
+  return fx;
+}
 export function unengage(p) { const q = p.eng; if (q) { q.eng = null; q.shed = null; } p.eng = null; p.shed = null; }
 
 // Notes for the traits that acted at a hook (quiet ones only when the caller says so).
@@ -1201,6 +1239,7 @@ function contacts(lp) {
     if (dd > reach && !aiDive) continue;
     q.cool = 0.5;
     if (aiDive) q.dive = 0.3;
+    chip(lp, q); chip(lp, c);
     const tackle = q.a.tkl * 0.7 + q.a.str * 0.3;
     const evade = c.a.strBT * 0.55 + c.a.spd * 0.45;
     const R = rep(q.id, tackle, c.id, evade);
@@ -1236,6 +1275,7 @@ function contacts(lp) {
     if (contest(lp, pk(R.diff), pk(R.base), R, q, c, sack ? 'on the sack' : 'on the tackle')) {
       if (lp.typeWin?.winner === q) lp.stats.se = true;
       startTackle(lp, c, q, sack, dd > near);
+      typeFx(lp, q, c, ['se']);
       return;
     }
     if (c.kg > q.kg * 2.5 && mass < -0.05) note(lp, 'size', `${nm(q.id)} is too small to bring down ${nm(c.id)} alone`, c);
@@ -1246,6 +1286,8 @@ function contacts(lp) {
     if (!sack) lp.stats.extras.push(`${{ truck: 'runs over', spin: 'spins away from', juke: 'jukes', shake: 'breaks a tackle from' }[how]} ${nm(q.id)}`);
     event(lp, 'broken', `${nm(c.id)} ${{ truck: 'trucks', spin: 'spins off', juke: 'jukes', shake: 'shakes' }[how]} ${nm(q.id)}`, c, q);
     lp.events[lp.events.length - 1].how = how;
+    // He bounced off: the tackler's typing did little to him, or the carrier's own hit him hard.
+    if (!typeFx(lp, q, c, ['nve', 'immune'])) typeFx(lp, c, q, ['se']);
   }
 }
 

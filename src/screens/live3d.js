@@ -246,8 +246,8 @@ function resultBanner(e, lp, before) {
   else if (!changed && g.down === 1 && b.down >= 1 && yd > 0) { head = 'First down'; tone = 'big'; }
   else if (how === 'out') head = 'Out of bounds';
   else head = yd < 0 ? 'Loss' : 'Tackle';
-  // Why it happened, when a Pokémon's type, ability or size decided part of the play.
-  const notes = (lp?.notes ?? []).filter((n) => n.kind === 'type' || n.kind === 'ability' || n.kind === 'size').slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
+  // Why it happened, when a Pokémon's type, ability or size, or the weather, decided part of the play.
+  const notes = (lp?.notes ?? []).filter((n) => ['type', 'ability', 'size', 'weather'].includes(n.kind)).slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
   const next = g.final ? 'Final' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
   const clock = e.clockStop && !td ? 'Clock stopped' : '';
   return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed };
@@ -259,7 +259,7 @@ function showBanner(B) {
   L3.banner = B;
   el.className = `lower3 on ${B.tone}${B.possession ? ' poss' : ''}`;
   el.innerHTML = `<div class="l3-head"><b>${esc(B.head)}</b>${B.yds ? `<span class="l3-yds">${esc(B.yds)}</span>` : ''}${B.clock ? `<span class="l3-clock">${B.clock}</span>` : ''}</div>
-    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}<p class="l3-next">${esc(B.next)}</p>`;
+    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size', weather: 'Weather' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}<p class="l3-next">${esc(B.next)}</p>`;
 }
 function hideBanner(after = 0) {
   clearTimeout(timers.banner);

@@ -255,16 +255,16 @@ function release(lp, r, away, kind = 'touch', place = null) {
     px = fut.x; py = fut.y;
     T = Math.hypot(px - rp.x, py - rp.y) / v;
   }
-  let near = 99;
-  for (const q of lp.players) if (q.side === 'def' && !q.eng) near = Math.min(near, dist(q, qb));
+  let near = 99, rusher = null;
+  for (const q of lp.players) if (q.side === 'def' && !q.eng && dist(q, qb) < near) { near = dist(q, qb); rusher = q; }
   const pressured = near < 2.4;
   const D = lp.def;
   const tAcc = traitMod('throwAccuracy', { qb, def: Object.values(D) });
   traitNotes(lp, tAcc, { qb }, qb);
   const acc = qb.a.acc + tAcc.v - (lp.g.weather === 'rain' ? 4 : 0);
   const air = Math.hypot(px - rp.x, py - rp.y);
-  const tPr = pressured ? traitMod('pressure', { qb }) : null;
-  if (tPr) traitNotes(lp, tPr, { qb }, qb);
+  const tPr = pressured ? traitMod('pressure', { qb, rusher }) : null;
+  if (tPr) traitNotes(lp, tPr, { qb, rusher }, qb);
   let sd = (0.25 + air * 0.042) * (1.9 - acc / 90) * (pressured ? 1 + 0.5 * tPr.v : 1) * K.sd;
   // A bullet thrown a long way sprays more; a lob thrown short is hard to drop in.
   if (kind === 'bullet' && air > 18) sd *= 1.15;
@@ -455,7 +455,8 @@ function arrival(lp) {
   const r = T.target;
   const dr = dist(r, spot);
   // Up in the air at the catch point, a player gets his hands on balls a little farther away.
-  const reachOf = (p) => 1.45 + traitMod('catchReach', { p }).v + (upNow(p) ? 0.3 : 0);
+  // Glare (harsh sun) costs anyone the weather does not spare a little reach.
+  const reachOf = (p) => 1.45 + traitMod('catchReach', { p }).v + (upNow(p) ? 0.3 : 0) + (p.wx?.glare ?? 0);
   let dfd = null, dd = 99;
   for (const q of lp.players) if (q.side === 'def' && !q.eng) { const d = dist(q, spot); if (d < dd) { dd = d; dfd = q; } }
   lp.sepAtArrival = dd; lp.drAtArrival = dr;
@@ -465,6 +466,7 @@ function arrival(lp) {
   const inBounds = Math.abs(spot.y) < SIDE && spot.x < lp.goalX + 10;
   const rReach = reachOf(r);
   if (dr <= rReach && dr > 1.45) traitNotes(lp, traitMod('catchReach', { p: r }), { p: r }, r, true);
+  if (r.wx?.glare && dr > rReach && dr <= rReach - r.wx.glare) note(lp, 'weather', `${nm(r.id)} loses the ball in the sun`, r);
   // Defender plays the ball first if he is closer.
   const dUp = dfd && upNow(dfd), rUp = upNow(r);
   if (dfd && dd < (dUp ? 1.75 : 1.5) && (dd < dr + (dUp ? 0.5 : 0.25) || dr > rReach - 0.05)) {
