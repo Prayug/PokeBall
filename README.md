@@ -95,13 +95,13 @@ A league is eight teams: yours and seven AI teams, each with a coach style (Spee
 
 **Draft.** A snake draft in a random order. The board sorts and filters by type and rating and shows where each Pokémon fits your open slots; "Auto-draft the rest" hands your remaining picks to the AI. After the last pick, the grades screen scores every team's pass offense, run offense, pass rush, coverage and run defense against the league, from A+ to F.
 
-**Trade offer.** One AI team may offer a one-for-one swap that improves both rosters by overall, shown with what your best lineup gains. It stands until your first game.
+**Trade offer.** One AI team may offer a one-for-one swap that improves both rosters by overall, shown with what your best lineup gains. Kickers and punters are part of the deal: an AI team can ask for yours or offer its own when it is better, and when the trade changes your kicker or punter the card says who kicks for you afterwards and his range. It stands until your first game.
 
-**Depth chart.** Tap a slot, then another slot or a bench Pokémon, to swap them; overalls update for the new position, and a Pokémon playing out of position shows where it is best. "Auto-arrange" builds the best lineup by overall.
+**Depth chart.** Tap a slot, then another slot or a bench Pokémon, to swap them; overalls update for the new position, and a Pokémon playing out of position shows where it is best. "Auto-arrange" builds the best lineup by overall. The unit bar shows your kicker's rating and field goal range (the longest kick he makes at least half the time) and your punter's rating and typical punt. On a phone the field stacks into offense, defense and special teams.
 
 **Season.** A seven-week round robin. Each week you play your game live on the 3D field or simulate it, and the rest of the league simulates. The season screen carries the standings (top four make the playoffs), league leaders, every result with its box score and scoring plays, and the league's history across seasons.
 
-**Scouting report.** Before each game the season screen scouts your opponent: their lineup, offense, defense and kickers; your three best type edges and their three best; which weather setters will change the conditions; a one-line game plan with a pass or run lean; the opposing coach's habits; and your own injury list.
+**Scouting report.** Before each game the season screen scouts your opponent: their lineup, offense, defense and kickers; the kicking game (both kickers' ratings and field goal range, where each team's range starts, and both punters); your three best type edges and their three best; which weather setters will change the conditions; a one-line game plan with a pass or run lean; the opposing coach's habits; and your own injury list.
 
 **Pre-snap board and tendencies.** During a game, between plays, the pre-snap board lists every one-on-one the play will be decided by (your line against their front, your receivers against their coverage) with its type effectiveness and a count of edges for each side. Under it, the opponent's tendencies build up as the game goes: how often they run on first down, pass on third, blitz on third and long, and their favorite calls on each side of the ball.
 
@@ -115,7 +115,7 @@ A league is eight teams: yours and seven AI teams, each with a coach style (Spee
 
 **Cuts and the rookie draft.** Every team cuts four. The game suggests your four (the lowest keep-value), and you can pick your own; the AI teams' cuts are listed. Cut Pokémon go back into the pool, and a four-round snake rookie draft refills every roster, worst record picking first and the champion last. Then a new season starts with fresh standings, stats and health.
 
-**Saves, export and import.** The league saves to the browser's local storage after every change, including a game in progress, and "Continue league" on the home screen picks it up. "Export save" (home and season screens) downloads the whole league as a JSON file; "Import a save" on the home screen loads one from a file or pasted text, replacing the league in that browser. Older saves are brought up to the current format when they load.
+**Saves, export and import.** The home screen has three save slots, so you can run three leagues side by side. Each league saves to the browser's local storage after every change, including a game in progress; "Your leagues" lists each slot with its team, season and phase, and Continue, Export and Delete (which asks first). A new league goes into the slot you pick (the first empty one by default). "Export save" (home and season screens) downloads a league as a JSON file; "Import a save" loads one from a file or pasted text into the slot you pick. Older saves are brought up to the current format when they load, and a save from before slots moves into the first slot. Box scores are most of a save's size, so only the current and last season keep them; older games keep their score.
 
 `test/league.mjs` plays this loop end to end and checks it (see Build).
 
@@ -168,7 +168,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `test/formations.mjs` | Lines up every offensive formation against every front for eight teams at five spots on the field and runs the formation check on each (`--print` lists the positions) |
 | `src/traits.js` | Abilities and types that act during a live snap |
 | `test/top.mjs` | Lists the top Pokémon at each position |
-| `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness and subs, the playoffs and awards, the offseason, cuts and the rookie draft, then the next season) and checks every step, plus that an exported save plays on to the same results (exits 1 on failure) |
+| `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness and subs, the playoffs and awards, the offseason, cuts and the rookie draft, then the next season) and checks every step, plus that an exported save plays on to the same results, that box scores older than two seasons are trimmed, and that the scouting report and trades rate kickers and punters (exits 1 on failure) |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
 
 ## Build
