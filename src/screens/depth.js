@@ -1,8 +1,9 @@
 // Depth chart: the lineup on an 11-column field, with swaps between slots and the bench.
-import { unitRatings } from '../ratings.js';
+import { SLOT, unitRatings } from '../ratings.js';
+import { kickingUnit } from '../engine.js';
 import { render } from '../app.js';
 import { S, save } from '../state.js';
-import { P, esc, ovr, sprite, user } from '../ui.js';
+import { P, esc, ovr, rangeLine, sprite, user } from '../ui.js';
 
 function conditionTag(id) {
   const c = S.league?.condition?.[id];
@@ -23,12 +24,13 @@ const FORMATION = [
 export function renderDepth() {
   const me = user();
   const u = unitRatings(me.lineup);
+  const kick = kickingUnit(me.lineup);
   const cell = ([k, col, row]) => {
     const id = me.lineup[k];
-    if (id == null) return `<button class="dslot ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}"><span class="slot">${k}</span><span class="dn muted">Open</span></button>`;
+    if (id == null) return `<button class="dslot ${SLOT[k].side} ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}"><span class="slot">${k}</span><span class="dn muted">Open</span></button>`;
     const p = P(id);
     const misfit = p.best[0] !== k && p.ovr[p.best[0]] - p.ovr[k] >= 6;
-    return `<button class="dslot ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}">
+    return `<button class="dslot ${SLOT[k].side} ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}">
       <span class="slot">${k}</span>${sprite(id, 'md')}<span class="dn">${esc(p.name)}</span>${ovr(p.ovr[k])}
       ${misfit ? `<span class="fitnote">Best at ${p.best[0]} ${p.ovr[p.best[0]]}</span>` : ''}${conditionTag(id)}</button>`;
   };
@@ -37,10 +39,13 @@ export function renderDepth() {
     <h1>Depth chart</h1>
     <p class="lede">Tap a slot, then tap another slot or a bench Pokémon to swap them. Overalls update for the new position.</p>
     <div class="unitbar">${[['Pass offense', u.passOff], ['Run offense', u.runOff], ['Pass rush', u.passRush], ['Coverage', u.coverage], ['Run defense', u.runDef]]
-      .map(([l, v]) => `<div><span class="muted small">${l}</span><b>${Math.round(v)}</b></div>`).join('')}</div>
+      .map(([l, v]) => `<div><span class="muted small">${l}</span><b>${Math.round(v)}</b></div>`).join('')}
+      <div><span class="muted small">Kicker</span><b>${kick.k ? kick.k.ovr : '–'}</b>${kick.k ? `<span class="muted small" title="Makes half his kicks from ${kick.k.range} yards: snaps at the opponent's ${rangeLine(kick.k.range)}">${kick.k.range}-yd range</span>` : ''}</div>
+      <div><span class="muted small">Punter</span><b>${kick.p ? kick.p.ovr : '–'}</b>${kick.p ? `<span class="muted small">about ${kick.p.net} yds</span>` : ''}</div></div>
     <div class="gridwrap"><div class="gridiron">
       <span class="gside def">Defense</span><span class="gside off">Offense</span>
       <div class="los" aria-hidden="true"></div>
+      <h4 class="gunit off">Offense</h4><h4 class="gunit def">Defense</h4><h4 class="gunit st">Special teams</h4>
       ${FORMATION.map(cell).join('')}
     </div></div>
     <div class="card"><h3>Bench</h3><div class="benchrow">${me.bench.length ? me.bench.map((id) => `<button class="dslot bench" data-act="dbench" data-id="${id}">${sprite(id, 'md')}<span class="dn">${esc(P(id).name)}</span>

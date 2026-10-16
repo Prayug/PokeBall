@@ -326,10 +326,28 @@ const kick = (g, ti, slot, attr) => eff(g, ti, specialist(g, ti, slot), attr);
 // The distance a kick plays like for this kicker: accuracy moves the whole curve, leg power
 // adds range on the long ones.
 function kickerDistance(g, ti, dist) {
-  const pw = kick(g, ti, 'K', 'kpw'), ac = kick(g, ti, 'K', 'kac');
-  return dist - (ac - 60) * 0.18 - Math.max(0, dist - 40) * (pw - 60) * 0.012;
+  return playsLike(dist, kick(g, ti, 'K', 'kpw'), kick(g, ti, 'K', 'kac'));
 }
+const playsLike = (dist, pw, ac) => dist - (ac - 60) * 0.18 - Math.max(0, dist - 40) * (pw - 60) * 0.012;
 export function fgOdds(g) { return fgChance(kickerDistance(g, g.poss, fgDistance(g))); }
+// A kicker's range: the longest field goal he makes at least half the time, before weather,
+// abilities and fatigue. A punter's typical net, from the same leg-power curve the punts use.
+export function fgRange(id) {
+  const a = PLAYERS[id].attrs;
+  let d = 20;
+  while (d < 70 && fgChance(playsLike(d + 1, a.kpw, a.kac)) >= 0.5) d++;
+  return d;
+}
+export function puntNet(id) { return Math.round(41 + (PLAYERS[id].attrs.kpw - 60) * 0.18); }
+// The kicker and punter of a lineup, with their ratings and range, for the scouting report,
+// the depth chart and the trade card.
+export function kickingUnit(lineup) {
+  const k = lineup.K, p = lineup.P;
+  return {
+    k: k == null ? null : { id: k, ovr: PLAYERS[k].ovr.K, range: fgRange(k) },
+    p: p == null ? null : { id: p, ovr: PLAYERS[p].ovr.P, net: puntNet(p) },
+  };
+}
 
 function kickoff(g, kicker, freeKick = false) {
   const rec = 1 - kicker;

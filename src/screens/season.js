@@ -6,7 +6,7 @@ import { clockText, quarterText, simUntil } from '../engine.js';
 import * as LG from '../league.js';
 import { setScreen } from '../app.js';
 import { S } from '../state.js';
-import { P, edgeRow, esc, sprite, teamBadge, user } from '../ui.js';
+import { P, edgeRow, esc, kickerHtml, punterHtml, rangeLine, sprite, teamBadge, user } from '../ui.js';
 import { tradeCardHtml } from './draft.js';
 import { boxHtml } from './game.js';
 
@@ -74,11 +74,26 @@ function scoutHtml(L, myId, oppId) {
     <div class="opprow"><span class="muted small">Their offense</span>${lineupRow(OFF_SLOTS)}</div>
     <div class="opprow"><span class="muted small">Their defense</span>${lineupRow(DEF_SLOTS)}</div>
     <div class="opprow"><span class="muted small">Their kickers</span>${lineupRow(ST_SLOTS)}</div>
+    ${kickingHtml(R.kicking)}
     <div class="edges"><div><h4>Your best type edges</h4>${R.best.length ? `<ul>${R.best.map(edgeRow).join('')}</ul>` : '<p class="muted small">None this week.</p>'}</div>
     <div><h4>Where they have the edge</h4>${R.worst.length ? `<ul>${R.worst.map(edgeRow).join('')}</ul>` : '<p class="muted small">Nothing to worry about.</p>'}</div></div>
     <h4>Weather</h4><ul class="weather">${weather}</ul>
     ${health}
   </div>`;
+}
+
+// Kicker and punter for both sides, and where each team's field goal range starts.
+function kickingHtml({ me, opp }) {
+  const row = (label, mine, theirs) => `<tr><th>${label}</th><td>${mine}</td><td>${theirs}</td></tr>`;
+  let note = '';
+  if (me.k && opp.k) {
+    const d = me.k.range - opp.k.range;
+    note = `Your field goal range starts at their ${rangeLine(me.k.range)}; theirs starts at your ${rangeLine(opp.k.range)}.`
+      + (Math.abs(d) >= 4 ? ` ${d > 0 ? 'Your kicker has' : 'Their kicker has'} ${Math.abs(d)} more yards of range.` : '');
+  }
+  return `<h4>Kicking game</h4><div class="tablewrap"><table class="kicking"><thead><tr><th></th><th>Yours</th><th>Theirs</th></tr></thead><tbody>
+    ${row('Kicker', kickerHtml(me.k), kickerHtml(opp.k))}${row('Punter', punterHtml(me.p), punterHtml(opp.p))}</tbody></table></div>
+    ${note ? `<p class="small muted">${note}</p>` : ''}`;
 }
 
 function bracketHtml(L) {

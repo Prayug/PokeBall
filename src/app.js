@@ -6,7 +6,7 @@ import { worldSpots } from './live.js';
 import { initAudio, setSound } from './audio.js';
 import { cameraDefaults } from './camera3d.js';
 import * as LG from './league.js';
-import { S, clearTimers, loadPrefs, loadSaved, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
+import { S, clearTimers, deleteSlot, loadPrefs, loadSaved, migrateStorage, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
 import { download, user } from './ui.js';
 import { importSave, loadSnapshot, renderHome } from './screens/home.js';
 import { boardRowsHtml, detailHtml, draftTick, renderDraft, renderGrades, userDraft } from './screens/draft.js';
@@ -55,18 +55,26 @@ function onClick(e) {
     case 'home': S.game = S.gameMeta?.quick ? null : S.game; setScreen('home'); break;
     case 'go': setScreen(el.dataset.to); break;
     case 'continue': {
-      const saved = loadSaved();
-      if (saved?.league) loadSnapshot(saved);
+      const n = Number(el.dataset.slot ?? S.slot);
+      const saved = loadSaved(n);
+      if (!saved?.league) break;
+      // Leaving the home screen saved the league in memory; drop any quick game and switch.
+      if (S.gameMeta?.quick) { S.game = null; S.gameMeta = null; }
+      S.slot = n; S.confirmDelete = null;
+      loadSnapshot(saved);
       break;
     }
+    case 'slotconfirm': S.confirmDelete = Number(el.dataset.slot); render(); break;
+    case 'slotkeep': S.confirmDelete = null; render(); break;
+    case 'slotdelete': deleteSlot(Number(el.dataset.slot)); S.confirmDelete = null; render(); break;
     case 'exportsave': {
-      const data = S.league ? snapshot() : loadSaved();
+      const data = el.dataset.slot ? loadSaved(Number(el.dataset.slot)) : S.league ? snapshot() : loadSaved();
       if (!data?.league) break;
       const name = data.league.teams.find((t) => t.user)?.abbr ?? 'league';
       download(`pokeball-${name.toLowerCase()}-season${data.league.season ?? 1}.json`, JSON.stringify(data), 'application/json');
       break;
     }
-    case 'importpaste': importSave(document.getElementById('import-text')?.value ?? ''); break;
+    case 'importpaste': importSave(document.getElementById('import-text')?.value ?? '', importSlot()); break;
     case 'recap': if (L) download(`pokeball-season${L.season ?? 1}-recap.txt`, recapText(L), 'text/plain'); break;
     case 'openresult': S.resultIdx = Number(el.dataset.i); setScreen('result'); break;
     case 'tradeyes': if (LG.acceptTrade(L)) { save(); render(); } break;
@@ -195,7 +203,7 @@ function onChange(e) {
   if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }
   if (t.id === 'g-pips') { S.pips = t.checked; if (stage) stage.showPips = S.pips; savePrefs(); }
   if (t.id === 'g-debug') setDebug(t.checked);
-  if (t.id === 'import-file' && t.files?.[0]) t.files[0].text().then(importSave);
+  if (t.id === 'import-file' && t.files?.[0]) { const n = importSlot(); t.files[0].text().then((text) => importSave(text, n)); }
   if (t.dataset?.cut) {
     const id = Number(t.dataset.cut);
     S.offCuts ??= new Set();
@@ -203,6 +211,8 @@ function onChange(e) {
     render();
   }
 }
+const importSlot = () => Number(document.getElementById('i-slot')?.value ?? S.slot);
+
 function onSubmit(e) {
   if (e.target.id !== 'setup-form') return;
   e.preventDefault();
@@ -215,6 +225,7 @@ function onSubmit(e) {
     legendaries: f.querySelector('#f-legend').checked,
     clock: f.querySelector('#f-clock').checked,
   };
+  S.slot = Number(f.querySelector('#f-slot')?.value ?? S.slot); S.confirmDelete = null;
   S.league = LG.createLeague({ teamName: S.setup.name, abbr: S.setup.abbr, rounds: S.setup.rounds, legendaries: S.setup.legendaries,
     typeCap: S.setup.typeCap, seed: Math.floor(Math.random() * 2 ** 31) });
   S.game = null; S.gameMeta = null;
@@ -245,11 +256,18 @@ export function render() {
   if (S.screen === 'game') mountStage();
   if (S.screen === 'draft' && boardScroll != null) { const b = document.querySelector('.board .tablewrap'); if (b) b.scrollTop = boardScroll; }
   if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
+  // On a narrow screen the call sheet's tab row scrolls: keep the open tab in view.
+  const tab = document.querySelector('.cs-tab.on'), row = tab?.parentElement;
+  if (row && row.scrollWidth > row.clientWidth) {
+    const t = tab.getBoundingClientRect(), r = row.getBoundingClientRect();
+    if (t.left < r.left || t.right > r.right) row.scrollLeft += t.left - r.left - 8;
+  }
   window.scrollTo(0, y);
 }
 
 function start(data) {
   loadPrefs();
+  migrateStorage();
   initAudio();
   setSound(S.sound);
   try { if (/[?&#]debug\b/.test(location.search + location.hash)) S.debug = true; } catch { /* no location */ }
