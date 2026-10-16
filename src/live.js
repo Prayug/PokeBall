@@ -517,7 +517,14 @@ export function setCarrier(lp, p) {
   // Everyone switches to the ball once it is handed off, caught or picked.
   for (const q of lp.players) {
     if (q === p) continue;
-    if (q.side !== p.side) { q.role = 'pursue'; q.react = q.eng ? 0 : 0.1 + (100 - (q.a.spd + q.a.awr) / 2) * 0.003; }
+    // A defender who watched the throw already knows where the ball is: he reacts to the catch
+    // in half the time of one reading a handoff, and one already playing the ball near the catch
+    // goes straight for the receiver.
+    if (q.side !== p.side) {
+      const onBall = lp.thrown && !lp.intercepted;
+      q.role = 'pursue';
+      q.react = q.eng || (onBall && q.react <= 0 && dist(q, p) < 6) ? 0 : (0.1 + (100 - (q.a.spd + q.a.awr) / 2) * 0.003) * (onBall ? 0.5 : 1);
+    }
     else if (q.role === 'route' || q.role === 'qb' || q.role === 'handoff' || q.role === 'idle' || q.role === 'carrier' || (lp.kick && q.role?.[0] === 'k') || q.role === 'returner') {
       q.role = q.side === 'off' && p.side === 'off' && lp.kind === 'run' && q.slot === 'QB' ? 'fake' : 'escort';
     }
@@ -829,7 +836,8 @@ function carrierWant(lp, p) {
   p.want = { vx: (best.dx / l) * p.top * sprint, vy: (best.dy / l) * p.top * sprint };
   // When a tackler closes in, the AI carrier puts a move on him: power backs lower the
   // shoulder against smaller tacklers, shifty ones juke or spin.
-  if ((p !== lp.control || !lp.manual) && p.juke <= -0.9 && p.spin <= -0.9 && p.truck <= -0.9) {
+  // (Not while he is still securing a catch.)
+  if ((p !== lp.control || !lp.manual) && p.juke <= -0.9 && p.spin <= -0.9 && p.truck <= -0.9 && lp.t - (p.caughtAt ?? -9) > 0.45) {
     for (const q of lp.players) {
       if (q.side === p.side || q.eng || q.stun > 0 || dist(q, p) > 1.9) continue;
       if (chance(g, 0.02 + p.a.spd / 3000)) {
@@ -1233,7 +1241,7 @@ function contacts(lp) {
     p += tTk.v;
     if (tTk.used.length) traitNotes(lp, tTk, { c, q }, c);
     if (c.slow > 0) p += 0.12;
-    if (lp.t - (lp.carrierAt ?? 0) < 0.5 && lp.caught) p += 0.1;
+    if (lp.t - (lp.carrierAt ?? 0) < 0.8 && lp.caught) p += 0.2;
     // A Ghost phases through its first would-be tackler each game.
     if (PLAYERS[c.id].types.includes('Ghost') && !g.ghostUsed[c.id] && !sack && chance(g, 0.35)) {
       g.ghostUsed[c.id] = true;
