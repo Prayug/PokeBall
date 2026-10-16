@@ -392,7 +392,7 @@ function dropBall(lp, keep, pop = 0) {
   const ux = T ? (T.tx - T.sx) / (horiz || 1) : 1, uy = T ? (T.ty - T.sy) / (horiz || 1) : 0;
   const v = T ? horiz / T.T : 4;
   const vzArr = T ? T.vz - GRAVITY * T.T : -2;
-  b.state = 'loose'; b.holder = null;
+  b.state = 'loose'; b.holder = null; b.looseT = lp.t;
   b.vx = ux * v * keep + (pop ? (rand(lp.g) - 0.5) * 3 : 0);
   b.vy = uy * v * keep + (pop ? (rand(lp.g) - 0.5) * 3 : 0);
   b.vz = pop ? pop : vzArr * 0.5;
@@ -401,6 +401,8 @@ function dropBall(lp, keep, pop = 0) {
 export function looseBall(lp) {
   const b = lp.ball;
   if (b.state !== 'loose') return;
+  // It already moved this step on its flight; it starts falling on the next one.
+  if (b.looseT === lp.t) return;
   b.vz -= GRAVITY * DT;
   b.x += b.vx * DT; b.y += b.vy * DT; b.z += b.vz * DT;
   if (b.z <= 0.15) {

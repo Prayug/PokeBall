@@ -1006,6 +1006,9 @@ function separate(lp, passes = 2) {
         // A ball carrier squeezing past his own blockers moves them, not himself.
         const ha = holds(a) && !(b.carrier && a.side === b.side), hb = holds(b) && !(a.carrier && a.side === b.side);
         let ka = ha && !hb ? 0 : !ha && hb ? 1 : 0.5;
+        // Past a third of their reach in, the free one is pinned (a pocket closing on the
+        // quarterback from two blocks): the holder gives too, or a block would drive through him.
+        if (need - d > need / 3) ka = 0.5;
         // A free teammate and the carrier share the shove; neither bulldozes the other.
         const mate = a.side === b.side && (a.carrier || b.carrier);
         if (mate && !a.eng && !b.eng) ka = a.carrier ? 0.35 : 0.65;
