@@ -9,7 +9,9 @@ import * as LG from '../league.js';
 import { render, setScreen } from '../app.js';
 import { S, reduceMotion, save, savePrefs, timers } from '../state.js';
 import { P, edgeRow, esc, ovr, sprite, teamBadge, typeChips } from '../ui.js';
-import { aiFormation, aiFront, callSheet, callSheetHtml, formFor, frontFor } from './callsheet.js';
+import { adjustHtml, aiFormation, aiFront, callSheet, callSheetHtml, formFor, frontFor } from './callsheet.js';
+import { DIFFICULTY, DIFFICULTY_LEVELS, applyDifficulty } from '../difficulty.js';
+import { tendencyLines, typeEdges } from '../scout.js';
 import { L3, afterLivePlay, replayReady, stage, startLive, stopReplay } from './live3d.js';
 
 // ---------- game ----------
@@ -65,13 +67,13 @@ function scoreboard(g) {
 }
 
 function playCards(g, { keys = false } = {}) {
-  const { onOff, groups, fit } = callSheet(g);
+  const { onOff, groups, fit, why } = callSheet(g);
   const fg = fgDistance(g);
   const card = ({ call, label }, fam) => {
     const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
     const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgOdds(g) * 100)}%` : p.blurb;
     return `<button class="play f-${fam} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}">
-      <b>${p.name}</b><span>${extra}</span>${call === fit ? '<em class="fittag">Fits this down</em>' : ''}${keys && label ? `<kbd>${label}</kbd>` : ''}</button>`;
+      <b>${p.name}</b><span>${extra}</span>${call === fit ? `<em class="fittag">${why ? esc(`Fits: ${why}`) : 'Fits this down'}</em>` : ''}${keys && label ? `<kbd>${label}</kbd>` : ''}</button>`;
   };
   const head = onOff ? `<div class="callhead"><h3>${downText(g)} at ${spotText(g)}</h3><span class="muted">Call your offense</span></div>`
     : `<div class="callhead"><h3>${downText(g)} at ${spotText(g)}</h3><span class="muted">${esc(g.teams[g.poss].abbr)} ball · call your defense</span></div>`;
@@ -135,9 +137,9 @@ export function renderGame() {
       const offTxt = `${FORMATIONS[lp.formation]?.name ?? ''}`, defTxt = `${DEF_FORMATIONS[lp.defFormation]?.name ?? ''}`;
       const mine = lp.user === lp.o ? `${offTxt} · ${OFF_PLAYS[L3.off].name}` : `${defTxt} · ${DEF_PLAYS[L3.def].name}`;
       const theirs = lp.user === lp.o ? `vs ${defTxt}` : `vs ${offTxt}`;
-      if (lp.phase === 'pre') overlay = `<div class="pill lined"><span class="pl-play">${esc(mine)}<small>${esc(theirs)}</small></span>
+      if (lp.phase === 'pre') overlay = `<div class="lined3">${S.coachDown ? '' : adjustHtml(lp)}<div class="pill lined"><span class="pl-play">${esc(mine)}<small>${esc(theirs)}</small></span>
         <button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap' : 'Start'} <kbd>Space</kbd></button>
-        ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change <kbd>Esc</kbd></button>'}</div>`;
+        ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change <kbd>Esc</kbd></button>'}</div></div>`;
     } else if (decide) overlay = callSheetHtml(g);
     else if (L3.resultUntil > performance.now()) overlay = '';
     else overlay = `<div class="pill wait"><span>${S.busy ? 'Play in progress' : 'AI calling this down'}</span></div>`;
@@ -198,6 +200,19 @@ function modeHtml() {
   return `<div class="gm-row seg modes" role="radiogroup" aria-label="Mode">${MODES.map(([k, l, d]) => `<button class="btn tiny ${cur === k ? 'on' : ''}" data-act="mode" data-mode="${k}" role="radio" aria-checked="${cur === k}" title="${d}">${l}</button>`).join('')}</div>
     <p class="small muted mode-note">${MODES.find(([k]) => k === cur)[2]}.</p>`;
 }
+// Rookie, Pro or Legend: a preference kept between games, and applied to the game in progress
+// from the next play.
+export function difficultyHtml() {
+  const cur = S.difficulty ?? 'pro';
+  return `<div class="gm-row seg diffs" role="radiogroup" aria-label="Difficulty">${DIFFICULTY_LEVELS.map((k) => `<button class="btn tiny ${cur === k ? 'on' : ''}" data-act="difficulty" data-level="${k}" role="radio" aria-checked="${cur === k}" title="${esc(DIFFICULTY[k].blurb)}">${DIFFICULTY[k].name}</button>`).join('')}</div>
+    <p class="small muted mode-note">${esc(DIFFICULTY[cur].blurb)}.</p>`;
+}
+export function setDifficulty(k) {
+  if (!DIFFICULTY[k]) return;
+  S.difficulty = k;
+  if (S.game && !S.game.final) applyDifficulty(S.game, k, S.gameMeta?.userTeamId ?? 0);
+  savePrefs(); save(); render();
+}
 export function setMode(k) {
   S.coach = k === 'auto'; S.watch = k !== 'play';
   savePrefs(); render(); autoAdvance();
@@ -207,6 +222,7 @@ function menuHtml(g, simBtns, coachBox) {
   const simOff = L3.lp && L3.lp.phase !== 'pre';
   return `<div class="gmenu card" role="menu">
     <h4>Mode</h4>${coachBox}
+    <h4>Difficulty</h4>${difficultyHtml()}
     <h4>Skip ahead</h4><div class="gm-row">${simOff ? simBtns.replaceAll('data-act="sim"', 'data-act="sim" disabled') : simBtns}</div>
     <h4>Camera <kbd>C</kbd></h4><div class="gm-row seg">${CAMERA_MODES.map(([k, l]) => `<button class="btn tiny ${S.cam === k ? 'on' : ''}" data-act="cam" data-cam="${k}" aria-pressed="${S.cam === k}">${l}</button>`).join('')}</div>
     <h4>Graphics</h4><div class="gm-row seg">${[['auto', 'Auto'], ['high', 'High'], ['low', 'Fast']].map(([k, l]) => `<button class="btn tiny ${S.quality === k ? 'on' : ''}" data-act="quality" data-q="${k}" aria-pressed="${S.quality === k}">${l}</button>`).join('')}</div>
@@ -242,39 +258,18 @@ function debugHtml() {
 }
 
 function presnapHtml(g) {
-  const us = userSide(), them = 1 - us;
+  const us = userSide();
   const onOff = g.poss === us;
-  const ms = onOff ? LG.matchups(g.teams[us].lineup, g.teams[them].lineup) : LG.matchups(g.teams[them].lineup, g.teams[us].lineup);
-  const rows = ms.map((m) => ({ ...m, mine: onOff ? 'off' : 'def', edge: onOff ? m.net : -m.net }));
-  const good = rows.filter((r) => r.edge > 0).length, bad = rows.filter((r) => r.edge < 0).length;
+  const { rows, good, bad } = typeEdges(g, us);
   const group = (key, title) => `<div><h4>${title}</h4><ul>${rows.filter((r) => r.group === key).map(edgeRow).join('')}</ul></div>`;
   return `<details class="presnap" ${S.presnapClosed ? '' : 'open'}><summary>Pre-snap board <span class="muted small">${good} type edge${good === 1 ? '' : 's'} for you, ${bad} for them</span></summary>
     <div class="edges">${group('trench', onOff ? 'Your line vs their front' : 'Your front vs their line')}${group('cover', onOff ? 'Your receivers vs their coverage' : 'Your coverage vs their receivers')}</div></details>`;
 }
 
 function tendenciesHtml(g) {
-  const us = userSide(), them = 1 - us;
-  const plays = g.log.filter((e) => e.off && e.def && e.down && ['run', 'pass'].includes(OFF_PLAYS[e.off]?.kind));
-  const theirOff = plays.filter((e) => e.team === them), theirDef = plays.filter((e) => e.team === us);
-  const pct = (list, f) => Math.round((100 * list.filter(f).length) / list.length);
-  const isRun = (e) => OFF_PLAYS[e.off].kind === 'run';
-  const lines = [];
-  const first = theirOff.filter((e) => e.down === 1);
-  if (first.length >= 3) lines.push(`Run on 1st down ${pct(first, isRun)}% of the time, inside runs ${pct(first, (e) => e.off === 'inside_run')}% (${first.length} plays).`);
-  const third = theirOff.filter((e) => e.down === 3);
-  if (third.length >= 3) lines.push(`Pass on 3rd down ${pct(third, (e) => !isRun(e))}% (${third.length} plays).`);
-  const long3 = theirDef.filter((e) => e.down >= 3 && e.toGo >= 7);
-  if (long3.length >= 3) lines.push(`Blitz on 3rd and long ${pct(long3, (e) => e.def.endsWith('blitz'))}% (${long3.length} plays).`);
-  const fav = (list, key, names) => {
-    const counts = {};
-    for (const e of list) counts[e[key]] = (counts[e[key]] ?? 0) + 1;
-    const [k, c] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-    return `${names[k].name} ${Math.round((100 * c) / list.length)}%`;
-  };
-  if (theirOff.length >= 6) lines.push(`Favorite call on offense: ${fav(theirOff, 'off', OFF_PLAYS)}.`);
-  if (theirDef.length >= 6) lines.push(`Favorite call on defense: ${fav(theirDef, 'def', DEF_PLAYS)}.`);
+  const lines = tendencyLines(g, userSide());
   if (!lines.length) return '<p class="small muted tend">Their tendencies show up here after a few drives.</p>';
-  return `<div class="tend"><h4>${esc(g.teams[them].abbr)} tendencies this game</h4><ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul></div>`;
+  return `<div class="tend"><h4>${esc(g.teams[1 - userSide()].abbr)} tendencies this game</h4><ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul></div>`;
 }
 
 // Coach's substitutions: pick a slot, then a bench Pokémon.
@@ -417,6 +412,7 @@ export function autoAdvance() {
 }
 
 export function startGame(game, meta) {
+  applyDifficulty(game, S.difficulty, meta?.userTeamId ?? 0);
   S.game = game; S.gameMeta = meta; S.gameTab = 'log'; S.busy = false; S.subSel = null;
   L3.lp = null; L3.preview = null; L3.spots = null; L3.pclock = 40; L3.rec = null; L3.paused = false;
   if (L3.replay) stopReplay();

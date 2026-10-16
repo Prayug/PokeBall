@@ -13,8 +13,9 @@ import { boardRowsHtml, detailHtml, draftTick, renderDraft, renderGrades, userDr
 import { depthClick, renderDepth } from './screens/depth.js';
 import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthers } from './screens/season.js';
 import { renderOffseason } from './screens/offseason.js';
-import { autoAdvance, doCall, renderGame, setMode, startGame, userSide } from './screens/game.js';
-import { L3, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, recall, setCamera, setDebug, stage, startReplay, syncOverlays } from './screens/live3d.js';
+import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, userSide } from './screens/game.js';
+import { applyDifficulty } from './difficulty.js';
+import { L3, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, setCamera, setDebug, stage, startReplay, syncOverlays } from './screens/live3d.js';
 
 const app = document.getElementById('app');
 
@@ -134,7 +135,7 @@ function onClick(e) {
       }
       const game = LG.startLeagueGame(L, gm.home, gm.away, playoff);
       const meta = { playoff, userTeamId: me.id };
-      if (act === 'simweek') { S.game = game; S.gameMeta = meta; simUntil(game, 'game'); finishLeagueGame(); }
+      if (act === 'simweek') { applyDifficulty(game, S.difficulty, me.id); S.game = game; S.gameMeta = meta; simUntil(game, 'game'); finishLeagueGame(); }
       else startGame(game, meta);
       break;
     }
@@ -152,6 +153,9 @@ function onClick(e) {
     case 'resume': L3.paused = false; syncOverlays(); break;
     case 'replay': startReplay(); break;
     case 'mode': setMode(el.dataset.mode); break;
+    case 'difficulty': setDifficulty(el.dataset.level); break;
+    case 'csscout': S.csScout = !S.csScout; render(); break;
+    case 'ps': presnapAct(el.dataset.ps, el.dataset.arg); break;
     case 'csfold': S.csFold = !S.csFold; render(); break;
     case 'csall': S.csAll = !S.csAll; S.csFold = false; render(); break;
     case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }

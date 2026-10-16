@@ -7,9 +7,11 @@ import { traitMod } from './traits.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
 import { OFF_PLAYS, chance, clamp, eff, fumbleCheck, nm, rand, rep, sigmoid, st } from './engine.js';
 import { bodyOf } from './body.js';
+import { diffOf, diffUser } from './difficulty.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
 import { DEF_SCHEMES, coverWant, pursueWant, rushWant, setupDefense } from './live/defense.js';
 import { PLAY_ROUTES, airJumps, ballFlight, buildRoute, contest, coverageRead, looseBall, qbBrain, releasePoint, routeWant, snapFlight, startJump, startThrow, throwAway, windup } from './live/passing.js';
+import { atSnap, shiftStep } from './live/presnap.js';
 import { kickResult, kickStep, kickWant, liveKick, setupKick } from './live/kicks.js';
 export { DEF_SCHEMES } from './live/defense.js';
 export { liveKick } from './live/kicks.js';
@@ -71,8 +73,14 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
       lp[side][s.key] = p;
     }
   }
+  // The difficulty, in games the user coaches: how fast the AI side reads the play, and how far
+  // the user's receivers reach for the ball (Pro changes neither).
+  const D = diffUser(g) != null && lp.user != null ? diffOf(g) : null;
+  lp.aiRead = D?.aiRead ?? 1;
+  lp.userReach = D ? D.catchReach : 0;
   alignFormation(lp);
   setupDefense(lp);
+  if (lp.user === o && lp.aiRead !== 1) for (const p of Object.values(lp.def)) if (p.lag != null) p.lag *= lp.aiRead;
   if (liveKick(play)) {
     // A punt or field goal: the kicking units line up (see live/kicks.js).
     setupKick(lp, makePlayer);
@@ -338,6 +346,7 @@ export function snap(lp) {
   if (!lp.set) { lp.snapQueued = true; return; }
   lp.phase = 'live';
   lp.t = 0;
+  atSnap(lp);
   const qb = lp.snapTo ?? lp.off.QB, c = lp.off.C;
   if (isGun(lp.formation) && c && qb) {
     // The ball flies back from the center to the quarterback.
@@ -376,6 +385,7 @@ export function step(lp, input = null) {
   if (lp.phase === 'pre') {
     animIdle(lp, DT);
     lineUp(lp);
+    shiftStep(lp);
     for (const p of lp.players) { orient(lp, p); classify(lp, p); }
     if (lp.set && lp.snapQueued) snap(lp);
     return;
@@ -887,7 +897,7 @@ function move(lp, p, dt) {
 // Steering around bodies in the way: anyone (but the player this one is going after) a little
 // ahead and inside the path bends the path to the open side, so runners hit gaps, rushers
 // loop around blockers and pursuers take an angle instead of pushing through a pile.
-function steer(lp, p, vx, vy) {
+export function steer(lp, p, vx, vy) {
   const sp = len(vx, vy);
   if (sp < 0.5) return [vx, vy];
   const ux = vx / sp, uy = vy / sp, look = 1.2 + sp * 0.3;
@@ -987,7 +997,7 @@ function animIdle(lp, dt) { for (const p of lp.players) p.anim += dt * 2; }
 // just touch. Ball carriers and engaged blockers hold their ground and the other one gives;
 // when both hold, both give. Contact itself (blocks, tackles) happens at the capsule edge.
 const SEP_MAX = 0.12;
-function separate(lp, passes = 2) {
+export function separate(lp, passes = 2) {
   const ps = lp.players;
   const holds = (p) => !!(p.eng || p.carrier);
   for (let it = 0; it < passes; it++) {
