@@ -2,6 +2,9 @@
 import { PLAYERS, ALL_IDS, SLOT, SLOT_KEYS, BASELINE, autoDepthChart, unitRatings } from './ratings.js';
 import { bestMultiplier, matchupModifier, ABILITIES } from './types.js';
 import { createGame, simUntil, summary } from './engine.js';
+import { SCHEMES, schemeDraft } from './coach.js';
+import { coverSlot, healWeek, recordInjuries } from './injuries.js';
+import { gameHeadline, weekInReview } from './weekly.js';
 
 export const AI_TEAMS = [
   { name: 'Cerulean Surf', abbr: 'CER', color: '#2F6FD6', coach: 'speed', coachName: 'Speed Kills' },
@@ -30,13 +33,13 @@ export function makeRng(seed) {
 }
 
 export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', rounds = 24, legendaries = false,
-  typeCap = true, numTeams = 8, seed = Date.now(), userColor = '#C8102E', userPick = null } = {}) {
+  typeCap = true, numTeams = 8, seed = Date.now(), userColor = '#C8102E', userPick = null, scheme = 'balanced' } = {}) {
   const rng = makeRng(seed);
   const pool = AI_TEAMS.slice();
   const ai = [];
   while (ai.length < numTeams - 1) ai.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   const teams = [
-    { id: 0, name: teamName, abbr, color: userColor, coach: 'balanced', coachName: 'You', user: true },
+    { id: 0, name: teamName, abbr, color: userColor, coach: SCHEMES[scheme] ? scheme : 'balanced', coachName: 'You', user: true },
     ...ai.map((t, i) => ({ id: i + 1, ...t, user: false })),
   ];
   for (const t of teams) {
@@ -56,6 +59,7 @@ export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', round
     version: 2, seed, rngState: rng.state(), settings: { rounds, legendaries, typeCap, numTeams },
     teams, picks, pickIndex: 0, phase: 'draft', week: 0, schedule: [], results: [], playoffs: null, champion: null,
     seasonStats: {}, season: 1, history: [], growth: {}, condition: {}, rookies: [], trade: null, offseason: null,
+    injuries: {}, weekly: [],
   };
 }
 
@@ -67,6 +71,7 @@ export function migrateLeague(L) {
     L.trade ??= null; L.offseason ??= null;
     L.version = 2;
   }
+  L.injuries ??= {}; L.weekly ??= [];
   return L;
 }
 
@@ -146,6 +151,7 @@ export function aiChoosePick(L, teamId = currentPick(L).team) {
     if (team.coach === 'speed' && S && ['WR', 'CB', 'RB', 'S'].includes(S.group)) score += (p.attrs.spd - 70) * 0.25;
     if (team.coach === 'trench' && S && ['OL', 'DL'].includes(S.group)) score += 4;
     if (team.coach === 'types' && team.favTypes.some((t) => p.types.includes(t))) score += 5;
+    if (S) score += schemeDraft(team.coach, S.group);
     score += (r() - 0.5) * 6;
     if (!best || score > best.score) best = { id, slot, score };
   }
@@ -206,13 +212,21 @@ function letter(z) {
   return scale.find(([t]) => z >= t)[1];
 }
 
-// Game-day side. With a league, players who are out sit (when the bench can cover them)
-// and sore players start below full energy.
+// Game-day side. With a league, injured players sit (the bench covers them, or with no bench
+// a starter from the other side of the ball plays both ways), players who are out sore sit
+// when the bench can cover them, and sore players start below full energy.
 export function teamForGame(t, L = null) {
   const side = { id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach, lineup: { ...t.lineup }, bench: [...t.bench] };
   const cond = L?.condition;
   if (!cond) return side;
-  let bench = side.bench.filter((id) => !cond[id]?.out);
+  const hurt = (id) => !!L.injuries?.[id];
+  for (const k of SLOT_KEYS) {
+    if (!hurt(side.lineup[k])) continue;
+    const bench = side.bench.filter((id) => !hurt(id) && !cond[id]?.out && !Object.values(side.lineup).includes(id));
+    const sub = coverSlot(side.lineup, bench, k, (id) => hurt(id) || !!cond[id]?.out);
+    if (sub != null) side.lineup[k] = sub;
+  }
+  let bench = side.bench.filter((id) => !cond[id]?.out && !hurt(id) && !Object.values(side.lineup).includes(id));
   for (const k of SLOT_KEYS) {
     if (!cond[side.lineup[k]]?.out || !bench.length) continue;
     const sub = bench.reduce((a, b) => (PLAYERS[b].ovr[k] > PLAYERS[a].ovr[k] ? b : a));
@@ -241,7 +255,7 @@ export function newGameSeed(L) {
 }
 
 export function startLeagueGame(L, home, away, playoff = false) {
-  return createGame({ home: teamForGame(L.teams[home], L), away: teamForGame(L.teams[away], L), seed: newGameSeed(L), playoff });
+  return createGame({ home: teamForGame(L.teams[home], L), away: teamForGame(L.teams[away], L), seed: newGameSeed(L), playoff, injuries: true });
 }
 
 const compactStats = (stats) => Object.fromEntries(Object.entries(stats)
@@ -264,12 +278,14 @@ export function recordResult(L, g, meta) {
   const sm = summary(g);
   L.results.push({ ...meta, home: g.teams[0].id, away: g.teams[1].id, score: sm.score, winner: sm.winner == null ? null : g.teams[sm.winner].id,
     quarters: sm.quarters, weather: sm.weather,
-    box: { stats: g.teams.map((t) => compactStats(t.stats)), team: g.teams.map((t) => ({ ...t.team, third: [...t.team.third] })), scoring: scoringPlays(g) } });
+    box: { stats: g.teams.map((t) => compactStats(t.stats)), team: g.teams.map((t) => ({ ...t.team, third: [...t.team.third] })), scoring: scoringPlays(g) },
+    injuries: (g.injuries ?? []).map((i) => ({ id: i.id, team: i.team, weeks: i.weeks })) });
+  L.results[L.results.length - 1].headline = gameHeadline(L, L.results[L.results.length - 1]);
   L.condition ??= {};
   for (const [ti, t] of g.teams.entries()) {
     const played = new Set(t.roster);
     // Only the most worn-out few sit; the rest come back sore.
-    const sit = new Set(t.roster.filter((id) => (t.energy[id] ?? 100) < OUT_BELOW)
+    const sit = new Set(t.roster.filter((id) => !t.out?.[id] && (t.energy[id] ?? 100) < OUT_BELOW)
       .sort((a, b) => t.energy[a] - t.energy[b]).slice(0, MAX_OUT));
     for (const id of t.roster) {
       const c = nextCondition(t.energy[id] ?? 100, sit.has(id));
@@ -279,6 +295,7 @@ export function recordResult(L, g, meta) {
       if (!played.has(id) && L.condition[id]?.out) L.condition[id] = { energy: 85 };
     }
   }
+  recordInjuries(L, g, meta);
   for (const t of g.teams) {
     for (const [id, s] of Object.entries(t.stats)) {
       const agg = (L.seasonStats[id] ??= { team: t.id });
@@ -316,6 +333,8 @@ export function standings(L) {
 }
 
 export function advanceWeek(L) {
+  weekInReview(L, { week: L.week });
+  healWeek(L);
   L.week++;
   if (L.week >= L.schedule.length) {
     const top = standings(L).slice(0, 4).map((r) => r.id);
@@ -326,6 +345,8 @@ export function advanceWeek(L) {
 
 export function advancePlayoffs(L) {
   const P = L.playoffs;
+  weekInReview(L, { playoff: true, round: P.round });
+  healWeek(L);
   const winners = L.results.filter((r) => r.playoff && r.round === P.round).map((r) => r.winner);
   if (P.round === 0) {
     const [a, b] = winners;
@@ -380,6 +401,7 @@ const COACH_NOTES = {
   trench: 'Trench Builder: runs inside more and blitzes more often.',
   types: 'Type Stacker: drafted for its favorite types.',
   balanced: 'Best Available: no strong lean.',
+  ...Object.fromEntries(Object.entries(SCHEMES).filter(([k]) => k !== 'balanced').map(([k, s]) => [k, `${s.name}: ${s.blurb}`])),
 };
 
 // Pre-game report for the user's next opponent.
@@ -409,8 +431,10 @@ export function scoutReport(L, myId, oppId) {
     plan = `Their ${theirSlot} ${PLAYERS[theirP].name} is ${PLAYERS[theirP].types.join('/')}; your ${mySlot} ${PLAYERS[myP].name} (${PLAYERS[myP].types.join('/')}) wins that battle.`;
   }
   const cond = L.condition ?? {};
-  const health = L.teams[myId].roster.filter((id) => cond[id]).map((id) => ({ id, ...cond[id] }));
-  return { me, opp, best, worst, weather, plan, lean, health, coachNote: COACH_NOTES[L.teams[oppId].coach] ?? '' };
+  const inj = L.injuries ?? {};
+  const health = L.teams[myId].roster.filter((id) => cond[id] || inj[id]).map((id) => ({ id, ...cond[id], injury: inj[id] ?? null }));
+  const theirHurt = L.teams[oppId].roster.filter((id) => inj[id] && Object.values(L.teams[oppId].lineup).includes(id)).map((id) => ({ id, ...inj[id] }));
+  return { me, opp, best, worst, weather, plan, lean, health, theirHurt, coachNote: COACH_NOTES[L.teams[oppId].coach] ?? '' };
 }
 
 // ---------- awards, bracket ----------
@@ -610,6 +634,7 @@ export function finishOffseason(L, userCuts) {
   L.season++;
   L.pickIndex = 0; L.phase = 'draft'; L.week = 0; L.schedule = []; L.results = []; L.seasonStats = {};
   L.playoffs = null; L.champion = null; L.condition = {}; L.rookies = []; L.trade = null; L.offseason = null;
+  L.injuries = {}; L.weekly = [];
 }
 
 // Quick game: two AI-drafted rosters.

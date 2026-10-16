@@ -24,10 +24,10 @@ export function diagram(g, call, side, form = null) {
   if (side === 'off' && !['run', 'pass'].includes(OFF_PLAYS[call]?.kind)) { svg = kickArt(OFF_PLAYS[call]?.kind, OFF_PLAYS[call]); cache.set(key, svg); return svg; }
   const saved = g.rng;
   // Deep in the opponent's end the routes are cut short; draw them from midfield.
-  const spot = g.spot;
+  const spot = g.spot, call0 = g.call;
   g.spot = 50;
   let lp;
-  try { lp = side === 'off' ? createLivePlay(g, call, 'base', { formation: form }) : createLivePlay(g, 'slant', call, { defFormation: form }); } finally { g.rng = saved; g.spot = spot; }
+  try { lp = side === 'off' ? createLivePlay(g, call, 'base', { formation: form }) : createLivePlay(g, 'slant', call, { defFormation: form }); } finally { g.rng = saved; g.spot = spot; g.call = call0; }
   // Play frame to SVG: downfield is up, the field's width across.
   const X = (p) => (p.y).toFixed(2), Y = (p) => (-p.x).toFixed(2);
   const parts = [];

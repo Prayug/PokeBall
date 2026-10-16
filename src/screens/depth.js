@@ -5,6 +5,8 @@ import { S, save } from '../state.js';
 import { P, esc, ovr, sprite, user } from '../ui.js';
 
 function conditionTag(id) {
+  const inj = S.league?.injuries?.[id];
+  if (inj) return `<span class="cond hurt" title="Hurt ${esc(inj.when)}">Injured, ${inj.weeks} ${inj.weeks === 1 ? 'week' : 'weeks'}</span>`;
   const c = S.league?.condition?.[id];
   if (!c) return '';
   return c.out ? '<span class="cond out">Out this week</span>' : `<span class="cond sore">Sore ${c.energy}%</span>`;
@@ -45,6 +47,7 @@ export function renderDepth() {
     </div></div>
     <div class="card"><h3>Bench</h3><div class="benchrow">${me.bench.length ? me.bench.map((id) => `<button class="dslot bench" data-act="dbench" data-id="${id}">${sprite(id, 'md')}<span class="dn">${esc(P(id).name)}</span>
       ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 28 rounds to carry 4 backups.</p>'}</div></div>
+    ${Object.keys(S.league.injuries ?? {}).some((id) => me.roster.includes(Number(id))) ? '<p class="small muted">Injured Pokémon miss games until they heal. Leave them in the lineup and the best healthy backup covers each game; with no bench, a starter from the other side of the ball plays both ways.</p>' : ''}
     ${Object.keys(S.league.condition ?? {}).length ? '<p class="small muted">Sore Pokémon start the next game below full energy, and the bench subs in as they tire. A Pokémon who is out sits the next game when the bench can cover him; with no bench he plays hurt.</p>' : ''}
     <div class="actions"><button class="btn" data-act="autodepth">Auto-arrange for best overall</button>
     <button class="btn primary" data-act="go" data-to="${S.league.phase === 'grades' ? 'grades' : 'season'}">Done</button></div>
