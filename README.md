@@ -123,7 +123,7 @@ A league is eight teams: yours and seven AI teams, each with a coach style (Spee
 
 Attributes come from base stats, height and weight, graded on a curve against the whole non-legendary pool: 60 is average, 80 is very good, 99 is the best in the league. There are 13: Speed, Acceleration, Agility, Strength, Blocking, Pass rush, Throwing, Accuracy, Catching, Coverage, Tackling, Awareness and Stamina. In the live game Speed sets top speed, Acceleration how fast a player gets there, Agility how sharply it cuts and turns, Awareness how quickly quarterbacks read and defenders react, and height and weight set body size, which decides spacing, blocking and tackling reach. Position overalls are graded the same way per position, centered on 50, so a 99 is the best at that spot, an 80 is a solid starter and a 50 is a backup. Legendaries, mythicals, Ultra Beasts and Paradox Pokémon are flagged as legendary (off by default; when on, there is no limit per team).
 
-Ratings decide most games, not all of them. Each team rolls a form for the day (usually within 4% either way, from the game's seed, so a seed always replays the same), the home side gets a 1% edge (none at a neutral site), type matchups are worth 12% (20% for no effect) and the weather boosts or hurts its types by 12%. After halftime a team up by more than 14 eases off a little, so blowouts stay football scores. In the simulator a strong lineup (about 80 overall) beats a good one (about 74) about 8 times in 10, a good one beats an average one (about 68) about 7 in 10, and the home side wins about 56% of evenly matched games; a gap as wide as elite against average still almost never loses. The sizes live in `src/parity.js`. `test/tiers.mjs` measures this.
+Ratings decide most games, not all of them. Each team rolls a form for the day (usually within 4% either way, from the game's seed, so a seed always replays the same), the home side gets a 1% edge (none at a neutral site), type matchups are worth 12% (20% for no effect) and the weather boosts or hurts its types by 12%. After halftime a team up by more than 14 eases off a little, so blowouts stay football scores. Under all of that sits a chaos floor: whatever the ratings, a carrier slips at least 6% of first tackles, 1.5% of throws are tipped (a third of those picked off), 2% of routes see a blown coverage and about 1 punt in 80 is muffed or returned all the way. In the simulator a strong lineup (about 80 overall) beats a good one (about 74) about 8 times in 10, a good one beats an average one (about 68) about 7 in 10, and the home side wins about 56% of evenly matched games; a gap as wide as elite against average still almost never loses. The sizes live in `src/parity.js`. `test/tiers.mjs` measures this.
 
 ## Layout
 
@@ -169,6 +169,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/traits.js` | Abilities and types that act during a live snap |
 | `test/top.mjs` | Lists the top Pokémon at each position |
 | `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness and subs, the playoffs and awards, the offseason, cuts and the rookie draft, then the next season) and checks every step, plus that an exported save plays on to the same results (exits 1 on failure) |
+| `test/calls.mjs` | Fast-sim yards for each run and pass against each defensive call, so plays that resolve as themselves show their own numbers |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
 
 ## Build
@@ -185,6 +186,7 @@ node test/formations.mjs            # 600 formation and front pairings through t
 node test/league.mjs                # two seasons of league mode, draft to rookie draft (exits 1 on failure)
 node test/browser.mjs out 3         # three snaps in a real browser: video, screenshots, results.json
 node test/tiers.mjs 300             # how much ratings matter (add `live` for live plays)
+node test/calls.mjs 1500            # fast-sim yards by call and defense
 ```
 
 To regenerate the Pokémon data, download the PokéAPI CSVs (`pokemon`, `pokemon_species`, `pokemon_species_names`, `pokemon_stats`, `pokemon_types`, `pokemon_abilities`, `ability_names`, `types`) from `PokeAPI/pokeapi` `data/v2/csv/` into a folder, then run:
