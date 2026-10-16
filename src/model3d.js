@@ -319,7 +319,8 @@ export function poseLimbs(fig, q) {
         } else rot(e, e.lat, -(q.armsFwd * 0.35 + (right ? q.carry * 1.1 + Math.max(0, -q.throwArm) * 0.4 : 0)));
         break;
       }
-      case 'tail': rot(e, e.lat, -q.crouch * 0.15); break;
+      // Spread over the chain, so a long tail (Charizard has twelve bones) is not curled up over the back.
+      case 'tail': rot(e, e.lat, (-q.crouch * 0.15 * 3) / Math.max(3, R.maxTail)); break;
       default: break;
     }
   }
@@ -382,9 +383,10 @@ export function driveLimbs(fig, g) {
       }
       case 'tail': {
         // A wave down the tail, faster and wider at speed.
-        const k = (e.depth + 1) / R.maxTail;
-        rot(e, e.up, Math.sin(t * (2 + 5 * A) - e.depth * 0.55 + ph * 0.5) * (0.06 + 0.14 * A) * w * (0.6 + k));
-        rot(e, e.lat, Math.sin(ph * 2 - e.depth * 0.4) * 0.05 * A * w);
+        // The sway is shared out along the chain: a long tail bends as much in total as a short one.
+        const k = (e.depth + 1) / R.maxTail, share = 4 / Math.max(4, R.maxTail);
+        rot(e, e.up, Math.sin(t * (2 + 5 * A) - e.depth * 0.55 + ph * 0.5) * (0.06 + 0.14 * A) * w * (0.6 + k) * share);
+        rot(e, e.lat, Math.sin(ph * 2 - e.depth * 0.4) * 0.05 * A * w * share);
         break;
       }
       case 'spine':

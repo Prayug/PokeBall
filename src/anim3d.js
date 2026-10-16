@@ -170,6 +170,12 @@ export class Animator {
     w = blendIn('reach', s.reach ?? 0, 16);
     set(w, bi.armL, -2.5); set(w, bi.armR, -2.5); set(w, bi.armL + 2, 0.25); set(w, bi.armR + 2, -0.25); set(w, bi.head, 0.3);
     if (s.reachHigh) o[LIFT] += w * s.reachHigh;
+    // Kicking: the plant, then the kicking leg swings up through the ball and follows through.
+    if (s.kickU != null) {
+      const u = s.kickU, back = u < 0.3 ? u / 0.3 : 0, thru = u >= 0.3 ? Math.sin(Math.min(1, (u - 0.3) / 0.5) * Math.PI * 0.5) * (1 - Math.max(0, u - 0.8) * 3) : 0;
+      o[bi.legR] += 0.9 * back - 2.1 * thru; o[bi.armL] -= 1.0 * thru; o[bi.armR] += 0.6 * thru; o[PITCH] -= 0.15 * thru;
+    }
+    if (s.jumpZ) { o[LIFT] += s.jumpZ; const k = Math.min(1, s.jumpZ * 3); o[bi.legL] += 0.5 * k; o[bi.legR] += 0.25 * k; }
     // Juke and truck
     if (s.juke) { o[ROLL] += s.juke * 0.4; o[LIFT] += Math.abs(s.juke) * H * 0.06; }
     if (s.truck) { set(s.truck, PITCH, 0.55); set(s.truck, bi.armR, -1.5); set(s.truck, bi.armR + 2, 0.1); set(s.truck, bi.head, -0.3); }

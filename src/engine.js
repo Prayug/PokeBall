@@ -406,6 +406,12 @@ export function runPlay(g, offCall, defCall) {
 export function runLivePlay(g, offCall, defCall, r, seconds) {
   if (g.final) return null;
   g.playNo++;
+  if (r.liveKick) {
+    // A punt or field goal played on the field: the kick's own outcome, then the usual bookkeeping.
+    const kb = { kind: 'play', off: offCall, def: defCall, down: g.down, toGo: g.toGo, spotBefore: g.spot, from: absSpot(g.poss, g.spot), team: g.poss, yards: 0 };
+    const k = r.kind === 'punt' ? doPunt(g, kb, r) : doFieldGoal(g, kb, r);
+    return finishPlay(g, k, kb, offCall, defCall, clamp(Math.round(seconds), 2, 20));
+  }
   const base = { spotBefore: g.spot };
   return finishPlay(g, r, base, offCall, defCall, clamp(Math.round(seconds), 2, 20));
 }
@@ -520,11 +526,12 @@ function endQuarter(g) {
   kickoff(g, chance(g, 0.5) ? 0 : 1);
 }
 
-function doPunt(g, base) {
+function doPunt(g, base, live = null) {
   const o = g.poss, d = 1 - o;
   const call = OFF_PLAYS[base.off] ?? OFF_PLAYS.punt;
   const P = specialist(g, o, 'P'), pnm = P != null ? nm(P) : g.teams[o].name;
-  if (call.fake) return fakeKick(g, base, P, 'punt');
+  if (call.fake && !live) return fakeKick(g, base, P, 'punt');
+  if (live) return livePunt(g, base, live, pnm);
   endDrive(g, 'Punt');
   const pw = kick(g, o, 'P', 'kpw'), ac = kick(g, o, 'P', 'kac');
   // Net yards from the punter's leg; a coffin-corner kick gives up distance to angle it out
@@ -549,17 +556,17 @@ function doPunt(g, base) {
   return { special: true, entry, clockStop: true };
 }
 
-function doFieldGoal(g, base) {
+function doFieldGoal(g, base, live = null) {
   const o = g.poss, d = 1 - o;
   const call = OFF_PLAYS[base.off] ?? OFF_PLAYS.fg;
   const K = specialist(g, o, 'K'), knm = K != null ? nm(K) : 'The';
-  if (call.fake) return fakeKick(g, base, K, 'fg');
+  if (call.fake && !live) return fakeKick(g, base, K, 'fg');
   const dist = fgDistance(g);
   // Accuracy moves the whole curve; leg power adds range on the long ones.
   const eff = kickerDistance(g, o, dist);
   const s = K != null ? st(g, o, K) : {};
   s.fga = (s.fga ?? 0) + 1;
-  if (chance(g, fgChance(eff))) {
+  if (live ? live.how === 'good' : chance(g, fgChance(eff))) {
     s.fgm = (s.fgm ?? 0) + 1;
     addScore(g, o, 3);
     endDrive(g, 'Field goal');
@@ -569,7 +576,47 @@ function doFieldGoal(g, base) {
   }
   endDrive(g, 'Missed FG');
   g.poss = d; g.spot = Math.max(20, 100 - (base.spotBefore - 7)); g.down = 1; g.toGo = 10;
-  const entry = addLog(g, { ...base, highlight: 'miss', text: `${K != null ? `${knm}'s ` : ''}${dist}-yard field goal is NO GOOD.`, to: absSpot(o, 100) });
+  const blocked = live?.how === 'blocked';
+  const entry = addLog(g, { ...base, highlight: 'miss', text: `${K != null ? `${knm}'s ` : ''}${dist}-yard field goal ${blocked ? `is BLOCKED${live.blocker != null ? ` by ${nm(live.blocker)}` : ''}` : 'is NO GOOD'}.`, to: absSpot(o, 100) });
+  startDrive(g);
+  return { special: true, entry, clockStop: true };
+}
+
+// A punt played out on the live field: where it came down and what the return team did with it.
+// live.endX is where the ball ended up, in yards downfield from the line of scrimmage.
+function livePunt(g, base, live, pnm) {
+  const o = g.poss, d = 1 - o;
+  const P = live.kicker;
+  endDrive(g, 'Punt');
+  const rnm = live.returner != null ? nm(live.returner) : g.teams[d].name;
+  const gross = live.gross ?? 0;
+  g.poss = d; g.down = 1; g.toGo = 10;
+  let text, highlight = null, net = gross;
+  if (live.how === 'blocked') {
+    g.spot = clamp(100 - (base.spotBefore + (live.endX ?? -8)), 1, 99);
+    text = `${pnm}'s punt is BLOCKED${live.blocker != null ? ` by ${nm(live.blocker)}` : ''}! ${g.teams[d].name} take over at the ${spotText(g)}.`;
+    highlight = 'turnover'; net = 0;
+  } else if (live.how === 'td') {
+    const ret = live.ret ?? 0;
+    const entry = addLog(g, { ...base, kind: 'score', highlight: 'td', text: `${pnm} punts ${gross} yards. ${rnm} returns it ${ret} yards for a TOUCHDOWN!`, to: absSpot(d, 100) });
+    if (P != null) { const s = st(g, o, P); s.punts = (s.punts ?? 0) + 1; s.puntYds = (s.puntYds ?? 0) + gross - ret; }
+    g.spot = 100;
+    scoreTD(g, d, live.returner);
+    return { special: true, entry, clockStop: true };
+  } else if (live.how === 'touchback') {
+    g.spot = 20; net = gross - 20;
+    text = `${pnm} punts ${gross} yards into the end zone. Touchback.`;
+  } else {
+    const endX = live.endX ?? gross;
+    net = Math.min(endX, 100 - base.spotBefore);
+    g.spot = clamp(100 - (base.spotBefore + endX), 1, 99);
+    const what = { fair: `fair catch by ${rnm}`, downed: 'downed by the coverage', out: 'out of bounds' }[live.how]
+      ?? `${rnm} returns it ${live.ret ?? 0} yard${live.ret === 1 ? '' : 's'}${live.tackler != null ? `, tackled by ${nm(live.tackler)}` : ''}`;
+    text = `${pnm} punts ${gross} yards, ${what}. ${g.teams[d].name} take over at the ${spotText(g)}.`;
+    if ((live.ret ?? 0) >= 20) highlight = 'big';
+  }
+  if (P != null) { const s = st(g, o, P); s.punts = (s.punts ?? 0) + 1; s.puntYds = (s.puntYds ?? 0) + net; }
+  const entry = addLog(g, { ...base, text, highlight, to: absSpot(g.poss, g.spot) });
   startDrive(g);
   return { special: true, entry, clockStop: true };
 }
