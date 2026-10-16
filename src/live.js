@@ -5,12 +5,13 @@
 // y runs across the field (sidelines at ±SIDE). No DOM access, so tests can run it headless.
 import { traitMod } from './traits.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
-import { OFF_PLAYS, aiTempo, chance, clamp, eff, fumbleCheck, nm, oobStops, rand, rep, sigmoid, st } from './engine.js';
+import { OFF_PLAYS, aiTempo, chance, clamp, eff, fumbleCheck, nm, oobStops, rand, rep, sigmoid, snapStats, st } from './engine.js';
 import { bodyOf } from './body.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
 import { DEF_SCHEMES, coverWant, pursueWant, rushWant, setupDefense } from './live/defense.js';
 import { PLAY_ROUTES, airJumps, ballFlight, buildRoute, contest, coverageRead, looseBall, qbBrain, releasePoint, routeWant, snapFlight, startJump, startThrow, throwAway, windup } from './live/passing.js';
 import { kickResult, kickStep, kickWant, liveKick, setupKick } from './live/kicks.js';
+import { RATES, liveFoul, preSnapFoul, sloppy } from './penalties.js';
 export { DEF_SCHEMES } from './live/defense.js';
 export { liveKick } from './live/kicks.js';
 export { ROUTES, PLAY_ROUTES, OPENNESS, releasePoint, catchHeight, flightAt } from './live/passing.js';
@@ -58,6 +59,9 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
     set: true, snapQueued: false, setT: 0,
     // The two-minute drill: an AI ball carrier heads for the sideline to stop the clock.
     clockOut: opts.clockOut ?? (g.phase !== 'pat' && aiTempo(g) === 'hurry' && oobStops(g)),
+    // Flags: on in the game (the tests that replay seeded plays leave them off), never on kicks
+    // or the try. fouls collects the ones thrown.
+    flags: !!opts.flags && g.phase === 'play' && !liveKick(play), fouls: [],
   };
   const deepCap = lp.goalX + 9;
   const backCap = lp.ownGoalX - 9;
@@ -340,6 +344,19 @@ export function snap(lp) {
   if (!lp.set) { lp.snapQueued = true; return; }
   lp.phase = 'live';
   lp.t = 0;
+  if (lp.flags) {
+    // The stats as they stand, in case a flag wipes out the play; and a false start or a
+    // defender offside kills it before it starts.
+    lp.statSnap = snapStats(lp.g);
+    const pre = preSnapFoul(lp.g);
+    if (pre) {
+      const who = lp.players.find((p) => p.id === pre.player && p.ti === pre.team);
+      lp.fouls.push({ ...pre, y: who?.y ?? 0, t: 0 });
+      event(lp, 'flag', '', who ?? null);
+      finish(lp, { how: 'flag' });
+      return;
+    }
+  }
   const qb = lp.snapTo ?? lp.off.QB, c = lp.off.C;
   if (isGun(lp.formation) && c && qb) {
     // The ball flies back from the center to the quarterback.
@@ -1124,6 +1141,11 @@ function blocks(lp) {
       if (dist(d, c) > 9 || (dist(d, c) > 4 && ahead < -1.5)) rate = Math.max(rate, 2.5);
     }
     if (chance(g, rate * DT)) {
+      // Beaten, the blocker may grab him: the rusher stays held up, and the flag comes out.
+      if (lp.flags && b.side === 'off' && (passPro ? !lp.thrown : lp.carrierSet && dist(d, lp.carrier) < 4) && chance(g, RATES.holdShed * sloppy(b.a.awr) * (1 + Math.max(0, R.diff) / 20)) && liveFoul(lp, 'hold_off', b)) {
+        event(lp, 'flag', '', b, d);
+        continue;
+      }
       // The move fits the body: big and strong bull rushes, light and quick swims, the rest rip.
       const move = mass > 0.25 && d.a.str >= d.a.acc ? 'bull' : d.a.acc > 70 || mass < -0.3 ? 'swim' : 'rip';
       const target = lp.carrierSet ? lp.carrier : lp.snapTo ?? lp.off.QB;
@@ -1386,6 +1408,7 @@ export function finish(lp, end) {
   lp.deadAt = lp.t;
   lp.end = end;
   lp.result = lp.kick ? kickResult(lp, end) : buildResult(lp, end);
+  if (lp.fouls?.length) { lp.result.fouls = lp.fouls; lp.result.statSnap = lp.statSnap; }
 }
 
 function buildResult(lp, end) {
@@ -1395,6 +1418,7 @@ function buildResult(lp, end) {
   const extras = stats.extras.length ? `, ${stats.extras.slice(0, 2).join(' and ')}` : '';
   const yardsWord = (y) => (y === 0 ? 'no gain' : y > 0 ? `${y} yard${y === 1 ? '' : 's'}` : `a loss of ${-y}`);
   const stop = end.how === 'out' || end.how === 'incomplete';
+  if (end.how === 'flag') return { kind: 'none', noPlay: true, yards: 0, text: '' };
 
   if (end.how === 'incomplete') {
     st(g, o, qb.id).pa++;

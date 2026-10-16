@@ -21,10 +21,15 @@ export const KICK_KEYS = { punt: ['KeyP', 'P'], fg: ['KeyF', 'F'] };  // the oth
 // The calls on the sheet right now, grouped, each with its key. Also marks the one that fits
 // the down: the heaviest weight in the AI's own tables, read without rolling g.rng.
 export function callSheet(g) {
-  const onOff = g.poss === userSide();
+  const pen = g.phase === 'penalty';
+  // After a flag the side it was against picks; the call sheet is theirs on either side of the ball.
+  const onOff = pen ? g.pending?.offended === userSide() : g.poss === userSide();
   const heaviest = (w, keys) => keys.filter((k) => w[k] > 0).sort((x, y) => w[y] - w[x])[0];
   let groups, fit;
-  if (onOff && g.phase === 'pat') {
+  if (pen) {
+    groups = onOff ? [['penalty', 'Flag', ['accept', 'decline']]] : [];
+    fit = g.pending?.aiAccept ? 'accept' : 'decline';
+  } else if (onOff && g.phase === 'pat') {
     // The try: kick the extra point, or any run or pass from the 2 for two.
     const kind = (k) => OFF_PLAYS[k].kind;
     const runs = Object.keys(OFF_PLAYS).filter((k) => kind(k) === 'run'), passes = Object.keys(OFF_PLAYS).filter((k) => kind(k) === 'pass');
@@ -100,7 +105,7 @@ const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'power', 'coun
   ['short', 'Quick', ['slant', 'out', 'stick', 'curl_flat', 'mesh', 'screen', 'bubble']],
   ['mid', 'Intermediate', ['curl', 'smash', 'dagger', 'levels', 'flood', 'y_cross', 'te_seam']],
   ['deep', 'Shots', ['four_verts', 'post', 'pa_boot', 'pa_deep']], ['clock', 'Clock', ['spike', 'kneel']],
-  ['kick', 'Special teams', ['punt', 'coffin_punt', 'fake_punt', 'fg', 'fake_fg', 'xp', 'kick_deep', 'onside']]];
+  ['penalty', 'Flag', ['accept', 'decline']], ['kick', 'Special teams', ['punt', 'coffin_punt', 'fake_punt', 'fg', 'fake_fg', 'xp', 'kick_deep', 'onside']]];
 export function csTabs(g) {
   const { onOff, groups, fit } = callSheet(g);
   const byCall = new Map(groups.flatMap(([fam, , cs]) => cs.map((c) => [c.call, { ...c, fam }])));
@@ -127,16 +132,18 @@ export function callSheetHtml(g) {
     const label = curCalls.has(call) || KICK_KEYS[call] ? key : null;
     const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
     const kind = onOff ? p.kind : fam;
-    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgOdds(g) * 100)}%` : call === 'xp' ? `33 yards · ${Math.round(xpOdds(g) * 100)}%` : p.blurb;
-    const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick', xp: 'Kick', kickoff: 'Kick', spike: 'Clock', kneel: 'Clock' }[kind] : { front: 'Man', blitz: 'Blitz', cover: 'Zone' }[kind];
-    const form = onOff ? formationName(call, formFor(call)) : DEF_FORMATIONS[frontFor(call)]?.short ?? '';
+    const extra = call === 'fg' && onOff ? `${fg} yards · ${Math.round(fgOdds(g) * 100)}%` : call === 'xp' ? `33 yards · ${Math.round(xpOdds(g) * 100)}%`
+      : call === 'accept' ? g.pending?.acceptText ?? p.blurb : call === 'decline' ? g.pending?.declineText ?? p.blurb : p.blurb;
+    const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick', xp: 'Kick', kickoff: 'Kick', spike: 'Clock', kneel: 'Clock', penalty: 'Flag' }[kind] : { front: 'Man', blitz: 'Blitz', cover: 'Zone' }[kind];
+    // After a flag each card says what it leaves: the down and spot, or the play's result.
+    const form = kind === 'penalty' ? extra : onOff ? formationName(call, formFor(call)) : DEF_FORMATIONS[frontFor(call)]?.short ?? '';
     return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" title="${esc(extra)}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
       <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call))}${label ? `<kbd>${label}</kbd>` : ''}${call === fit ? '<em class="fittag">Fits</em>' : ''}</span>
       <span class="pname">${p.name}</span>
       <span class="pc-top"><em class="pc-kind">${tag}</em>${form ? `<span class="pc-form">${esc(form)}</span>` : ''}</span>
       <span class="pblurb">${esc(extra)}</span></button>`;
   };
-  const who = onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
+  const who = g.phase === 'penalty' ? 'Your call' : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
   const head = `<div class="cs-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>
       <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur && !S.csAll ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
       ${g.phase === 'play' ? formSelect(onOff) : ''}
@@ -153,6 +160,7 @@ export function callSheetHtml(g) {
 // The clock between plays: running or stopped, your timeouts with the button to call one, and
 // (on offense) the tempo to the next snap. Shared by the 3D call sheet and the 2D play cards.
 export function clockRow(g, onOff) {
+  if (g.phase === 'penalty') return `<div class="cs-clock cs-flag"><span class="flagtxt">${esc(g.pending?.text ?? 'Flag on the play')}</span></div>`;
   if (g.phase !== 'play') {
     const what = g.phase === 'pat' ? 'Kick the extra point, or run or pass from the 2 for two points' : 'Kick it deep, or onside to try to get the ball back';
     return `<div class="cs-clock"><span class="muted">${what}</span></div>`;

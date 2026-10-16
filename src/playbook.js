@@ -115,6 +115,13 @@ function kickArt(kind, P = {}) {
       : '<path d="M-2 4 L0 9 L3 9" fill="none" stroke="#ffd23f" stroke-width="1.2"/>';
     return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>${art}<circle cx="0" cy="${kind === 'spike' ? 0 : 2}" r="1.05" class="o on"/></svg>`;
   }
+  // After a flag: the yellow flag, with the march off (accept) or crossed out (decline).
+  if (kind === 'penalty') {
+    const flag = '<path d="M-2 8 L-2 -12" stroke="#ffffff" stroke-width="0.7"/><path d="M-2 -12 L7 -9 L-2 -5 Z" fill="#ffd23f"/>';
+    const mark = P.name === 'Accept' ? '<path d="M-14 -16 L14 -16" stroke="#ffd23f" stroke-width="1" stroke-dasharray="2 1"/><polygon points="14,-18 17,-16 14,-14" fill="#ffd23f"/>'
+      : '<path d="M-9 -15 L7 3 M7 -15 L-9 3" stroke="#ff6b6b" stroke-width="1.2"/>';
+    return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>${flag}${mark}</svg>`;
+  }
   // The try kicks through the uprights; a kickoff flies deep, an onside kick bounces short.
   if (kind === 'xp') kind = 'fg';
   if (kind === 'kickoff') {

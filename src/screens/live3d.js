@@ -3,6 +3,7 @@
 import { DEF_PLAYS, OFF_PLAYS, clockText, downText, runLivePlay, spotText } from '../engine.js';
 import { DT, createLivePlay, hurry, playSeconds, playState, snap, step as stepLive, worldSpots } from '../live.js';
 import { measureVersion } from '../body.js';
+import { RATES } from '../penalties.js';
 import { Stage, webglAvailable } from '../field3d.js';
 import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
@@ -64,8 +65,9 @@ function setFlow(st) {
 const setState = setFlow;
 export let stage = null;
 let stageWrap = null;
-// Hooks for the browser tests (test/browser.mjs): read-only views of the game's state.
-if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug };
+// Hooks for the browser tests (test/browser.mjs): read-only views of the game's state, and the
+// foul rates so a test can force a flag.
+if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug, RATES };
 
 export function ensureStage() {
   if (stage || !webglAvailable()) return;
@@ -144,8 +146,10 @@ export function startLive(off, def, opts) {
   if (L3.replay) stopReplay();
   // The replay recording: the game as it was before the play (its random seed included) and
   // every simulation step's input, so the play can be run again exactly, step for step.
-  L3.rec = { g: structuredClone(g), off, def, opts: { ...opts, from }, log: [], done: false };
-  L3.lp = createLivePlay(g, off, def, { ...opts, from });
+  // Officials on the field: fouls are called as the contact happens (see penalties.js).
+  const o = { flags: true, ...opts, from };
+  L3.rec = { g: structuredClone(g), off, def, opts: o, log: [], done: false };
+  L3.lp = createLivePlay(g, off, def, o);
   // No huddle: everyone sprints straight to the line.
   if (opts.hurry) hurry(L3.lp);
   L3.paused = false;
@@ -253,11 +257,11 @@ function resultBanner(e, lp, before) {
   // two-minute warning, timeouts).
   if (e.head) {
     head = e.head;
-    tone = e.highlight === 'miss' ? 'to' : e.kind === 'score' ? 'td' : e.highlight === 'turnover' ? 'to' : e.kind === 'quarter' || e.kind === 'info' || e.kind === 'timeout' ? 'muted' : '';
+    tone = e.highlight === 'miss' ? 'to' : e.kind === 'score' ? 'td' : e.highlight === 'turnover' ? 'to' : e.kind === 'quarter' || e.kind === 'info' || e.kind === 'timeout' ? 'muted' : e.highlight === 'flag' ? 'flag' : '';
   }
   // Why it happened, when a Pokémon's type, ability or size decided part of the play.
   const notes = (lp?.notes ?? []).filter((n) => n.kind === 'type' || n.kind === 'ability' || n.kind === 'size').slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
-  const next = g.final ? 'Final' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
+  const next = g.final ? 'Final' : g.phase === 'penalty' ? 'Accept or decline the penalty' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
   const clock = !g.final && g.phase === 'play' && !changed && !td && e.down ? (g.clockRunning ? '' : 'Clock stopped') : '';
   return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed };
 }

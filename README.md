@@ -64,6 +64,14 @@ The clock follows football's rules in every game, live or simulated, and AI team
 - **The try.** After a touchdown the scoring team kicks the extra point (from 33 yards, with the kicker's own odds) or goes for two with any run or pass from the 2, played on the field like any snap; a two-point play does not count in anyone's stats. The AI goes for two late in the game when the usual chart says so (down 2, 5, 9, 10, 12 or 13, or up 1, 4, 5 or 12).
 - **Kickoffs.** Your team picks Kick deep or Onside kick. An onside kick the other team expects (behind late) is recovered about one time in eight; a surprise one about half the time, better with an accurate kicker. The AI onside-kicks when it is behind by up to 16 in the last few minutes, and once in a long while as a surprise. In Auto mode the try and the kickoff are yours in the 4th quarter.
 
+### Penalties
+
+Officials call false starts, offside, holding (offensive and defensive) and pass interference (both ways) in every game, live or simulated (`src/penalties.js`, checked by `test/penalties.mjs`). Awareness decides who commits them: a Pokémon at 40 awareness draws about twice the flags of one at 70, and one at 100 about a third. On the live field the calls come from the contact itself: a blocker his rusher is beating grabs as the rusher gets off, a defender hangs on a receiver who is not the target, a trailing defender who gets to the catch point late interferes, a receiver pushes off in a contested catch. Road linemen false-start more (crowd noise). The fast simulator rolls the same fouls from awareness and the matchup.
+
+- **Before the snap.** A false start or offside kills the play and is walked off on the spot; offside that reaches the line to gain is a first down.
+- **During the play.** A yellow flag lands by the foul and the play runs to the whistle. Holding by the offense is 10 yards and offensive interference 10, both repeating the down; defensive holding is 5 yards and an automatic first down; defensive pass interference is a spot foul and an automatic first down (at the 1 if it happens in the end zone). Distance penalties stop at half the distance to the goal, and flags on both teams offset.
+- **Accept or decline.** The referee announces the foul, the side, the player and what accepting means. When the foul was against your team, the call sheet shows Accept and Decline with what each leaves (for example "PAL 2nd & 16 at PAL 30" against "PAL 3rd & 1 at PAL 45"), with a Fits tag on the better one. The AI takes whichever leaves it better off. An accepted penalty wipes the play's stats; the box score counts penalties and yards per team. In Auto mode the choice is yours in the 4th quarter.
+
 Three modes are in the menu: **Play** (you control the quarterback and then the ball carrier, or a defender), **Coach** (you call every play and watch the AI run it) and **Auto** (the AI calls and plays).
 
 ### Abilities and types

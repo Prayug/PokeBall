@@ -21,6 +21,8 @@ export function userSide() {
 export function needsUser(g) {
   if (g.final) return false;
   // The try and the kickoff are yours when your side kicks (in Auto, only in the 4th quarter).
+  // After a flag, the call is yours when the foul was against you (in Auto, only in the 4th quarter).
+  if (g.phase === 'penalty') return g.pending?.offended != null && !!g.manual?.[g.pending.offended] && (!S.coach || g.quarter >= 4);
   if (g.phase === 'pat' || g.phase === 'kickoff') return !!g.manual?.[g.poss] && (!S.coach || g.quarter >= 4);
   if (!S.coach) return true;
   return g.down >= 3 || ((g.quarter === 2 || g.quarter >= 4) && g.clock <= 120) || g.quarter >= 5;
@@ -337,7 +339,8 @@ export function boxHtml(g) {
   const T = (i) => g.teams[i].team;
   const fmtTop = (s) => clockText(s);
   const rowsT = [['First downs', (i) => T(i).fd], ['Total yards', (i) => T(i).yds], ['Passing', (i) => T(i).passYds], ['Rushing', (i) => T(i).rushYds],
-    ['Sacks allowed', (i) => T(i).sacks], ['Turnovers', (i) => T(i).to], ['3rd down', (i) => `${T(i).third[1]}/${T(i).third[0]}`], ['Possession', (i) => fmtTop(T(i).top)]];
+    ['Sacks allowed', (i) => T(i).sacks], ['Turnovers', (i) => T(i).to], ['3rd down', (i) => `${T(i).third[1]}/${T(i).third[0]}`],
+    ['Penalties', (i) => `${T(i).pen ?? 0}-${T(i).penYds ?? 0}`], ['Possession', (i) => fmtTop(T(i).top)]];
   const team = `<table class="teamstats"><thead><tr><th></th><th class="num">${esc(g.teams[1].abbr)}</th><th class="num">${esc(g.teams[0].abbr)}</th></tr></thead>
     <tbody>${rowsT.map(([l, f]) => `<tr><td>${l}</td><td class="num">${f(1)}</td><td class="num">${f(0)}</td></tr>`).join('')}</tbody></table>`;
   const players = [1, 0].map((i) => {
@@ -388,8 +391,9 @@ export function doCall(call) {
   const us = userSide();
   // A call from the wrong side's sheet (a stale click, a script) is ignored. The try and the
   // kickoff are offense calls for the side that kicks.
-  const mine = g.phase !== 'play' ? (g.poss === us ? OFF_PLAYS : {}) : g.poss === us ? OFF_PLAYS : DEF_PLAYS;
-  if (!mine[call]) return;
+  const mine = g.phase === 'penalty' ? (g.pending?.offended === us ? OFF_PLAYS : {}) : g.phase !== 'play' ? (g.poss === us ? OFF_PLAYS : {}) : g.poss === us ? OFF_PLAYS : DEF_PLAYS;
+  if (!mine[call] || (g.phase === 'penalty') !== (OFF_PLAYS[call]?.kind === 'penalty')) return;
+  if (g.phase === 'penalty') { S.csTab = null; playCall(call, 'base', null, {}); return; }
   // The AI side may stop the clock before the snap.
   if (aiTimeouts(g) != null) flashTimeout(g);
   const off = g.poss === us ? call : aiOffenseCall(g);

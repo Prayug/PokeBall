@@ -509,7 +509,9 @@ body.g3d-on main { max-width: none; }
 .bc-team .tos { margin-left: 2px; }
 .bc-clock.run { color: #fff3c4; }
 .sb-clock.run { color: var(--amber); }
-.pcard.k-xp, .pcard.k-kickoff { --fam: #a7bba9; } .pcard.k-spike, .pcard.k-kneel { --fam: #c792ff; }
+.pcard.k-xp, .pcard.k-kickoff { --fam: #a7bba9; } .pcard.k-penalty { --fam: #ffd23f; }
+.cs-flag .flagtxt { color: #ffe27a; font-weight: 600; } .cs-flag .flagtxt::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 7px; background: #ffd23f; transform: rotate(8deg); }
+.lower3.flag { border-color: #ffd23f; } .lower3.flag .l3-head b { color: #ffd23f; } .pcard.k-spike, .pcard.k-kneel { --fam: #c792ff; }
 @media (prefers-reduced-motion: reduce) { .cs-clock .clk.run::before { animation: none; } }
 .cs-cards { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
 .cs-book { display: grid; gap: 8px; }
