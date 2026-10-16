@@ -35,3 +35,5 @@ jobs:
         run: node test/formations.mjs
       - name: League mode
         run: node test/league.mjs
+      - name: Two players in one play
+        run: node test/controls.mjs

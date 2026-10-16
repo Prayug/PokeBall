@@ -5,6 +5,7 @@ import { render, setScreen } from '../app.js';
 import { S, loadSaved } from '../state.js';
 import { P, esc, sprite } from '../ui.js';
 import { autoAdvance } from './game.js';
+import { sharedInHtml } from './share.js';
 
 function resumeScreen(L, game) {
   if (game && !game.final) return 'game';
@@ -30,6 +31,7 @@ export function renderHome() {
   const st = S.setup;
   const showcase = [130, 248, 135, 65, 448, 445].filter((id) => PLAYERS[id]);
   return `<section class="home">
+    ${sharedInHtml()}
     <div class="hero">
       <p class="eyebrow">Gen 1 to 9 · 22 positions · 8-team league</p>
       <h1>Draft Pokémon. Coach football.</h1>
@@ -57,13 +59,15 @@ export function renderHome() {
           <div class="actions"><button class="btn" data-act="continue">Continue league</button><button class="btn" data-act="exportsave">Export save</button></div><hr>` : ''}
         <h2>Quick game</h2>
         <p>Two AI-drafted rosters, kickoff right away. You coach the home side.</p>
-        <button class="btn" data-act="quick">Play a quick game</button>
+        <div class="actions"><button class="btn" data-act="quick">Play a quick game</button>
+          <button class="btn" data-act="quick2">Two players, one screen</button></div>
+        <p class="small muted">Two players: one keyboard (WASD and the arrows) or gamepads. Player 1 has the home team, player 2 the away team, and each of you calls and plays your own side.</p>
         <hr>
-        <details class="importbox" ${S.importMsg ? 'open' : ''}><summary>Import a save</summary>
-          <p class="small muted">Load a league from an exported file, or paste its contents. This replaces the league saved in this browser.</p>
+        <details class="importbox" ${S.importMsg ? 'open' : ''}><summary>Import a save or a shared league</summary>
+          <p class="small muted">Load a league from an exported file, or paste its contents, a league code or a share link. A save replaces the league saved in this browser.</p>
           <input type="file" id="import-file" accept="application/json,.json">
-          <textarea id="import-text" rows="3" placeholder="Paste save JSON"></textarea>
-          <button class="btn" data-act="importpaste">Load pasted save</button>
+          <textarea id="import-text" rows="3" placeholder="Paste save JSON, a league code or a link"></textarea>
+          <button class="btn" data-act="importpaste">Load what I pasted</button>
           ${S.importMsg ? `<p class="small bad">${esc(S.importMsg)}</p>` : ''}
         </details>
       </div>

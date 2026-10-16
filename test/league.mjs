@@ -8,6 +8,7 @@
 import * as LG from '../src/league.js';
 import { PLAYERS, SLOT_KEYS, applyGrowth } from '../src/ratings.js';
 import { simUntil } from '../src/engine.js';
+import { decodeLeague, encodeLeague, leagueFromShare } from '../src/share.js';
 
 const SEASONS = Number(process.argv[2] ?? 2);
 const SEED = Number(process.argv[3] ?? 11);
@@ -244,6 +245,45 @@ check(firstSeason(L) === again.champion, 'dynasty: the same seed crowns the same
   delete v1.version;
   LG.migrateLeague(v1);
   check(v1.version === 2 && v1.season === 1 && Array.isArray(v1.history) && v1.growth && v1.condition && Array.isArray(v1.rookies), 'save: a version 1 save migrates');
+}
+
+// ---------- sharing a league (share.js) ----------
+// The code rebuilds the draft exactly: every pick (the user's own slot choices too), the
+// schedule and the trade offer; mid-draft, and after the rookie draft has replaced the picks.
+{
+  const draftView = (L) => ({ teams: L.teams.map((t) => [t.name, t.abbr, t.roster, t.slots, t.lineup, t.bench]), picks: L.picks, schedule: L.schedule, trade: L.trade, phase: L.phase, rng: L.rngState });
+  const S2 = LG.createLeague({ seed: SEED * 7919 + 3, teamName: 'Sharé Testers', abbr: 'SHR', rounds: 28, legendaries: true });
+  let n = 0;
+  while (S2.phase === 'draft') {
+    const pk = LG.currentPick(S2);
+    if (S2.teams[pk.team].user) {
+      // The user takes the third-best choice, into its worst open slot or the bench.
+      const open = LG.openSlots(S2.teams[pk.team]);
+      const ids = LG.available(S2).filter((id) => !LG.blockReason(S2, S2.teams[pk.team], id));
+      const id = ids[(n * 7) % ids.length];
+      LG.makePick(S2, id, open.length ? open[(n * 5) % open.length] : 'BENCH');
+      n++;
+    } else { const c = LG.aiChoosePick(S2); LG.makePick(S2, c.id, c.slot); }
+    if (S2.pickIndex === 37) {
+      const mid = leagueFromShare(decodeLeague(`https://example.com/PokeBall/#league=${encodeLeague(S2)}`));
+      check(same(draftView(mid), draftView(S2)), 'share: a code made mid-draft rebuilds the draft so far');
+    }
+  }
+  const code = encodeLeague(S2);
+  check(code.length < 600, `share: the code is compact (${code.length} characters for ${S2.picks.length} picks)`);
+  const D = decodeLeague(code);
+  check(D && D.name === 'Sharé Testers' && D.abbr === 'SHR' && D.rounds === 28 && D.legendaries && D.typeCap, 'share: the code carries the team name and settings');
+  check(same(draftView(leagueFromShare(D)), draftView(S2)), 'share: the code rebuilds the finished draft, schedule and trade offer');
+  const own = leagueFromShare(D, { replay: false, teamName: 'Mine', abbr: 'MIN' });
+  check(own.phase === 'draft' && own.pickIndex === 0 && own.teams[0].name === 'Mine' && same(own.picks.map((p) => p.team), S2.picks.map((p) => p.team)), 'share: drafting it yourself starts the same draft order fresh');
+  // Through a season and the offseason: the first draft is kept for sharing.
+  S2.phase = 'season';
+  while (S2.phase === 'season') playWeek(S2);
+  while (S2.phase === 'playoffs') playPlayoffRound(S2);
+  LG.startOffseason(S2);
+  LG.finishOffseason(S2, null);
+  check(encodeLeague(S2) === code, 'share: after the rookie draft the league still shares its first draft');
+  check(decodeLeague('not a code') === null && decodeLeague('#league=AAAA') === null && decodeLeague(`#league=${code.slice(0, 40)}`) === null, 'share: a bad or cut-off code is refused');
 }
 
 applyGrowth({});

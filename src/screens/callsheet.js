@@ -7,7 +7,7 @@ import { diagram, formationName } from '../playbook.js';
 import { render } from '../app.js';
 import { S } from '../state.js';
 import { esc } from '../ui.js';
-import { userSide } from './game.js';
+import { twoPlayer, userSide } from './game.js';
 
 // Play families for the call sheet: a short label and a colored edge per group.
 const DEF_GROUPS = [['front', 'Man', ['base', 'cover1_robber', 'cover2_man', 'man_press', 'goal_line']],
@@ -125,7 +125,8 @@ export function callSheetHtml(g) {
       <span class="pc-top"><em class="pc-kind">${tag}</em>${form ? `<span class="pc-form">${esc(form)}</span>` : ''}</span>
       <span class="pblurb">${esc(extra)}</span></button>`;
   };
-  const who = onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
+  const us = userSide();
+  const who = twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)} ${onOff ? 'offense' : 'defense'}${onOff ? '' : ' (the offense has called its play)'}` : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
   const head = `<div class="cs-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>
       <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur && !S.csAll ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
       ${formSelect(onOff)}
