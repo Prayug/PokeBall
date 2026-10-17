@@ -85,9 +85,12 @@ export function ensureStage() {
     <div class="ov-pause" id="pause-ov" hidden><div><b>Paused</b><span>Press <kbd>P</kbd> or <kbd>Esc</kbd> to resume</span><button class="btn" data-act="resume">Resume</button></div></div>
     <div class="ov-help" id="help-ov" hidden><div class="card"><h3>Controls</h3>${keysHelp()}<button class="btn primary" data-act="helpok">Got it</button></div></div>
     <div class="dbg-hud" id="dbg-hud"></div>
-    <div class="touch" id="touch" aria-hidden="true"><div class="stick" id="stick"><span></span></div>
-      <div class="tbtns"><button data-key="Space">Snap / Juke / Dive</button><button data-key="KeyE">Truck</button><button data-key="KeyR">Spin</button><button data-key="KeyQ">Switch</button>
-      <span class="trow">${[1, 2, 3, 4, 5].map((n) => `<button data-key="Digit${n}">${n}</button>`).join('')}</span></div></div>`;
+    <div class="touch" id="touch" data-mode="idle" aria-hidden="true"><div class="tleft"><button data-key="ShiftLeft" class="t-sprint">Sprint</button><div class="stick" id="stick"><span></span></div></div>
+      <div class="tbtns"><span class="trow t-pass"><button data-touch="lob" class="t-lob">Lob</button><button data-key="KeyT">Away</button></span>
+      <span class="trow t-pass">${[1, 2, 3, 4, 5].map((n) => `<button data-key="Digit${n}">${n}</button>`).join('')}</span>
+      <span class="trow t-run"><button data-key="KeyE">Truck</button><button data-key="KeyR">Spin</button><button data-key="KeyQ">Switch</button></span>
+      <button data-key="Space" class="t-main">Snap / Juke / Dive</button></div></div>
+    <div class="touch-top" id="touch-top" aria-hidden="true"><button data-touch="pause" class="t-live">Pause</button><button data-touch="camera">Camera</button></div>`;
   stageWrap.prepend(stage.el);
   bindTouch(stageWrap);
   if (!L3.raf) L3.raf = requestAnimationFrame(loop);
@@ -215,8 +218,20 @@ export function afterLivePlay(entry) {
   save();
   render();
   if (!entry || !g) { autoAdvance(); return; }
-  if (stage) showBanner(resultBanner(entry, null, b));
+  // No live play follows to clear it, so the card leaves once the result beat is over.
+  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); }
   autoAdvance();
+}
+
+// A new game: nothing from the last one (its result card, result and reset beats, held keys)
+// carries over onto the first call sheet.
+export function resetBetweenGames() {
+  L3.lp = null; L3.preview = null; L3.spots = null; L3.rec = null; L3.before = null; L3.committed = null;
+  L3.pclock = 40; L3.paused = false; L3.resultUntil = 0; L3.resetUntil = 0; L3.tickerUntil = 0; L3.scoreFlash = [0, 0];
+  L3.deadT = 0; L3.hold = 0; L3.lob = null; L3.snapWant = false; L3.autoSnap = null; L3.keys.clear(); L3.edges.clear();
+  if (L3.replay) stopReplay();
+  hideBanner();
+  if (stage) setFlow('PLAY_SELECTION');
 }
 
 // The broadcast lower third after the whistle: what happened, the yards, who did it, the next
@@ -455,6 +470,8 @@ function loop(now) {
   const tip = document.getElementById('hud-tip');
   const t = hudTip(L3.lp);
   if (tip && tip.textContent !== t) tip.textContent = t;
+  const pad = document.getElementById('touch'), mode = touchMode(L3.lp);
+  if (pad && pad.dataset.mode !== mode) { pad.dataset.mode = mode; if (mode !== 'pass') pad.classList.remove('lob'); }
   const call = document.getElementById('hud-call');
   const ct = L3.lp && L3.lp.phase === 'live' ? `${OFF_PLAYS[L3.off].name} vs ${DEF_PLAYS[L3.def].name}` : '';
   if (call && call.textContent !== ct) call.textContent = ct;
@@ -623,5 +640,37 @@ function bindTouch(root) {
   });
   const end = () => { origin = null; L3.stick = null; stick.firstElementChild.style.transform = ''; };
   stick.addEventListener('pointerup', end); stick.addEventListener('pointercancel', end);
-  root.querySelectorAll('[data-key]').forEach((b) => b.addEventListener('pointerdown', (e) => { e.preventDefault(); L3.edges.add(b.dataset.key); }));
+  // Each button is held like its key: a receiver's number tapped is a touch pass and held is a
+  // bullet, and Sprint runs for as long as it is held. Lob arms the next number as a lob.
+  const touchPad = root.querySelector('#touch');
+  root.querySelectorAll('[data-key]').forEach((b) => {
+    const key = b.dataset.key;
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (isPaused()) return;
+      try { b.setPointerCapture(e.pointerId); } catch { /* not an active pointer */ }
+      if (key.startsWith('Digit') && touchPad.classList.contains('lob')) { L3.lob = key; touchPad.classList.remove('lob'); }
+      L3.edges.add(key); L3.keys.add(key);
+    });
+    const up = () => L3.keys.delete(key);
+    b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
+  });
+  root.querySelectorAll('[data-touch]').forEach((b) => b.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const act = b.dataset.touch;
+    if (act === 'lob') touchPad.classList.toggle('lob');
+    if (act === 'pause') togglePause();
+    if (act === 'camera') cycleCamera();
+  }));
+}
+
+// What the touch pad shows: nothing between plays, only Pause while you watch the AI run your
+// call, the throw buttons once the quarterback has the ball and can throw, the ball carrier's
+// and defender's moves otherwise.
+function touchMode(lp) {
+  if (!lp || lp.phase === 'dead') return 'idle';
+  const c = lp.control;
+  if (lp.phase === 'live' && !c) return 'watch';
+  if (lp.phase !== 'pre' && c?.side === 'off' && c.slot === 'QB' && lp.ball.holder === c && lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'run') return 'pass';
+  return lp.phase === 'pre' ? 'pre' : 'run';
 }

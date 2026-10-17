@@ -10,7 +10,7 @@ import { render, setScreen } from '../app.js';
 import { S, reduceMotion, save, savePrefs, timers } from '../state.js';
 import { P, edgeRow, esc, ovr, sprite, teamBadge, typeChips } from '../ui.js';
 import { aiFormation, aiFront, callSheet, callSheetHtml, formFor, frontFor } from './callsheet.js';
-import { L3, afterLivePlay, replayReady, stage, startLive, stopReplay } from './live3d.js';
+import { L3, afterLivePlay, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
 
 // ---------- game ----------
 export function userSide() {
@@ -418,8 +418,7 @@ export function autoAdvance() {
 
 export function startGame(game, meta) {
   S.game = game; S.gameMeta = meta; S.gameTab = 'log'; S.busy = false; S.subSel = null;
-  L3.lp = null; L3.preview = null; L3.spots = null; L3.pclock = 40; L3.rec = null; L3.paused = false;
-  if (L3.replay) stopReplay();
+  resetBetweenGames();
   // The first game shows the controls once.
   if (!S.seenHelp) S.helpOpen = true;
   setScreen('game');
