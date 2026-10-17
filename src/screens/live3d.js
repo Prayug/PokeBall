@@ -218,8 +218,20 @@ export function afterLivePlay(entry) {
   save();
   render();
   if (!entry || !g) { autoAdvance(); return; }
-  if (stage) showBanner(resultBanner(entry, null, b));
+  // No live play follows to clear it, so the card leaves once the result beat is over.
+  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); }
   autoAdvance();
+}
+
+// A new game: nothing from the last one (its result card, result and reset beats, held keys)
+// carries over onto the first call sheet.
+export function resetBetweenGames() {
+  L3.lp = null; L3.preview = null; L3.spots = null; L3.rec = null; L3.before = null; L3.committed = null;
+  L3.pclock = 40; L3.paused = false; L3.resultUntil = 0; L3.resetUntil = 0; L3.tickerUntil = 0; L3.scoreFlash = [0, 0];
+  L3.deadT = 0; L3.hold = 0; L3.lob = null; L3.snapWant = false; L3.autoSnap = null; L3.keys.clear(); L3.edges.clear();
+  if (L3.replay) stopReplay();
+  hideBanner();
+  if (stage) setFlow('PLAY_SELECTION');
 }
 
 // The broadcast lower third after the whistle: what happened, the yards, who did it, the next
