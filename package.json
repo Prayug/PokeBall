@@ -7,7 +7,8 @@
     "models": "node build/fetch_models3d.mjs",
     "balance": "node test/balance.mjs",
     "live": "node test/live.mjs",
-    "test": "node test/plays.mjs && node test/scenarios.mjs && node test/formations.mjs && node test/league.mjs && node test/kicks.mjs",
+    "iq": "node test/iq.mjs",
+    "test": "node test/plays.mjs && node test/scenarios.mjs && node test/formations.mjs && node test/league.mjs && node test/kicks.mjs && node test/iq.mjs 300 --strict",
     "league": "node test/league.mjs",
     "kicks": "node test/kicks.mjs"
   },

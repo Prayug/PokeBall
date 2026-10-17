@@ -37,6 +37,10 @@ export const RECEIVERS = ['WR1', 'WR2', 'WR3', 'TE', 'RB'];
 export const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 export const len = (x, y) => Math.hypot(x, y);
 export const sgn = (v) => (v < 0 ? -1 : 1);
+// The line to gain, in yards past the line of scrimmage (the goal line when it is goal to go).
+export const sticks = (lp) => clamp(lp.g.toGo ?? 10, 1, lp.goalX);
+// Must this snap reach the sticks (third or fourth down with more than a yard to go)?
+export const mustGain = (lp) => (lp.g.down ?? 1) >= 3 && sticks(lp) > 1;
 
 // ---------- setup ----------
 export function createLivePlay(g, offCall, defCall, opts = {}) {
@@ -429,6 +433,7 @@ export function step(lp, input = null) {
   snapFlight(lp);
   ballFlight(lp);
   if (lp.kick) kickStep(lp);
+  if (lp.phase === 'live' && !lp.tackle) qbSlide(lp);
   if (lp.phase === 'live' && !lp.tackle) contacts(lp);
   if (lp.phase === 'live') tackleStep(lp);
   if (lp.phase === 'live') boundaries(lp);
@@ -513,8 +518,13 @@ export function setCarrier(lp, p) {
   for (const q of lp.players) {
     if (q === p) continue;
     if (q.side !== p.side) { q.role = 'pursue'; q.react = q.eng ? 0 : 0.1 + (100 - (q.a.spd + q.a.awr) / 2) * 0.003; }
-    else if (q.role === 'route' || q.role === 'qb' || q.role === 'handoff' || q.role === 'idle' || q.role === 'carrier' || (lp.kick && q.role?.[0] === 'k') || q.role === 'returner') {
-      q.role = q.side === 'off' && p.side === 'off' && lp.kind === 'run' && q.slot === 'QB' ? 'fake' : 'escort';
+    else if (q.role === 'route' || q.role === 'qb' || q.role === 'handoff' || q.role === 'idle' || q.role === 'carrier' || (lp.kick && q.role?.[0] === 'k') || q.role === 'returner'
+      // An interception: the rest of the defense turns blocker for the man with the ball
+      // instead of chasing him.
+      || (!lp.kick && p.side === 'def' && (q.role === 'cover' || q.role === 'rush'))) {
+      // The quarterback carries out his fake after a handoff and trails the play after a
+      // completion; he is not a lead blocker 20 yards downfield.
+      q.role = q.side === 'off' && p.side === 'off' && q.slot === 'QB' ? (lp.kind === 'run' ? 'fake' : 'trail') : 'escort';
     }
   }
 }
@@ -598,6 +608,10 @@ function think(lp, p) {
       return seek(p, lp.carrierSet ? { x: -6, y: -lp.holeY * 0.3 } : mesh, 0.6);
     }
     case 'fake': return seek(p, { x: -7, y: -sgn(lp.holeY) * 4 }, 0.5);
+    case 'trail':
+      // Jog after the play well behind the ball, in case it turns into a return.
+      if (!c) return seek(p, { x: p.x, y: p.y }, 0.2);
+      return seek(p, { x: Math.min(c.x - 9, Math.max(p.x, 3)), y: c.y * 0.6 + p.y * 0.4 }, 0.45, 2);
     case 'qbkeep':
       // QB draw: drop as if to pass, then go. QB power: a step to the hole side.
       if (lp.play.dir === 'qbdraw') return seek(p, { x: Math.min(p.home.x - 1.6, p.x), y: p.home.y }, 0.35);
@@ -789,6 +803,29 @@ function carrierWant(lp, p) {
       else return seek(p, { x: Math.min(1.5, -1 + e * (lp.play.dir === 'toss' ? 4.5 : 3)), y: lp.holeY }, 1, 0.05);
     } else if (e < (lp.play.dir === 'power' || lp.play.dir === 'qbpower' ? 0.8 : 0.55) && !wide) return seek(p, { x: 1.5, y: lp.holeY }, 1, 0.05);
   }
+  // The sneak: straight ahead behind the center, leaning a half step to the softer A gap. The
+  // pile decides it; he never bounces it outside.
+  if (lp.kind === 'run' && lp.play.dir === 'sneak' && p.slot === 'QB' && p.x < 2) {
+    let soft = 0, sd = -99;
+    for (const s2 of [-1, 1]) {
+      let room = 99;
+      for (const q of lp.players) if (q.side !== p.side) room = Math.min(room, Math.hypot(q.x - (p.x + 1.5), q.y - s2 * 1));
+      if (room > sd) { sd = room; soft = s2; }
+    }
+    p.want = { vx: p.top, vy: clamp(soft * 1 - p.y, -1, 1) * 1.5 };
+    return;
+  }
+  // Behind the line with the play strung out, a back gets north and takes what is there
+  // rather than running sideways for the boundary.
+  const strung = p.side === 'off' && lp.kind === 'run' && p.x < 0.5 && lp.t - (lp.carrierAt ?? 0) > 0.8 ? 1 : 0;
+  // A yard or two short of the line to gain (or the goal line) with a tackler coming, he gets
+  // north and fights for it instead of dancing sideways.
+  let north = 0;
+  if (p.side === 'off' && p.x > -1) {
+    const mark = lp.spot + sticks(lp) >= 100 ? lp.goalX : sticks(lp);
+    const short = mark - p.x;
+    if (short > 0 && short < 3) for (const q of lp.players) if (q.side !== p.side && !q.eng && dist(q, p) < 3.5) { north = 1.6 * (1 - short / 3) + 0.6; break; }
+  }
   let best = null;
   for (let a = -90; a <= 90; a += 15) {
     const r = (a * Math.PI) / 180;
@@ -809,7 +846,7 @@ function carrierWant(lp, p) {
       }
       if (Math.abs(py) > SIDE - 1) danger += 0.8 / k;
     }
-    const score = dx * fwd * 1.7 - danger - Math.abs(a) * 0.002;
+    const score = dx * fwd * (1.7 + north) - danger - Math.abs(a) * 0.002 - strung * Math.max(0, Math.abs(a) - 45) / 45 * 0.9;
     if (!best || score > best.score) best = { dx, dy, score };
   }
   const sprint = 1;
@@ -1184,6 +1221,32 @@ export function note(lp, kind, text, who = null) {
   event(lp, 'note', text, who);
 }
 
+// ---------- the quarterback slide ----------
+// A scrambling quarterback who has what he needs (the first down, or a solid gain) gives
+// himself up feet first when a defender is about to hit him, instead of taking the shot. Not
+// with the end zone in reach, and the more aware he is the more reliably he does it.
+function qbSlide(lp) {
+  const c = lp.carrierSet ? lp.carrier : null;
+  if (!c || !lp.scramble || c !== lp.off.QB || lp.kick || c === lp.control && lp.manual) return;
+  if (lp.goalX - c.x < 5 || c.x < 1) return;
+  const gained = c.x >= sticks(lp) || c.x >= 5;
+  if (!gained) return;
+  let hit = null;
+  for (const q of lp.players) {
+    if (q.side === c.side || q.eng || q.stun > 0) continue;
+    const d = dist(q, c), close = ((c.x - q.x) * q.vx + (c.y - q.y) * q.vy) / (d || 1);
+    if (d < c.r + q.r + 1.6 && close > 1.5) { hit = q; break; }
+  }
+  if (!hit || lp.slideRoll === hit) return;
+  lp.slideRoll = hit; // one decision per tackler
+  if (!chance(lp.g, clamp(0.55 + (c.a.awr - 60) * 0.01, 0.4, 0.95))) return;
+  // He goes down where he is: the ball is spotted where he started the slide.
+  lp.spotX = c.x;
+  c.downed = true; c.vx *= 0.4; c.vy *= 0.4;
+  event(lp, 'slide', `${nm(c.id)} slides`, c, hit);
+  finish(lp, { how: 'slide' });
+}
+
 // ---------- contact: tackles ----------
 function contacts(lp) {
   const c = lp.carrierSet ? lp.carrier : lp.kind === 'pass' && lp.ball.holder === lp.off.QB ? lp.off.QB : null;
@@ -1262,7 +1325,10 @@ function startTackle(lp, c, q, sack, dove) {
   // Falling forward: a carrier going downfield gets his body length past the contact point,
   // more when he is stronger and heavier than the tackler, less when he is met square.
   const headOn = (q.x - c.x) * fwd > 0.2;
-  const lean = sack ? 0 : clamp(0.3 + (c.a.strBT - q.a.tkl) * 0.012 + Math.max(0, c.vx * fwd) * 0.07 + Math.log(mc / mq) * 0.35 - (headOn ? 0.35 : 0), 0, 1.4);
+  // Short of the sticks or the goal line he stretches the ball out for it.
+  const mark = c.side === 'off' ? (lp.spot + sticks(lp) >= 100 ? lp.goalX : sticks(lp)) : null;
+  const reach = mark != null && mark - c.x > 0 && mark - c.x < 1.5 ? 0.35 : 0;
+  const lean = sack ? 0 : clamp(0.3 + reach + (c.a.strBT - q.a.tkl) * 0.012 + Math.max(0, c.vx * fwd) * 0.07 + Math.log(mc / mq) * 0.35 - (headOn ? 0.35 : 0), 0, 1.4 + reach);
   lp.tackle = { c, q, sack, t0: lp.t, T: TACKLE_T * (1 + drag), vx, vy, fp: c.x, fwd, dove, lean, contact: { x: c.x, y: c.y } };
   if (lp.windup) lp.windup = null;
   c.slow = 0; q.dive = dove ? 0.3 : q.dive;
@@ -1417,7 +1483,7 @@ function buildResult(lp, end) {
   if (end.how === 'td') yards = lp.goalX;
   yards = Math.max(yards, -lp.spot);
   const tackler = end.tackler ?? null;
-  const tk = tackler ? ` Tackled by ${nm(tackler.id)}.` : end.how === 'out' ? ' Pushed out of bounds.' : '';
+  const tk = tackler ? ` Tackled by ${nm(tackler.id)}.` : end.how === 'out' ? ' Pushed out of bounds.' : end.how === 'slide' ? ' He slides to give himself up.' : '';
   const se = stats.se;
   const highlight = yards >= 20 ? 'big' : null;
 
