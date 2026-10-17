@@ -266,7 +266,8 @@ function release(lp, r, away, kind = 'touch', place = null) {
   const air = Math.hypot(px - rp.x, py - rp.y);
   const tPr = pressured ? traitMod('pressure', { qb }) : null;
   if (tPr) traitNotes(lp, tPr, { qb }, qb);
-  let sd = (0.25 + air * 0.042) * (1.9 - acc / 90) * (pressured ? 1 + 0.5 * tPr.v : 1) * K.sd;
+  // Accuracy falls off faster past 15 yards: the deep ball is a lower-percentage throw.
+  let sd = (0.25 + air * 0.042 + Math.max(0, air - 15) * 0.035) * (1.9 - acc / 90) * (pressured ? 1 + 0.5 * tPr.v : 1) * K.sd;
   // A bullet thrown a long way sprays more; a lob thrown short is hard to drop in.
   if (kind === 'bullet' && air > 18) sd *= 1.15;
   if (kind === 'lob' && air < 10) sd *= 1.2;
@@ -498,7 +499,7 @@ function arrival(lp) {
   const aggro = !!lp.aggro && lp.control === r;
   // Going up for it high-points the ball over a defender; a defender in the air with him makes it harder.
   const air = (rUp && contested ? 0.06 : 0) - (dUp && contested ? 0.06 : 0);
-  const base = 0.89 + (hands - 70) * 0.004 - Math.max(0, dr - 0.5) * 0.12 - Math.max(0, thrown - 18) * 0.006 + (T.catchMod ?? 0) + (aggro ? (contested ? 0.1 : -0.02) : 0) + air;
+  const base = 0.89 + (hands - 70) * 0.004 - Math.max(0, dr - 0.5) * 0.12 - Math.max(0, thrown - 18) * 0.014 + (T.catchMod ?? 0) + (aggro ? (contested ? 0.1 : -0.02) : 0) + air;
   let caught;
   if (contested) {
     const R = rep(r.id, hands, dfd.id, dfd.a.cov);

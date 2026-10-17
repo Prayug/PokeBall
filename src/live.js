@@ -137,7 +137,7 @@ function setupOffense(lp) {
     const gap = (a, b) => (O[a] && O[b] ? (O[a].y + O[b].y) / 2 : null);
     const side = chance(lp.g, 0.5) ? -1 : 1;
     const inside = (k) => (side < 0 ? gap(...[['LG', 'C'], ['LT', 'LG']][k]) : gap(...[['C', 'RG'], ['RG', 'RT']][k])) ?? side * (k ? 2.7 : 0.9);
-    lp.holeY = dir === 'outside' ? side * 9 : dir === 'sneak' ? 0 : inside(chance(lp.g, 0.55) ? 0 : 1);
+    lp.holeY = dir === 'outside' ? side * 7 : dir === 'sneak' ? 0 : inside(chance(lp.g, 0.55) ? 0 : 1);
     if (dir === 'draw') lp.holeY = inside(1);
     if (dir === 'dive' || dir === 'qbdraw' || dir === 'read') lp.holeY = inside(0);
     if (dir === 'counter') lp.holeY = inside(1);
@@ -187,16 +187,21 @@ function setupOffense(lp) {
         // Whoever had the linebacker takes the guard's man instead.
         const was = bl.find((b) => b !== g2 && b.assign === lb);
         if (was) was.assign = g2.assign;
-        g2.assign = lb; g2.pull = { until: dir === 'power' ? 0.85 : 1.0, via: { x: -1.5, y: lp.holeY - hs * 0.8 } };
+        g2.assign = lb; g2.pull = { until: dir === 'power' ? 0.85 : 0.85, via: { x: -1.5, y: lp.holeY - hs * 0.8 } };
       }
     }
-    // A fullback (the I-form's tight end) leads through the hole instead of blocking a man.
-    if (O.TE && lp.formation === 'iform' && dir !== 'sneak') O.TE.role = 'lead';
+    // A fullback (the I-form's tight end) leads through the hole instead of blocking a man: he
+    // takes the linebacker nobody up front has.
+    if (O.TE && lp.formation === 'iform' && dir !== 'sneak') {
+      O.TE.role = 'lead';
+      const free = ['MLB', 'OLB', 'SS'].map((k) => lp.def[k]).filter((q) => q && !bl.some((x) => x !== O.TE && x.assign === q));
+      O.TE.assign = free.sort((a, b) => Math.abs(a.y - lp.holeY) - Math.abs(b.y - lp.holeY))[0] ?? null;
+    }
     if (O.QB) O.QB.role = dir === 'sneak' ? 'carrier' : lp.qbRun ? 'qbkeep' : 'handoff';
     // The back leads for the quarterback on his designed runs, and takes the fake on a read.
     if (O.RB) O.RB.role = dir === 'sneak' ? 'runblock' : dir === 'qbpower' || dir === 'qbdraw' ? 'lead' : 'runner';
     if (O.TE?.role === 'lead' && O.RB?.role === 'lead') O.TE.role = 'runblock';
-    lp.handAt = { draw: 0.95, sneak: 0, dive: 0.26, power: 0.5, counter: 0.55, toss: 0.3, qbdraw: 0.85, qbpower: 0.8, read: 0.45 }[dir] ?? 0.42;
+    lp.handAt = { draw: 0.95, sneak: 0, dive: 0.2, power: 0.5, counter: 0.45, toss: 0.3, qbdraw: 0.85, qbpower: 0.8, read: 0.45 }[dir] ?? 0.42;
     // Read option: the backside end is left unblocked on purpose; the quarterback reads him.
     if (dir === 'read') {
       const s2 = -sgn(lp.holeY || 1);
@@ -512,7 +517,14 @@ export function setCarrier(lp, p) {
   // Everyone switches to the ball once it is handed off, caught or picked.
   for (const q of lp.players) {
     if (q === p) continue;
-    if (q.side !== p.side) { q.role = 'pursue'; q.react = q.eng ? 0 : 0.1 + (100 - (q.a.spd + q.a.awr) / 2) * 0.003; }
+    // A defender who watched the throw already knows where the ball is: he reacts to the catch
+    // in half the time of one reading a handoff, and one already playing the ball near the catch
+    // goes straight for the receiver.
+    if (q.side !== p.side) {
+      const onBall = lp.thrown && !lp.intercepted;
+      q.role = 'pursue';
+      q.react = q.eng || (onBall && q.react <= 0 && dist(q, p) < 6) ? 0 : (0.1 + (100 - (q.a.spd + q.a.awr) / 2) * 0.003) * (onBall ? 0.5 : 1);
+    }
     else if (q.role === 'route' || q.role === 'qb' || q.role === 'handoff' || q.role === 'idle' || q.role === 'carrier' || (lp.kick && q.role?.[0] === 'k') || q.role === 'returner') {
       q.role = q.side === 'off' && p.side === 'off' && lp.kind === 'run' && q.slot === 'QB' ? 'fake' : 'escort';
     }
@@ -609,7 +621,7 @@ function think(lp, p) {
       // Counter: a jab step the wrong way first, so the linebackers flow with it.
       if (dir === 'counter' && lp.t < 0.4) return seek(p, { x: p.x, y: -sgn(lp.holeY) * 2.5 }, 0.7);
       if (dir === 'toss') return seek(p, { x: Math.min(p.x, -4.5), y: sgn(lp.holeY) * 6 }, 1, 0.1);
-      if (dir === 'dive') return seek(p, { x: -2.6, y: lp.holeY * 0.6 }, 0.95);
+      if (dir === 'dive') return seek(p, { x: -2.2, y: lp.holeY }, 1);
       return seek(p, { x: -3.5, y: lp.holeY * 0.35 }, 0.8);
     }
     case 'carrier': return carrierWant(lp, p);
@@ -618,10 +630,17 @@ function think(lp, p) {
     case 'runblock': return runBlockWant(lp, p);
     case 'stalk': return stalkWant(lp, p);
     case 'escort': return escortWant(lp, p, c);
-    case 'lead':
-      // Through the hole a step ahead of the back, then the first defender who shows.
+    case 'lead': {
+      // Through the hole a step ahead of the back onto his linebacker, then the first defender
+      // who shows.
+      const lb = p.assign && !p.assign.eng && p.assign.stun <= 0.3 && !p.eng ? p.assign : null;
+      if (lb && p.x > -1.5 && dist(p, lb) < 8) {
+        p.aim = lb;
+        return seek(p, { x: lb.x - 0.6, y: lb.y + (lb.y > lp.holeY ? 0.3 : -0.3) }, 1, 0.3);
+      }
       if (!c) return seek(p, { x: 0.8, y: lp.holeY * (lp.play.dir === 'counter' && lp.t < 0.4 ? -0.3 : 0.85) }, 0.9, 0.3);
       return escortWant(lp, p, c);
+    }
     case 'rush': return rushWant(lp, p);
     case 'cover': return coverWant(lp, p);
     case 'pursue': return pursueWant(lp, p, c);
@@ -817,7 +836,8 @@ function carrierWant(lp, p) {
   p.want = { vx: (best.dx / l) * p.top * sprint, vy: (best.dy / l) * p.top * sprint };
   // When a tackler closes in, the AI carrier puts a move on him: power backs lower the
   // shoulder against smaller tacklers, shifty ones juke or spin.
-  if ((p !== lp.control || !lp.manual) && p.juke <= -0.9 && p.spin <= -0.9 && p.truck <= -0.9) {
+  // (Not while he is still securing a catch.)
+  if ((p !== lp.control || !lp.manual) && p.juke <= -0.9 && p.spin <= -0.9 && p.truck <= -0.9 && lp.t - (p.caughtAt ?? -9) > 0.45) {
     for (const q of lp.players) {
       if (q.side === p.side || q.eng || q.stun > 0 || dist(q, p) > 1.9) continue;
       if (chance(g, 0.02 + p.a.spd / 3000)) {
@@ -1134,7 +1154,7 @@ function blocks(lp) {
     // drives the defender away from the hole.
     const target = lp.carrierSet ? lp.carrier : lp.snapTo ?? lp.off.QB;
     let ux = target.x - d.x, uy = target.y - d.y; const l = len(ux, uy) || 1; ux /= l; uy /= l;
-    let push = clamp((passPro ? 0.12 : -0.35) + R.diff * 0.05 + mass * 0.45, -2.2, 2.2);
+    let push = clamp((passPro ? 0.12 : lp.kind === 'run' ? -0.7 : -0.35) + R.diff * 0.05 + mass * 0.45, -2.2, 2.2);
     if (passPro) {
       // Inside the cup the blocker anchors: the deeper the rusher gets, the harder it is.
       const S = pocketSpot(lp, b, d), behind = (S.x - b.x) * sgn(b.x - lp.dropX + 0.01);
@@ -1221,7 +1241,7 @@ function contacts(lp) {
     p += tTk.v;
     if (tTk.used.length) traitNotes(lp, tTk, { c, q }, c);
     if (c.slow > 0) p += 0.12;
-    if (lp.t - (lp.carrierAt ?? 0) < 0.5 && lp.caught) p += 0.1;
+    if (lp.t - (lp.carrierAt ?? 0) < 0.8 && lp.caught) p += 0.2;
     // A Ghost phases through its first would-be tackler each game.
     if (PLAYERS[c.id].types.includes('Ghost') && !g.ghostUsed[c.id] && !sack && chance(g, 0.35)) {
       g.ghostUsed[c.id] = true;
