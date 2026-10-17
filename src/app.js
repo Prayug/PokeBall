@@ -13,7 +13,7 @@ import { boardRowsHtml, detailHtml, draftTick, renderDraft, renderGrades, userDr
 import { depthClick, renderDepth } from './screens/depth.js';
 import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthers } from './screens/season.js';
 import { renderOffseason } from './screens/offseason.js';
-import { autoAdvance, doCall, renderGame, setMode, startGame, userSide } from './screens/game.js';
+import { autoAdvance, doCall, renderGame, setMode, startGame, userSide, userTimeout } from './screens/game.js';
 import { L3, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, recall, setCamera, setDebug, stage, startReplay, syncOverlays } from './screens/live3d.js';
 
 const app = document.getElementById('app');
@@ -140,6 +140,7 @@ function onClick(e) {
     }
     case 'finishgame': finishLeagueGame(); break;
     case 'call': doCall(el.dataset.call); break;
+    case 'timeout': userTimeout(); break;
     case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; S.csAll = false; render(); break;
     case 'calshot': S.calShot = el.dataset.k; render(); break;
     case 'calreset': S.cal = cameraDefaults(); stage?.rig.setCalibration(S.cal); savePrefs(); render(); break;
@@ -189,6 +190,7 @@ function onChange(e) {
   if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
+  if (t.id === 'cs-tempo') { S.tempo = t.value; t.blur(); render(); }
   if (t.id === 'cs-form') { const v = t.value || null; if (S.game?.poss === userSide()) S.formPick = v; else S.frontPick = v; t.blur(); render(); }
   if (t.id === 'g-sound') { S.sound = t.checked; setSound(S.sound); savePrefs(); }
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
