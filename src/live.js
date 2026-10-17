@@ -1121,7 +1121,7 @@ function blocks(lp) {
       if (S.t >= SHED_T) {
         unengage(b);
         b.stun = S.move === 'bull' ? 0.45 : 0.3; b.stunFall = S.move === 'bull' && mass > 0.3;
-        d.shedFrom = b; d.shedT = passPro ? 0.8 : 0.5; d.shed = null;
+        d.shedFrom = b; d.shedT = passPro ? 1.2 : 0.5; d.shed = null;
         b.contact = d.contact = 'DISENGAGED';
         if (passPro) lp.pressureBy = d;
         event(lp, 'shed', S.move, d, b);
@@ -1130,7 +1130,7 @@ function blocks(lp) {
     }
     // Rate of getting off the block, per second: rating and type edge, quick feet shed sooner,
     // and nobody sheds in the first instants of the fit.
-    const base = passPro ? 0.46 : lp.carrierSet ? 0.11 : 0.06;
+    const base = passPro ? 0.8 : lp.carrierSet ? 0.11 : 0.06;
     const quick = clamp((d.a.acc - b.a.acc) / 60, -0.4, 0.5);
     let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.8 ? 0.25 : 1);
     if (!passPro) rate = Math.max(rate, 0.1);

@@ -348,7 +348,8 @@ function kickerDistance(g, ti, dist) {
   return dist - (ac - 60) * 0.18 - Math.max(0, dist - 40) * (pw - 60) * 0.012;
 }
 export function fgOdds(g) { return fgChance(kickerDistance(g, g.poss, fgDistance(g))); }
-export function xpOdds(g) { return Math.min(0.995, fgChance(kickerDistance(g, g.poss, 33)) + 0.02); }
+const XP_DISTANCE = 33;
+export function xpOdds(g) { return Math.min(0.995, fgChance(kickerDistance(g, g.poss, XP_DISTANCE)) + 0.02); }
 
 // A kickoff (or the free kick after a safety). A side whose choices wait for a call gets the
 // kickoff call (deep or onside); the AI decides on the spot for everyone else.

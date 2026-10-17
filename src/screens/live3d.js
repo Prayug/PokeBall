@@ -580,7 +580,8 @@ export function onKey(e, down) {
     if (code === 'Slash') { e.preventDefault(); S.helpOpen = true; syncOverlays(); return; }
     if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
-    if (code === 'KeyP') { e.preventDefault(); togglePause(); return; }
+    // P pauses a play on the field; between plays it falls through to the call sheet (Punt).
+    if (code === 'KeyP' && L3.lp && L3.lp.phase !== 'dead') { e.preventDefault(); togglePause(); return; }
     if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
