@@ -14,7 +14,8 @@ import { PLAYERS } from './ratings.js';
 import { absSpot } from './engine.js';
 import { Stadium, HALF_W } from './stadium3d.js';
 import { template, upgradeTemplate, makeFigure, disposeFigure, placeholder, flies } from './figure3d.js';
-import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs, poseLimbs, hangArms } from './model3d.js';
+import { updateBlink } from './blink.js';
+import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs, poseLimbs, hangArms, foldWings } from './model3d.js';
 import { Animator } from './anim3d.js';
 import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
@@ -370,14 +371,25 @@ export class Stage {
     const hw = played === 'idle' || !played ? 0.9 : played === 'run' || played === 'walk' ? 0.5 : 0;
     f.hangW = (f.hangW ?? hw) + (hw - (f.hangW ?? hw)) * (1 - Math.exp(-dt * 6));
     hangArms(f, f.hangW);
+    // A bird on its feet folds its wings, half opening them to run and fully to hover.
+    const fw = s.hover ? 0 : played === 'idle' || !played ? (a.anim.moving ? 0.45 : 0.85) : 0;
+    f.foldW = (f.foldW ?? fw) + (fw - (f.foldW ?? fw)) * (1 - Math.exp(-dt * 5));
+    foldWings(f, f.foldW);
     // The model's own legs: full procedural stride unless its run or walk clip is playing.
     const want = played === 'run' || played === 'walk' ? 0 : played === 'idle' || !played ? 1 : 0.4;
     f.limbW += (want - f.limbW) * (1 - Math.exp(-dt * 8));
     const sf = s.top > 0 ? clampN(s.speed / s.top, 0, 1.2) : 0;
     const runWant = a.anim.moving ? 0.4 + 0.6 * Math.min(1, sf) + 0.35 * a.anim.sprK : s.engaged ? 0.35 : 0;
     f.runK = (f.runK ?? 0) + (runWant - (f.runK ?? 0)) * (1 - Math.exp(-dt * 6));
-    driveLimbs(f, { phase: a.anim.gait, run: f.runK, t: a.anim.t, flap: s.hover ? 1 : 0, weight: f.limbW });
+    // The head follows the ball (not when it is right behind, where it would whip side to side).
+    const lk = s.look == null || Math.abs(s.look) > 2.4 ? 0 : clampN(s.look, -1.1, 1.1);
+    f.look = (f.look ?? 0) + (lk - (f.look ?? 0)) * (1 - Math.exp(-dt * 5));
+    // Standing about: breathing, glances, shrugs and stretches, a wag or a ruffle of the wings.
+    const calmWant = a.anim.moving || s.engaged || s.fall > 0.5 ? 0 : s.mode === 'pre' && s.stance ? 0.35 : 1;
+    f.calm = (f.calm ?? calmWant) + (calmWant - (f.calm ?? calmWant)) * (1 - Math.exp(-dt * 4));
+    driveLimbs(f, { phase: a.anim.gait, run: f.runK, t: a.anim.t, flap: s.hover ? 1 : 0, weight: f.limbW, look: f.look, calm: f.calm, seed: a.anim.seed ?? 0 });
     poseLimbs(f, a.anim.fb);
+    updateBlink(f, dt, !(s.fall > 0.5 || s.stun > 0.3));
   }
 
   // ---------- pre-snap play art ----------
@@ -552,7 +564,12 @@ export class Stage {
       s.height = T?.height ?? a.body.height;
       s.shortLegs = T?.rig ? T.rig.legTop / T.px < 0.22 : false;
       if (a.fig) a.anim.update(dt, s);
-      if (a.fig?.model) this.modelClip(a, s, dt);
+      if (a.fig?.model) {
+        // Where the ball is, relative to where the body faces: the head turns to follow it.
+        const bp = this.ball.position;
+        s.look = lp.ball.state === 'held' && lp.ball.holder === p ? 0 : angDiff(a.yaw, Math.atan2(bp.x - a.pos.x, bp.z - a.pos.z));
+        this.modelClip(a, s, dt);
+      }
       // Sprinting (the player you control, or the ball carrier): turf kicked up behind.
       if (s.sprint && a.anim.moving && (p === lp.control || p === lp.carrier) && lp.phase === 'live') {
         a.dustT = (a.dustT ?? 0) - dt;

@@ -280,7 +280,6 @@ export function autoRig(scene, flying) {
       for (let i = 0; i < p.length; i += 3) { e.x += p[i]; e.y += p[i + 1]; e.z += p[i + 2]; ne++; }
     });
     const S = serpent(sample, ne ? e.divideScalar(ne) : null);
-    if (globalThis.DBG) console.log("serpent?", !!S, S && S.L / S.thick);
     if (S) A = S;
   }
   // Bones, placed in model space.
@@ -354,6 +353,46 @@ export function autoRig(scene, flying) {
     o.visible = false;
   });
   return A;
+}
+
+// Throw away a model's own skeleton, keeping its bind pose as plain meshes (for the few
+// exports whose skins do not match their bones: Buzzwole's torso flies apart the moment a
+// shoulder turns). autoRig then builds it a new one.
+export function unskin(scene) {
+  scene.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(scene.matrixWorld).invert();
+  const skinned = [];
+  scene.traverse((o) => { if (o.isSkinnedMesh) skinned.push(o); });
+  const v = new THREE.Vector3();
+  for (const o of skinned) {
+    o.skeleton.update();
+    const src = o.geometry, pos = src.attributes.position, out = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      o.applyBoneTransform(i, v);
+      v.applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+      out[i * 3] = v.x; out[i * 3 + 1] = v.y; out[i * 3 + 2] = v.z;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(out, 3));
+    for (const k of Object.keys(src.attributes)) if (!/^(position|normal|skinIndex|skinWeight)$/.test(k)) g.setAttribute(k, src.attributes[k]);
+    if (src.index) g.setIndex(src.index);
+    for (const gr of src.groups) g.addGroup(gr.start, gr.count, gr.materialIndex);
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, o.material);
+    m.name = o.name; m.visible = o.visible;
+    scene.add(m);
+  }
+  for (const o of skinned) o.removeFromParent();
+  // The bones go too (anything else hung on them stays where it is).
+  const tops = [];
+  scene.traverse((o) => { if (o.isBone && !o.parent?.isBone) tops.push(o); });
+  for (const b of tops) {
+    const keep = [];
+    b.traverse((c) => { if (!c.isBone && c !== b && c.parent?.isBone) keep.push(c); });
+    for (const c of keep) scene.attach(c);
+    b.removeFromParent();
+  }
 }
 
 // ---------- long bodies ----------
@@ -481,7 +520,6 @@ function bendChain(scene, chain, curve) {
   for (let i = root; i > 0; i--) aim(i, i - 1);
   for (let i = root > 0 ? root + 1 : 0; i < n - 1; i++) aim(i, i + 1);
   scene.updateMatrixWorld(true);
-  if (globalThis.DBG) console.log("bend root", root, path[root].name, path.map((b, i) => new THREE.Vector3().setFromMatrixPosition(b.matrixWorld).distanceTo(target[i]).toFixed(2)).join(","), path.map((b) => b.name).join(","));
 }
 
 // Coil a long, straight body; returns true when it did. pts: model-space vertex samples.
@@ -490,7 +528,6 @@ export function coilBody(scene, pts) {
   const chain = axialChain(scene);
   if (!chain) return false;
   const c = needsCoil(chain, pts);
-  if (globalThis.DBG) console.log("coil", chain.path.length, chain.path[0].name, chain.path[chain.path.length - 1].name, JSON.stringify(c), chain.pos[0].distanceTo(chain.pos[chain.pos.length - 1]));
   if (!c.ok) return false;
   bendChain(scene, chain, coilCurve(c.L, c.thick));
   return true;
