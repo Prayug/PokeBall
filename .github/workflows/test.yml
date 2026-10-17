@@ -37,3 +37,5 @@ jobs:
         run: node test/league.mjs
       - name: Live kicks
         run: node test/kicks.mjs
+      - name: Football IQ
+        run: node test/iq.mjs 300 --strict

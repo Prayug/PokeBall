@@ -3,7 +3,7 @@
 import { traitMod } from '../traits.js';
 import { PLAYERS } from '../ratings.js';
 import { chance, clamp, nm, rand, randn, rep, st } from '../engine.js';
-import { DT, GRAVITY, SIDE, dist, event, finish, kin, len, note, passBlockWant, seek, setCarrier, sgn, traitNotes, unengage } from '../live.js';
+import { DT, GRAVITY, SIDE, dist, event, finish, kin, len, mustGain, note, passBlockWant, seek, setCarrier, sgn, sticks, traitNotes, unengage } from '../live.js';
 
 // The quarterback's throwing motion, from the decision to the ball leaving his hand.
 const WINDUP_T = 0.24;
@@ -133,10 +133,15 @@ export function qbBrain(lp) {
   lp.pressure = nearRush < 2.6;
   const vision = (qb.a.acc + qb.a.awr) / 2;
   const noise = 0.4 + Math.max(0, 99 - vision) * 0.03 + (lp.pressure ? 0.8 : 0);
+  // Down and distance: on third and fourth down a catch short of the sticks loses the ball, so
+  // a man short of them has to be much more open to be worth it (less so once the play is
+  // breaking down); on early downs a throw that moves the chains is a little better.
+  const line = sticks(lp), must = mustGain(lp);
+  const sticksBonus = (x) => x >= line - 0.3 ? (must ? 0.6 : 0.25) : must ? -clamp((line - x) * 0.22, 0, 1.8) * (elapsed > 1.8 || lp.pressure ? 0.45 : 1) : 0;
   const scoreOf = (r) => {
     if (!r || r.open == null) return null;
     const gain = clamp(r.lead.x, -3, 25) * 0.04;
-    return r.open + gain + noise * randn(g);
+    return r.open + gain + sticksBonus(r.lead.x) + noise * randn(g);
   };
   const cur = read(), cs = scoreOf(cur);
   // Everyone else: only a man left wide open catches his eye off the read.
@@ -151,21 +156,54 @@ export function qbBrain(lp) {
   }
   // Early in the read only a clearly open man gets the ball; the bar drops as he holds it.
   const need = 6 - elapsed;
+  // Nobody clearly open and the defense has left a wide lane in front of him (the rush
+  // flushed past, the coverage turned its back): a mobile quarterback pulls it down and runs.
+  if (elapsed > 1.2 && !(best && best.score > need)) {
+    const lane = runLane(lp, qb);
+    if (lane > 4.5 && chance(g, clamp((qb.a.spd - 55) / 160 + (qb.a.awr - 60) / 400, 0.02, 0.3))) {
+      lp.qbState = 'run'; lp.scramble = true; setCarrier(lp, qb); event(lp, 'scramble', '', qb); return;
+    }
+  }
   if (best && (best.score > need || (lp.pressure && best.score > 1.9))) {
     // A tight window short gets a bullet; a man running free deep gets air under it.
     const r = best.r, deep = (r.lead?.x ?? 0) > 20;
     startThrow(lp, r, false, { type: r.open < 2 && !deep ? 'bullet' : deep && r.open > 4.5 ? 'lob' : 'touch' });
     return;
   }
-  if (nearRush < 1.8 || elapsed > 2.6) {
-    const spd = qb.a.spd;
-    if (chance(g, clamp((spd - 50) / 120, 0.05, 0.4) * 0.35)) { lp.qbState = 'run'; lp.scramble = true; setCarrier(lp, qb); event(lp, 'scramble', '', qb); return; }
-    if (elapsed > 2.6 && chance(g, 0.12)) { throwAway(lp); return; }
-    // The checkdown: whoever is most open, if anyone is.
-    let dump = null;
-    for (const k of lp.reads) { const r = lp.off[k]; if (r?.open != null && (!dump || r.open > dump.open)) dump = r; }
-    if (dump && elapsed > 1.7 && dump.open > 1.3) throwTo(lp, dump);
+  if (lp.pressure || elapsed > 2.6) {
+    // Pressure, or nobody open: take off, but only through a real running lane (no free
+    // defender in the space ahead of him). Quick, aware quarterbacks see it; the rest rarely go.
+    const lane = runLane(lp, qb);
+    const spd = qb.a.spd, awr = qb.a.awr;
+    const go = lane > 3.2 ? clamp(0.12 + (spd - 55) / 110 + (awr - 60) / 300, 0.06, 0.55) : lane > 2 ? 0.04 : 0.01;
+    if (chance(g, go)) { lp.qbState = 'run'; lp.scramble = true; setCarrier(lp, qb); event(lp, 'scramble', '', qb); return; }
+    // The checkdown: whoever is most open, counting the sticks on a money down.
+    let dump = null, ds = -99;
+    for (const k of lp.reads) {
+      const r = lp.off[k];
+      if (r?.open == null) continue;
+      const v = r.open + (must ? sticksBonus(r.lead.x) : 0);
+      if (v > ds) { ds = v; dump = r; }
+    }
+    if (dump && elapsed > 1.7 && dump.open > 1.3 && (!must || ds > 0.5 || elapsed > 2.6)) { throwTo(lp, dump); return; }
+    // Nothing there and the play is breaking down: an aware passer throws it away rather than
+    // forcing it or taking the sack.
+    if (elapsed > 2.6 && chance(g, clamp(0.08 + (awr - 60) * 0.004, 0.05, 0.2))) { throwAway(lp); return; }
   }
+}
+
+// The room a scrambling quarterback would have: how far the nearest unblocked defender is from
+// the spot four yards ahead of him (straight up or angled either way, the best of them).
+function runLane(lp, qb) {
+  let best = 0;
+  for (const a of [-0.6, 0, 0.6]) {
+    const px = qb.x + Math.cos(a) * 4, py = qb.y + Math.sin(a) * 4;
+    if (Math.abs(py) > SIDE - 2) continue;
+    let near = 99;
+    for (const q of lp.players) if (q.side === 'def' && !q.eng && !(q.stun > 0.3)) near = Math.min(near, Math.hypot(q.x - px, q.y - py) - q.r);
+    best = Math.max(best, near);
+  }
+  return best;
 }
 
 export function routeWant(lp, p) {

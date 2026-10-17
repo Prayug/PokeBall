@@ -2,7 +2,7 @@
 // assignments at the line, and what each defender wants each step (rush, cover, pursue).
 import { clamp, rep } from '../engine.js';
 import { frontX } from '../formations.js';
-import { DT, RECEIVERS, dist, len, seek, sgn, slowDown } from '../live.js';
+import { DT, RECEIVERS, dist, len, mustGain, seek, sgn, slowDown, sticks } from '../live.js';
 
 // Defensive calls as data: who rushes (blitz), who drops from the line into coverage (drop),
 // zone spots { slot: [depth, across, radius] } (across is toward the defender's own side for
@@ -75,7 +75,11 @@ export function setupDefense(lp) {
       const p = D[k];
       if (!p || p.role !== 'cover' || p.man) continue;
       const across = y === 'flat' ? sgn(p.y || 1) * 13 : y;
-      p.zone = { x: Math.min(x, g + 7), y: across, r };
+      // Third and long: the underneath zones sit just past the sticks, so anything caught in
+      // front of them is tackled short of the first down.
+      let depth = x;
+      if (mustGain(lp) && x < 12 && sticks(lp) > x - 1) depth = Math.min(sticks(lp) + 1, 14);
+      p.zone = { x: Math.min(depth, g + 7), y: across, r };
       p.lag = clamp(0.32 - (p.a.cov - 60) * 0.007, 0.06, 0.5);
     }
   }
@@ -156,7 +160,13 @@ export function coverWant(lp, p) {
     const T = lp.thrown;
     if (p.react == null || p.react <= -1) p.react = 0.1 + (100 - (p.a.cov * 0.6 + p.a.awr * 0.4)) * 0.005;
     if (p.react > 0) { p.react -= DT; }
-    else if (dist(p, { x: T.tx, y: T.ty }) < 16) return seek(p, { x: T.tx + 0.3, y: T.ty }, 1, 0.2);
+    else if (!T.away) {
+      // Break on the ball. Close by, go to where it comes down; farther off, rally to the spot
+      // a few yards downfield of it, where the tackle will be made.
+      const d = dist(p, { x: T.tx, y: T.ty });
+      if (d < 16) return seek(p, { x: T.tx + 0.3, y: T.ty }, 1, 0.2);
+      return seek(p, { x: T.tx + 4, y: T.ty * 0.8 + p.y * 0.2 }, 0.9, 1);
+    }
   }
   // Run reads: linebackers and safeties fill once the ball is handed off (handled by pursuit).
   if (lp.kind === 'run' && !lp.carrierSet && ['MLB', 'OLB', 'SS'].includes(p.slot)) {
@@ -204,9 +214,12 @@ function zoneWant(lp, p) {
     if (!r || r.role !== 'route') continue;
     const dz = Math.hypot(r.x - z.x, r.y - z.y);
     if (dz > z.r + 2) continue;
-    const v = -dz + r.x * 0.15;
+    // Stay on the man he is already carrying unless another is clearly more dangerous, so
+    // two receivers crossing through his zone don't spin him in circles.
+    const v = -dz + r.x * 0.15 + (r === p.zoneMan ? 2 : 0);
     if (v > tv) { tv = v; threat = r; }
   }
+  p.zoneMan = threat;
   if (!threat) { seek(p, z, 0.75, 2); return; }
   const lag = p.lag ?? 0.25;
   const px = threat.x - threat.vx * lag * 0.45, py = threat.y - threat.vy * lag;
