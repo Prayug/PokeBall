@@ -14,6 +14,9 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { MODEL_INDEX } from './models3d.js';
 import { bodyOf, fitModel, setMeasured } from './body.js';
+import { PLAYERS } from './ratings.js';
+import { FIX } from './modelfix.js';
+import { autoRig, coilBody } from './autorig.js';
 
 export const hasModel = (id) => MODEL_INDEX[id] != null;
 
@@ -62,6 +65,14 @@ export function modelTemplate(id) {
 
 function finish(T, gltf) {
   const scene = gltf.scene;
+  cleanMeshes(scene, FIX[T.id]);
+  if (FIX[T.id]?.rot) {
+    const g = new THREE.Group();
+    g.rotation.set(...FIX[T.id].rot);
+    for (const c of [...scene.children]) g.add(c);
+    scene.add(g);
+    scene.updateMatrixWorld(true);
+  }
   scene.traverse((o) => {
     if (o.isMesh) {
       o.castShadow = true; o.receiveShadow = false; o.frustumCulled = false;
@@ -73,53 +84,118 @@ function finish(T, gltf) {
         if (m.roughness != null) m.roughness = Math.max(0.55, m.roughness);
         if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
         m.side = THREE.FrontSide;
+        // Some exports mark the whole body as alpha-blended (the texture's alpha holds a
+        // shading mask, not transparency), which draws Corviknight and Quaquaval see-through
+        // and out of order. Bodies are drawn solid.
+        if (m.transparent && !/glass|aura|effect|fx/i.test(m.name)) { m.transparent = false; m.depthWrite = true; }
       }
     }
   });
+  // Bare meshes get a skeleton built for them (autorig.js).
+  let bones = 0;
+  scene.traverse((o) => { if (o.isBone) bones++; });
+  if (!bones) T.autoRig = autoRig(scene, !!PLAYERS[T.id]?.types.includes('Flying'));
   const clips = {};
-  for (const c of gltf.animations) clips[c.name] = c;
+  if (FIX[T.id]?.clips !== false) for (const c of gltf.animations) clips[c.name] = c;
   for (const k of ['idle', 'walk', 'run']) if (clips[k]) stripRootMotion(clips[k]);
+  dropBrokenClips(scene, clips);
+  // Long straight bodies are coiled (a clip would pose them itself).
+  if (!clips.idle) T.coiled = coilBody(scene, posedPoints(scene, null).pts);
   // Measure in the idle pose, from the posed vertices themselves (skinned ones follow the
   // bones): the feet, the height of the body without the last few percent of spikes and wing
   // tips, the core of the mass (the middle 80% of the vertices to the side and front to back)
-  // and the tips of everything. The model is centered on its core, so a long tail does not
-  // push the body off its spot.
-  const probe = cloneSkinned(scene);
-  if (clips.idle) { const mx = new THREE.AnimationMixer(probe); mx.clipAction(clips.idle).play(); mx.update(0.01); }
-  probe.updateMatrixWorld(true);
-  const xs = [], ys = [], zs = [];
-  let total = 0;
-  probe.traverse((o) => { if (o.isMesh) total += o.geometry.attributes.position.count; });
-  const stride = Math.max(1, Math.floor(total / 9000));
-  const v = new THREE.Vector3();
-  probe.traverse((o) => {
-    if (!o.isMesh) return;
-    if (o.isSkinnedMesh) o.skeleton.update();
-    const pos = o.geometry.attributes.position;
-    for (let i = 0; i < pos.count; i += stride) {
-      v.fromBufferAttribute(pos, i);
-      if (o.isSkinnedMesh) o.applyBoneTransform(i, v);
-      v.applyMatrix4(o.matrixWorld);
-      if (!Number.isFinite(v.x + v.y + v.z)) continue;
-      xs.push(v.x); ys.push(v.y); zs.push(v.z);
-    }
-  });
-  const q = (a, f) => a[Math.min(a.length - 1, Math.max(0, Math.floor(f * (a.length - 1))))];
-  for (const a of [xs, ys, zs]) a.sort((m, n) => m - n);
+  // and the tips of everything (but a stray vertex or two). The model is centered on its core,
+  // so a long tail does not push the body off its spot.
+  const { xs, ys, zs } = posedPoints(scene, clips.idle);
   const yMin = ys[0], yTop = q(ys, 0.97);
   const cx = (q(xs, 0.1) + q(xs, 0.9)) / 2, cz = (q(zs, 0.1) + q(zs, 0.9)) / 2;
   const core = { side: Math.max(cx - q(xs, 0.1), q(xs, 0.9) - cx), front: q(zs, 0.9) - cz, back: cz - q(zs, 0.1) };
-  const tips = { side: Math.max(cx - xs[0], xs[xs.length - 1] - cx), front: zs[zs.length - 1] - cz, back: cz - zs[0] };
+  const tips = { side: Math.max(cx - q(xs, 0.002), q(xs, 0.998) - cx), front: q(zs, 0.998) - cz, back: cz - q(zs, 0.002) };
   const B = bodyOf(T.id);
   const s = fitModel(B, yTop - yMin, core, tips);
   // The footprint formations space this Pokémon by: what is actually drawn.
-  const gw = B.girth ?? 1;
+  const gw = T.coiled ? 1 : B.girth ?? 1; // a coiled serpent has its girth already
   setMeasured(T.id, tips.side * s * gw, tips.front * s * gw, tips.back * s * gw);
   Object.assign(T, {
     ready: true, scene, clips, scale: s, girth: gw,
     offset: new THREE.Vector3(-cx, -yMin, -cz),
     height: (yTop - yMin) * s, fullHeight: (ys[ys.length - 1] - yMin) * s, width: tips.side * 2 * s * gw, depth: (tips.front + tips.back) * s * gw,
   });
+}
+
+const q = (a, f) => a[Math.min(a.length - 1, Math.max(0, Math.floor(f * (a.length - 1))))];
+
+// The model's vertices as drawn in a pose (a clip at time t, or the bind pose), sorted along
+// each axis, about 9000 of them; with perMesh, each visible mesh's bounds as well.
+function posedPoints(scene, clip, t = 0.01, perMesh = false) {
+  const probe = cloneSkinned(scene);
+  if (clip) { const mx = new THREE.AnimationMixer(probe); mx.clipAction(clip).play(); mx.update(t); }
+  probe.updateMatrixWorld(true);
+  const src = [], dst = [];
+  scene.traverse((o) => { if (o.isMesh) src.push(o); });
+  probe.traverse((o) => { if (o.isMesh) dst.push(o); });
+  let total = 0;
+  for (const o of dst) if (o.visible) total += o.geometry.attributes.position.count;
+  const stride = Math.max(1, Math.floor(total / 9000));
+  const xs = [], ys = [], zs = [], pts = [], boxes = [];
+  const v = new THREE.Vector3();
+  dst.forEach((o, k) => {
+    if (!o.visible) return;
+    if (o.isSkinnedMesh) o.skeleton.update();
+    const pos = o.geometry.attributes.position, box = perMesh ? new THREE.Box3() : null;
+    for (let i = 0; i < pos.count; i += perMesh ? Math.max(1, Math.floor(pos.count / 400)) : stride) {
+      v.fromBufferAttribute(pos, i);
+      if (o.isSkinnedMesh) o.applyBoneTransform(i, v);
+      v.applyMatrix4(o.matrixWorld);
+      if (!Number.isFinite(v.x + v.y + v.z)) continue;
+      if (box) box.expandByPoint(v);
+      else { xs.push(v.x); ys.push(v.y); zs.push(v.z); pts.push(v.x, v.y, v.z); }
+    }
+    if (box) boxes.push({ mesh: src[k], box, n: pos.count });
+  });
+  for (const a of [xs, ys, zs]) a.sort((m, n) => m - n);
+  return { xs, ys, zs, pts, boxes };
+}
+
+// Some clips throw the body apart (Marshadow's idle flings its vertices twenty yards out):
+// a clip whose pose spreads the body to well over twice its bind-pose size is dropped.
+function dropBrokenClips(scene, clips) {
+  const size = (P) => Math.max(q(P.xs, 0.98) - q(P.xs, 0.02), q(P.ys, 0.98) - q(P.ys, 0.02), q(P.zs, 0.98) - q(P.zs, 0.02));
+  const bind = size(posedPoints(scene, null));
+  for (const [k, c] of Object.entries(clips)) {
+    const worst = Math.max(...[0.25, 0.75].map((f) => size(posedPoints(scene, c, Math.max(0.01, c.duration * f)))));
+    if (globalThis.DBG) console.log("clip", k, bind, worst);
+    if (!(worst < bind * 2.5)) delete clips[k];
+  }
+}
+
+// What the exports carry besides the Pokémon: lower-detail copies of the body (LOD meshes,
+// all drawn on top of each other), and shadow discs or other untextured helper meshes left
+// unskinned in a skinned model (Marshadow stands on a black disc).
+function cleanMeshes(scene, fix) {
+  const meshes = [];
+  scene.traverse((o) => { if (o.isMesh) meshes.push(o); });
+  if (fix?.hide) for (const o of meshes) if (fix.hide.test(o.name)) o.visible = false;
+  const skinned = meshes.some((o) => o.isSkinnedMesh);
+  const lod = (o) => /(^|[_\s.])lod\d|_lod_?\d/i.test(o.name) || [].concat(o.material).some((m) => /lod\d/i.test(m.name));
+  // (Some exports hold only the lower-detail meshes: those stay.)
+  const full = meshes.some((o) => !lod(o));
+  for (const o of meshes) {
+    const mats = [].concat(o.material);
+    const helper = skinned && !o.isSkinnedMesh && mats.every((m) => !m.map && !o.geometry.attributes.color);
+    if ((full && lod(o)) || helper || /shadow|(^|_)shdw|(^|_)ball_?shape/i.test(o.name)) o.visible = false;
+  }
+  // Repeated bodies: meshes with the same materials and the same bounds as a bigger one.
+  const key = (o) => { o.geometry.computeBoundingBox(); const b = o.geometry.boundingBox; o.updateWorldMatrix(true, false);
+    const c = b.getCenter(_v).applyMatrix4(o.matrixWorld), z = b.getSize(_v2).multiply(o.getWorldScale(new THREE.Vector3()));
+    return [...[].concat(o.material).map((m) => m.uuid), ...[c.x, c.y, c.z, z.x, z.y, z.z].map((x) => x.toFixed(2))].join(); };
+  const best = new Map();
+  for (const o of meshes) {
+    if (!o.visible) continue;
+    const k = key(o), n = o.geometry.attributes.position.count, b = best.get(k);
+    if (!b) best.set(k, o);
+    else if (n > b.geometry.attributes.position.count) { b.visible = false; best.set(k, o); } else o.visible = false;
+  }
 }
 
 // Many run and walk clips carry root motion: the model's origin (or hips) travels forward over
@@ -157,7 +233,7 @@ export function makeModelFigure(T) {
   const actions = {};
   for (const [k, c] of Object.entries(T.clips)) actions[k] = mixer.clipAction(c);
   const fig = { model: true, group, pivot, root: model, mixer, actions, cur: null, version: T.version, template: T, limbW: 0 };
-  fig.rig = buildRig(model);
+  fig.rig = buildRig(model, T.id);
   fig.hipH = fig.rig?.legs ? Math.max(0, (fig.rig.hipY + T.offset.y) * T.scale) : 0;
   playClip(fig, 'idle', 0);
   return fig;
@@ -172,7 +248,8 @@ export function makeModelFigure(T) {
 // rig's own bone axes are. Bones are recognized by name across the naming schemes these rigs
 // use (LThigh, left_leg_01, Bip001 L Thigh, thigh.L, HindLegL, ...), and left or right by name
 // or, failing that, by which side of the body they sit on.
-const SKIP = /feeler|finger|toe|hair|eyelid|eye|jaw|ear|mouth|tongue|teeth|beak|horn|cloth|ik|pole|mch|vis_|end$|_end|eff|camera|light|lod|nail|claw|thumb|index|middle|ring|pinky|wide/;
+// Whole words only: "ear" must not catch a forearm, nor "ik" a spike, nor "ring" a spring.
+const SKIP = /feeler|feather|finger|toe|hair|eyelid|eye|jaw|mouth|tongue|teeth|beak|horn|cloth|camera|light|nail|claw|thumb|index|middle|pinky|wide|(^|_)[lr]?ears?(_|\d|$)|(^|_)(left|right)_ear|(^|_)[lr]?ring(_|\d|$)|(^|_)(ik|pole|mch|lod\d*)(_|$)|^vis_|^eff|_eff|^end|end$|_end/;
 const PARTS = [
   ['leg', /thigh|upper_?leg|hind_?leg|leg|calf|shin|knee|foot/],
   ['arm', /shoulder|upper_?arm|fore_?arm|arm|front_?leg|hand|clavicle/],
@@ -192,7 +269,36 @@ function sideOf(raw, n) {
   return 0;
 }
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
-function buildRig(model) {
+
+// Birds whose wings are rigged as arms (Ho-Oh, Pidgeot, Aerodactyl: a shoulder, arm and hand
+// with the flight feathers hanging off them). Those chains are wings: they are not let down
+// to hang at the sides or pumped like a runner's arms, they beat. Told by wing bones further
+// down the chain, or by a flying species whose arm chain reaches well out from the shoulder
+// (over 60% of the skeleton's height; real arms reach 30 to 50%). Articuno and Zapdos have
+// short wing chains, so they are named.
+const WING_ARMS = new Set([144, 145]);
+function wingArms(bones, info, rootInv, id) {
+  const P = PLAYERS[id], flying = !!P?.types.includes('Flying');
+  const pos = (b) => _v.setFromMatrixPosition(b.matrixWorld).applyMatrix4(rootInv);
+  let top = -Infinity, bot = Infinity;
+  for (const b of bones) { const y = pos(b).y; top = Math.max(top, y); bot = Math.min(bot, y); }
+  const span = Math.max(1e-6, top - bot);
+  const hasWings = bones.some((b) => info.get(b).part === 'wing');
+  for (const b of bones) {
+    if (info.get(b).part !== 'arm' || info.get(b.parent)?.part === 'arm') continue;
+    const chain = [], p0 = pos(b).clone();
+    let reach = 0, wingBelow = false;
+    b.traverse((c) => {
+      if (!c.isBone) return;
+      if (/wing/i.test(c.name)) wingBelow = true;
+      reach = Math.max(reach, pos(c).distanceTo(p0));
+      if (info.get(c)?.part === 'arm') chain.push(c);
+    });
+    if (wingBelow || WING_ARMS.has(id) || (flying && !hasWings && reach / span > 0.6)) for (const c of chain) info.get(c).part = 'wing';
+  }
+}
+
+function buildRig(model, id) {
   const bones = [];
   model.traverse((o) => { if (o.isBone) bones.push(o); });
   if (!bones.length) return null;
@@ -205,6 +311,7 @@ function buildRig(model) {
     if (!SKIP.test(n)) for (const [k, re] of PARTS) if (re.test(n)) { part = k; break; }
     info.set(b, { part, n });
   }
+  wingArms(bones, info, rootInv, id);
   // Body center, to tell front from back and left from right when names do not.
   const ctr = new THREE.Vector3(), tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
   let nb = 0;
@@ -227,7 +334,7 @@ function buildRig(model) {
     let depth = 0, p = b.parent;
     while (p && info.get(p)?.part === I.part) { depth++; p = p.parent; }
     if ((I.part === 'leg' || I.part === 'arm') && depth > 1) continue;
-    if (I.part === 'wing' && depth > 1) continue;
+    if (I.part === 'wing' && depth > 2) continue;
     if (I.part === 'spine' && pI?.part === 'spine') continue;
     if ((I.part === 'neck' || I.part === 'head') && depth > 0) continue;
     tmp.setFromMatrixPosition(b.matrixWorld).applyMatrix4(rootInv);
@@ -242,7 +349,7 @@ function buildRig(model) {
       if (len > 1e-6 && Math.abs(tmp2.x) / len > 0.8 && tmp2.x * side > 0) rest.premultiply(_q.setFromAxisAngle(axisIn(b.parent, Z), -side * 1.05));
     }
     out.push({
-      bone: b, n: I.n, part: I.part, depth, side, front: tmp.z > ctr.z, y: tmp.y,
+      bone: b, n: I.n, part: I.part, depth, side, front: tmp.z > ctr.z, y: tmp.y, z: tmp.z,
       rest, lat: axisIn(b.parent, X), up: axisIn(b.parent, Y), fwd: axisIn(b.parent, Z), kid: b.children.find((c) => c.isBone) ?? null,
     });
   }
@@ -273,7 +380,9 @@ function buildRig(model) {
   const avgY = (l) => l.reduce((a, e) => a + e.y, 0) / (l.length || 1);
   // Four-legged: the "arms" are front legs at about the height of the hind ones. Those get
   // no raised blocking arms or overhead reach, the head and chest go down instead.
-  const quad = legRoots.length >= 2 && armRoots.length >= 2 && avgY(armRoots) - avgY(legRoots) < top * 0.15;
+  // A biped's arms and legs are at the same depth; four legs stand apart front to back.
+  const avgZ = (l) => l.reduce((a, e) => a + e.z, 0) / (l.length || 1);
+  const quad = legRoots.length >= 2 && armRoots.length >= 2 && avgY(armRoots) - avgY(legRoots) < top * 0.15 && Math.abs(avgZ(armRoots) - avgZ(legRoots)) > top * 0.12;
   return { bones: out, legs: legRoots.length, arms: armRoots.length, quad, hipY: legRoots.length ? avgY(legRoots) : 0, hands: { R: hands.R?.bone ?? null, L: hands.L?.bone ?? null },
     maxTail: Math.max(1, ...out.filter((e) => e.part === 'tail').map((e) => e.depth + 1)) };
 }
