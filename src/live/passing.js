@@ -135,7 +135,7 @@ export function qbBrain(lp) {
   const noise = 0.4 + Math.max(0, 99 - vision) * 0.03 + (lp.pressure ? 0.8 : 0);
   const scoreOf = (r) => {
     if (!r || r.open == null) return null;
-    const gain = clamp(r.lead.x, -3, 25) * 0.07;
+    const gain = clamp(r.lead.x, -3, 25) * 0.04;
     return r.open + gain + noise * randn(g);
   };
   const cur = read(), cs = scoreOf(cur);
@@ -149,7 +149,8 @@ export function qbBrain(lp) {
     const seen = s - 1.6; // off-read throws need more
     if (!best || seen > best.score) best = { r, score: seen };
   }
-  const need = 3.2 - elapsed * 0.9;
+  // Early in the read only a clearly open man gets the ball; the bar drops as he holds it.
+  const need = 6 - elapsed;
   if (best && (best.score > need || (lp.pressure && best.score > 1.9))) {
     // A tight window short gets a bullet; a man running free deep gets air under it.
     const r = best.r, deep = (r.lead?.x ?? 0) > 20;

@@ -352,6 +352,7 @@ function kickoff(g, kicker, freeKick = false) {
   startDrive(g);
 }
 
+const XP_DISTANCE = 33;
 function fgChance(dist) {
   const pts = [[20, 0.99], [30, 0.95], [40, 0.86], [45, 0.78], [50, 0.66], [55, 0.48], [60, 0.25], [66, 0.05]];
   if (dist <= 20) return 0.99;
@@ -367,7 +368,8 @@ export { fgChance };
 
 function scoreTD(g, ti, scorer) {
   addScore(g, ti, 6);
-  const xp = chance(g, 0.94);
+  // The extra point is a 33-yard kick for this team's kicker (accuracy matters most that close).
+  const xp = chance(g, fgChance(kickerDistance(g, ti, XP_DISTANCE)));
   if (xp) addScore(g, ti, 1);
   endDrive(g, 'Touchdown');
   addLog(g, { kind: 'score', text: `Extra point ${xp ? 'is good' : 'is no good'}. ${scoreLine(g)}` });
