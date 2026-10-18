@@ -1,14 +1,17 @@
-// Punts and field goals played out on the live field: the long snap, the protection, the
-// kick itself (from the punter's or kicker's own ratings), the coverage and the return.
+// Kicks played out on the live field: punts, field goals and extra points (the long snap, the
+// protection, the kick itself from the punter's or kicker's own ratings, the coverage and the
+// return), kickoffs (deep or onside) and the fakes, which turn into a run or a pass at the hold.
 // The ball's flight is ballistic like a pass; what happens when it comes down (a catch and a
 // return, a fair catch, a bounce downed by the coverage, a touchback, out of bounds) is decided
 // on the field, and engine.js turns the outcome into the next possession.
-import { chance, clamp, eff, fgOdds, randn, specialist } from '../engine.js';
+import { chance, clamp, eff, fgOdds, onsideLean, onsideOdds, randn, specialist, xpOdds } from '../engine.js';
 import { GRAVITY, SIDE, dist, event, finish, len, seek, setCarrier, sgn, unengage } from '../live.js';
-import { flightAt } from './passing.js';
+import { buildRoute, flightAt } from './passing.js';
 
-// A punt or field goal the live field plays (fakes are still resolved by the engine).
-export const liveKick = (play) => !!play && (play.kind === 'punt' || play.kind === 'fg') && !play.fake;
+// Every kick is played on the live field, fakes included.
+export const liveKick = (play) => !!play && ['punt', 'fg', 'xp', 'kickoff'].includes(play.kind);
+// The extra point is snapped from the 15: a 33-yard kick.
+export const XP_SPOT = 85;
 
 const CATCH_R = 1.6;     // how far a returner reaches for a punt
 const POST_H = 3.33;     // the crossbar, in yards
@@ -16,8 +19,10 @@ const POST_W = 3.08;     // half the distance between the uprights
 
 // Line both teams up for the kick. `make` builds a player (live.js makePlayer).
 export function setupKick(lp, make) {
+  if (lp.kind === 'kickoff') { setupKickoff(lp, make); return; }
   const g = lp.g, O = lp.off, D = lp.def, punt = lp.kind === 'punt';
-  const K = (lp.kick = { punt, stage: 'pre', aim: lp.play.aim ?? null });
+  // A fake lines up like the real thing. The defense sees it coming about half the time.
+  const K = (lp.kick = { punt, stage: 'pre', aim: lp.play.aim ?? null, fake: !!lp.play.fake, surprise: !!lp.play.fake && chance(g, 0.55) });
   const slot = punt ? 'P' : 'K';
   const id = specialist(g, lp.o, slot);
   // The specialist comes on for the quarterback (punt) or the third receiver (field goal),
@@ -53,6 +58,8 @@ export function setupKick(lp, make) {
       else if (i === 1) put(p, lineX - 1.0, edge(-1) - 1.5, 'kblock');
       else put(p, -5 - (i - 2) * 1.2, (i % 2 ? -1 : 1) * 0.9, 'kblock');
     });
+    // A fake punt is a direct snap to the personal protector, who runs it.
+    if (K.fake) { const pp = others[2] ?? others[0]; if (pp) { lp.snapTo = pp; K.runner = pp; } }
   } else {
     // The holder seven yards back, the kicker a step and a half behind and to the side.
     const holder = O.QB && O.QB !== kp ? O.QB : rest.find((p) => p !== kp);
@@ -96,6 +103,8 @@ export function kickStep(lp) {
   if (!K || lp.phase !== 'live') return;
   if (K.stage === 'pre') K.stage = 'snap';
   if (K.stage === 'snap' && b.state === 'held' && b.holder === lp.snapTo) { K.stage = 'set'; K.caughtAt = lp.t; }
+  if (K.ko) { kickoffStep(lp); return; }
+  if (K.stage === 'set' && K.fake && lp.t - K.caughtAt >= (K.punt ? 0.3 : 0.25)) { fakeIt(lp); return; }
   if (K.stage === 'set' && lp.t - K.caughtAt >= (K.punt ? 1.05 : 0.8)) kickIt(lp);
   if (K.stage === 'air') {
     const F = K.F, e = lp.t - F.t0;
@@ -142,7 +151,7 @@ function kickIt(lp) {
     zc = 1.5;
   } else {
     // Through the uprights or not: the same odds the engine gives this kicker from this spot.
-    const good = chance(g, fgOdds(g));
+    const good = chance(g, lp.kind === 'xp' ? xpOdds(g) : fgOdds(g));
     K.good = good;
     tx = lp.goalX + 10;
     const wide = !good && !(tx - sx > 50 && chance(g, 0.45));
@@ -224,6 +233,8 @@ export function kickWant(lp, p) {
   const land = K.F ? { x: K.F.tx, y: clamp(K.F.ty, -SIDE + 1, SIDE - 1) } : { x: K.returner?.x ?? 40, y: 0 };
   switch (p.role) {
     case 'kicker': {
+      // The kickoff approach: a run up to the tee.
+      if (K.ko) return seek(p, { x: -0.5, y: 0.3 }, 0.75, 0.2);
       if (K.punt) return K.stage === 'set' ? seek(p, { x: p.home.x + 1.6, y: p.home.y }, 0.25, 0.4) : seek(p, p.home, 0.3, 0.4);
       // The kicker's approach: a couple of steps in to the hold.
       const h = lp.holder;
@@ -262,7 +273,8 @@ export function kickWant(lp, p) {
       return seek(p, { x: m.x + 1.2, y: m.y + (land.y - m.y) * 0.1 }, 0.98, 0.2);
     }
     case 'kwall': {
-      if (K.stage === 'pre' || K.stage === 'snap' || K.stage === 'set') return seek(p, p.home, 0.3, 0.5);
+      // On a punt they turn to set up the return as soon as the ball is snapped.
+      if (K.stage === 'pre' || K.stage === 'approach' || (!K.punt && (K.stage === 'snap' || K.stage === 'set'))) return seek(p, p.home, 0.3, 0.5);
       // Drop back to set up a wall in front of the returner.
       return seek(p, { x: land.x - 10, y: clamp(p.home.y * 0.45, -12, 12) }, 0.9, 1);
     }
@@ -271,7 +283,7 @@ export function kickWant(lp, p) {
       if (K.stage === 'loose') return seek(p, lp.ball, 1, 0.1);
       const F = K.F, left = F.t0 + F.T - lp.t;
       // Coverage closing in as it comes down: wave for a fair catch.
-      if (!K.fair && left < 0.75 && !(lp.control === p && lp.manual) && lp.players.some((q) => q.side === 'off' && dist(q, land) < 5)) { K.fair = true; event(lp, 'fairsignal', '', p); }
+      if (!K.fair && !K.ko && left < 0.75 && !(lp.control === p && lp.manual) && lp.players.some((q) => q.side === 'off' && dist(q, land) < 5)) { K.fair = true; event(lp, 'fairsignal', '', p); }
       // Let one going into the end zone go.
       if (F.tx > lp.goalX + 1) return seek(p, { x: lp.goalX - 2, y: p.y }, 0.6, 0.5);
       const dx = land.x - p.x, dy = land.y - p.y, d = len(dx, dy);
@@ -280,8 +292,178 @@ export function kickWant(lp, p) {
       p.want = { vx: (dx / d) * sp, vy: (dy / d) * sp };
       return;
     }
+    // The kickoff team: walk up behind the kicker, then cover once it is away.
+    case 'kline': return seek(p, { x: Math.min(-0.4, p.home.x + lp.t * 2.5), y: p.home.y }, 0.6, 0.3);
+    // An onside kick: everyone goes for the ball (the kicking team may not touch it before ten yards).
+    case 'kscrum': {
+      const b = lp.ball;
+      if (p.side === 'off' && b.x < 10) return seek(p, { x: Math.min(b.x, 9.5), y: b.y }, 1, 0.2);
+      return seek(p, b, 1, 0.1);
+    }
     default: return undefined;
   }
+}
+
+// ---------- fakes ----------
+// The snap is caught and the kick never comes: the punter takes off, or the holder pops up and
+// throws to the tight end leaking into the flat. From here it is an ordinary run or pass, and a
+// defense that did not see it coming reacts late.
+function fakeIt(lp) {
+  const K = lp.kick, O = lp.off;
+  lp.kick = null;
+  lp.fake = K.punt ? 'punt' : 'fg';
+  const late = K.surprise ? (K.punt ? 1.1 : 0.2) : 0.1;
+  lp.fakeSurprise = K.surprise;
+  if (K.punt) {
+    const c = K.runner ?? lp.kicker;
+    lp.kind = 'run';
+    // He bounces it outside, to the side with fewer defenders near the line.
+    const near = (sd) => lp.players.filter((q) => q.side === 'def' && q.x < 8 && sgn(q.y) === sd && Math.abs(q.y) < 14).length;
+    lp.fakeEdge = near(1) <= near(-1) ? 1 : -1;
+    lp.holeY = lp.fakeEdge * 9;
+    setCarrier(lp, c);
+    // The protection turns into run blocking: everyone drives the man in front of him.
+    for (const q of lp.players) {
+      if (q.side === 'def') q.react = (q.react ?? 0) + late;
+      else if (q !== c) q.role = q.role === 'kblock' ? 'runblock' : 'escort';
+    }
+    event(lp, 'fake', '', c);
+    return;
+  }
+  const h = lp.holder;
+  lp.kind = 'pass';
+  O.QB = h; h.role = 'qb';
+  lp.qbState = 'drop'; lp.dropX = h.x - 1; lp.readAt = lp.t + 0.35; lp.autoQB = true;
+  const te = O.TE ?? lp.players.find((q) => q.side === 'off' && q.role === 'kblock' && Math.abs(q.y) > 3);
+  for (const q of lp.players) {
+    if (q.side === 'off' && q !== h && q !== te) q.role = 'passblock';
+    if (q.side === 'def') { q.role = 'rush'; q.react = late; }
+  }
+  if (te) {
+    if (!O.TE) { O.TE = te; }
+    te.role = 'route'; te.route = buildRoute(lp, te, 'flat'); te.routeName = 'flat';
+    lp.eligible = [Object.entries(O).find(([, v]) => v === te)[0]];
+    // The safeties back for the kick pick him up; a defense that read it has the nearest men
+    // off the edge on him at once, and even a fooled one has the end turn and chase.
+    const sf = lp.players.filter((q) => q.side === 'def' && ['FS', 'SS'].includes(q.slot));
+    for (const q of sf) { q.role = 'cover'; q.man = te; q.react = late + 0.3; }
+    const edge = lp.players.filter((q) => q.side === 'def' && !sf.includes(q)).sort((a, c) => dist(a, te) - dist(c, te)).slice(0, K.surprise ? 2 : 4);
+    for (const q of edge) { q.role = 'cover'; q.man = te; q.react = K.surprise ? 0.2 : 0; }
+  } else lp.eligible = [];
+  event(lp, 'fake', '', h);
+}
+
+// ---------- kickoffs ----------
+// The kicking team spreads across the field a yard behind the ball with the kicker back for his
+// run up; the receiving team sets a front line, a second level and its returner deep (or a hands
+// team packed up front when it expects an onside kick).
+function setupKickoff(lp, make) {
+  const g = lp.g, O = lp.off, D = lp.def;
+  const onside = !!lp.play.onside;
+  const K = (lp.kick = { ko: true, onside, stage: 'pre', punt: false });
+  const id = specialist(g, lp.o, 'K');
+  let kp = lp.players.find((p) => p.side === 'off' && p.id === id);
+  if (!kp && id != null) {
+    const out = O.QB ?? O.WR3 ?? O.RB;
+    kp = make(g, lp.o, 'off', 'K', id, lp);
+    lp.players[lp.players.indexOf(out)] = kp;
+    delete O[out.slot];
+    O.K = kp;
+  }
+  kp ??= O.QB ?? O.RB;
+  lp.kicker = kp;
+  const put = (p, x, y, role, fx) => { p.x = x; p.y = y; p.role = role; p.fx = fx; p.fy = 0; };
+  put(kp, -7, 0.6, 'kicker', 1);
+  const cover = lp.players.filter((p) => p.side === 'off' && p !== kp);
+  const lanes = [-22, -18, -13.5, -9, -4.5, 4.5, 9, 13.5, 18, 22];
+  // Onside: the kicking team bunches toward the side it kicks to.
+  K.side = chance(g, 0.5) ? -1 : 1;
+  cover.forEach((p, i) => put(p, -1, onside ? lanes[i] * 0.75 + K.side * 3 : lanes[i] ?? 0, 'kline', 1));
+  const defs = lp.players.filter((p) => p.side === 'def');
+  const backs = ['FS', 'SS', 'CB1', 'CB2', 'CB3'].map((k) => D[k]).filter(Boolean);
+  const ret = [...backs].sort((a, b) => (b.a.spd + b.a.hnd) - (a.a.spd + a.a.hnd))[0] ?? defs[defs.length - 1];
+  K.returner = ret;
+  const hands = onsideLean(g, lp.o);
+  K.hands = hands;
+  put(ret, Math.min(lp.goalX - 3, 62), 0, 'returner', -1);
+  const rest = defs.filter((p) => p !== ret);
+  // Front line, second level, then the deep wedge in front of the returner.
+  const spots = hands
+    ? [[11, -18], [11, -10], [11, -4], [11, 4], [11, 10], [11, 18], [16, -12], [16, -4], [16, 4], [16, 12]]
+    : [[11, -19], [11, -11], [11, -4], [11, 4], [11, 11], [11, 19], [25, -9], [25, 9], [40, -4], [40, 4]];
+  rest.forEach((p, i) => { const [x, y] = spots[i] ?? [30, 0]; put(p, Math.min(x, lp.goalX - 5), y, 'kwall', -1); });
+  for (const p of lp.players) p.home = { x: p.x, y: p.y };
+  lp.ball = { state: 'tee', holder: null, x: 0, y: 0, z: 0.25 };
+  lp.snapTo = kp;
+}
+
+function kickoffStep(lp) {
+  const K = lp.kick, b = lp.ball, kp = lp.kicker;
+  if (K.stage === 'approach' && (dist(kp, b) < kp.r + 0.5 || lp.t > 1.6)) koKick(lp);
+  else if (K.stage === 'air') {
+    const F = K.F, e = lp.t - F.t0;
+    const at = flightAt(F, Math.min(e, F.T));
+    b.x = at.x; b.y = at.y; b.z = at.z;
+    if (e >= F.T) puntDown(lp);
+  } else if (K.stage === 'onside') onsideStep(lp);
+  else if (K.stage === 'loose') bouncing(lp);
+}
+
+function koKick(lp) {
+  const K = lp.kick, g = lp.g, kp = lp.kicker;
+  const pw = eff(g, lp.o, kp.id, 'kpw'), ac = eff(g, lp.o, kp.id, 'kac');
+  K.kickedAt = lp.t;
+  event(lp, 'kickoff', '', kp);
+  for (const p of lp.players) if (p.side === 'off' && p !== kp) p.role = K.onside ? 'kscrum' : 'kcover';
+  kp.role = 'ksafety';
+  if (K.onside) {
+    // A hard, low kick into the turf that hops toward the bunched side; the receiving front
+    // line goes for it too. Who comes up with it is rolled once, at the kicker's own odds.
+    K.stage = 'onside'; K.win = chance(g, onsideOdds(g, lp.o)) ? 'off' : 'def';
+    const ty = K.side * (5 + 3 * Math.abs(randn(g))), tx = 12 + Math.abs(randn(g)) * 1.5;
+    K.on = { tx, ty, T: 1.7 };
+    lp.ball = { state: 'onside', holder: null, x: 0.4, y: 0, z: 0.3 };
+    for (const p of lp.players) if (p.side === 'def' && p !== K.returner && p.x < 20) p.role = 'kscrum';
+    return;
+  }
+  // Deep: the leg sets how far (most strong legs reach the end zone), accuracy the spread.
+  const sx = 0.4, sy = 0, z0 = 0.3;
+  const tx = clamp(63 + (pw - 60) * 0.25 + 4.5 * randn(g), 40, lp.goalX + 9);
+  const ty = clamp((7 - (ac - 60) * 0.06) * randn(g), -SIDE + 1, SIDE - 1);
+  const T = clamp(3.9 + (pw - 60) * 0.012 + 0.2 * randn(g), 3.3, 4.6);
+  const zc = 1.2, vz = (zc - z0 + 0.5 * GRAVITY * T * T) / T;
+  K.F = { sx, sy, z0, tx, ty, zc, T, vz, t0: lp.t };
+  K.landX = tx; K.stage = 'air';
+  lp.ball = { state: 'air', holder: null, x: sx, y: sy, z: z0 };
+  if (lp.user === lp.o) {
+    let best = null;
+    for (const p of lp.players) if (p.side === 'off' && p.role === 'kcover' && (!best || Math.abs(p.y - ty) < Math.abs(best.y - ty))) best = p;
+    if (best) { lp.control = best; lp.manual = false; }
+  }
+}
+
+// The onside kick bounces along: once it has gone ten yards, the side that wins the scramble
+// falls on it (the other side's hands are on it too, but it squirts away from them).
+function onsideStep(lp) {
+  const K = lp.kick, b = lp.ball;
+  // It skips along the turf in shrinking hops and dies a dozen yards out.
+  const u = clamp((lp.t - K.kickedAt) / K.on.T, 0, 1), d = 1 - (1 - u) * (1 - u);
+  b.x = 0.4 + (K.on.tx - 0.4) * d; b.y = K.on.ty * d;
+  b.z = 0.15 + 1.1 * Math.abs(Math.sin(Math.PI * 3 * u)) * (1 - u);
+  if (Math.abs(b.y) > SIDE) { lp.spotX = clamp(b.x, 1, lp.goalX - 1); K.rec = 'def'; K.stage = 'done'; finish(lp, { how: 'onside' }); return; }
+  const near = (side) => lp.players.filter((p) => p.side === side && p !== lp.kicker && dist(p, b) < p.r + 0.7 && b.z < 1.4).sort((a, c) => dist(a, b) - dist(c, b))[0];
+  const w = b.x >= 10 ? near(K.win) : near('def');
+  // A receiving player touches it short of ten: it is live, and the scramble decides it anyway.
+  if (w && (b.x >= 10 || K.win === 'def')) {
+    K.rec = w.side; K.stage = 'done'; K.by = w;
+    lp.spotX = clamp(b.x, 1, lp.goalX - 1);
+    lp.ball = { state: 'held', holder: w, x: w.x, y: w.y, z: 0.4 };
+    w.downed = true;
+    event(lp, 'recover', '', w);
+    finish(lp, { how: 'onside' });
+    return;
+  }
+  if (lp.t - K.kickedAt > 5) { lp.spotX = clamp(b.x, 1, lp.goalX - 1); K.rec = 'def'; K.stage = 'done'; finish(lp, { how: 'onside' }); }
 }
 
 // The play's outcome for the engine: how it ended and where (offense-frame yards from the line).
@@ -289,6 +471,17 @@ export function kickResult(lp, end) {
   const K = lp.kick, c = lp.carrier;
   const how = end.how === 'time' ? (K.stage === 'return' ? 'tackle' : 'downed') : end.how;
   const r = { liveKick: true, kind: lp.kind, how, kicker: lp.kicker?.id ?? null, clockStop: true };
+  if (K.ko) {
+    r.returner = K.returner?.id ?? null;
+    if (how === 'onside') return { ...r, onside: true, rec: K.rec === 'off' ? 'kick' : 'recv', endX: Math.round(lp.spotX ?? lp.ball.x), recoveredBy: K.by?.id ?? null };
+    if (how === 'touchback') return r;
+    let endX = lp.spotX ?? (K.stage === 'return' && c ? c.x : lp.ball.x);
+    if (how === 'td') endX = lp.ownGoalX;
+    r.endX = Math.round(endX);
+    if (K.catchX != null && K.stage === 'return') r.ret = Math.round(K.catchX - endX);
+    r.tackler = end.tackler?.id ?? null;
+    return r;
+  }
   if (!K.punt) return { ...r, how: how === 'blocked' ? 'blocked' : how === 'fg_good' ? 'good' : 'miss', blocker: K.blocker?.id ?? null };
   r.gross = K.landX != null ? Math.round(K.landX) : null;
   r.returner = K.returner?.id ?? null;
