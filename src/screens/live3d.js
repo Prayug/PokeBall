@@ -324,11 +324,11 @@ function hudTip(lp) {
   const c = lp.control;
   if (f === 'FORMATION_SETUP') return 'Lining up…';
   if (lp.kick) {
-    if (lp.phase === 'pre') return lp.user === lp.o ? 'Space snap · the kick goes on its own · Esc change call' : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
+    if (lp.phase === 'pre') return lp.user === lp.o ? `Space ${lp.kick.ko ? 'kick off' : 'snap'} · the kick goes on its own · Esc change call` : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
     if (lp.phase === 'dead') return '';
     if (c && c === lp.kick.returner && !c.carrier) return 'Get under it · arrows move · Shift sprint';
     if (c && !c.carrier && c.side === 'off') return 'Cover the kick · arrows move · Shift sprint · Space dive';
-    if (!c) return lp.kick.kickedAt != null ? 'Kick away' : 'The long snap…';
+    if (!c) return lp.kick.kickedAt != null ? 'Kick away' : lp.kick.ko ? 'The kicker runs up…' : 'The long snap…';
   }
   if (lp.phase === 'pre') {
     if (!c) return 'Coach mode · Space to snap now · Esc to change the call';

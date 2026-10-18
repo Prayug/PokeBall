@@ -983,7 +983,7 @@ export class Stage {
       if (u < 0.3) near({ x: T.sx, y: T.sy }, 4);
       f.shot = 'pass';
       set('PASS_FLIGHT');
-    } else if (lp.kick && !lp.carrierSet && b.state === 'loose') {
+    } else if (lp.kick && !lp.carrierSet && (b.state === 'loose' || b.state === 'onside')) {
       this.world(b.x, b.y, 0, f.focus);
       pt(f.focus.x, 0, f.focus.z);
       near(b, 8);
