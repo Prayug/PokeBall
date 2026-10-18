@@ -41,3 +41,5 @@ jobs:
         run: node test/clock.mjs
       - name: Penalties
         run: node test/penalties.mjs
+      - name: Football IQ
+        run: node test/iq.mjs 300 --strict
