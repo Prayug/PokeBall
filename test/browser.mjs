@@ -31,6 +31,8 @@ await page.waitForTimeout(800);
 await page.click('[data-act="quick"]');
 await page.waitForFunction(() => window.__pb?.stage && window.__pb.L3.flow === 'PLAY_SELECTION', null, { timeout: 90000 });
 await page.evaluate(() => window.__pb.setMode('coach'));
+// A pre-snap flag ends a play before the snap; the flow checks here are about plays that run.
+await page.evaluate(() => { const R = window.__pb.RATES; R.falseStart = 0; R.offside = 0; });
 // The first game opens with the controls card; it pauses play until it is dismissed.
 await page.waitForSelector('#help-ov:not([hidden])', { timeout: 10000 });
 await page.click('[data-act="helpok"]');

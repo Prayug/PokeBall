@@ -415,7 +415,7 @@ function playCall(off, def, tempo, opts) {
     save(); render(); autoAdvance();
     return;
   }
-  const live = g.phase !== 'kickoff' && (['run', 'pass'].includes(OFF_PLAYS[off].kind) || (g.phase === 'play' && liveKick(OFF_PLAYS[off])));
+  const live = ['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]);
   if (stage && live) { startLive(off, def, { ...opts, hurry: g.phase === 'play' && pace === 'hurry' }); return; }
   S.busy = true;
   if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
@@ -452,28 +452,31 @@ function flashTimeout(g) {
   if (stage) L3.tickerUntil = performance.now() + 4000;
 }
 
-// Auto mode: the AI calls downs until a decision is yours, and plays them out.
+// Auto mode: the AI calls downs until a decision is yours, and plays them out. In either mode
+// the other side's own kickoffs and tries are played out on the field the same way.
 export function autoAdvance() {
   clearTimeout(timers.auto);
   const g = S.game;
-  if (!g || g.final || S.screen !== 'game' || !S.coach || needsUser(g) || L3.lp) return;
+  const kicks = g && (g.phase === 'pat' || g.phase === 'kickoff');
+  if (!g || g.final || S.screen !== 'game' || !(S.coach || kicks) || needsUser(g) || L3.lp) return;
   timers.auto = setTimeout(() => {
     if (!S.game || S.game.final || S.screen !== 'game' || L3.lp) return;
     if (stage && L3.flow !== 'PLAY_SELECTION') { autoAdvance(); return; }
     aiTimeouts(g);
     const off = aiOffenseCall(g), def = aiDefenseCall(g);
     const ours = ['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]);
-    if (stage && ours) S.coachDown = true;
+    if (stage && ours && S.coach) S.coachDown = true;
     else render();
-    playCall(off, def, null, { userSide: userSide(), watch: true, autoQB: true, autoSnap: 1.4, formation: aiFormation(off), defFormation: aiFront(def) });
+    playCall(off, def, null, { userSide: userSide(), watch: S.coach || !!S.watch, autoQB: true, autoSnap: 1.4, formation: aiFormation(off), defFormation: aiFront(def) });
   }, stage ? 700 : 650);
 }
 
 export function startGame(game, meta) {
   S.game = game; S.gameMeta = meta;
-  // Your side's try and kickoff choices wait for your call.
+  // Your side's try and kickoff choices wait for your call, and every kickoff and try is played
+  // out on the field rather than resolved on the spot.
   const us = game.teams[0].id === (meta?.userTeamId ?? 0) ? 0 : 1;
-  game.manual = [us === 0, us === 1]; S.gameTab = 'log'; S.busy = false; S.subSel = null;
+  game.manual = [us === 0, us === 1]; game.liveKicks = true; S.gameTab = 'log'; S.busy = false; S.subSel = null;
   L3.lp = null; L3.preview = null; L3.spots = null; L3.pclock = 40; L3.rec = null; L3.paused = false;
   if (L3.replay) stopReplay();
   // The first game shows the controls once.

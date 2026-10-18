@@ -355,7 +355,9 @@ export function xpOdds(g) { return Math.min(0.995, fgChance(kickerDistance(g, g.
 // kickoff call (deep or onside); the AI decides on the spot for everyone else.
 function kickoff(g, kicker, freeKick = false) {
   g.clockRunning = false;
-  if (g.manual?.[kicker] && !g.final) {
+  // A game played on the live field (g.liveKicks) waits for every kickoff, so the screen can
+  // play it out; the fast simulator kicks at once.
+  if ((g.manual?.[kicker] || g.liveKicks) && !g.final) {
     g.phase = 'kickoff'; g.kick = { kicker, free: freeKick };
     g.poss = kicker; g.spot = freeKick ? 20 : 35; g.down = 1; g.toGo = 10;
     return null;
@@ -374,19 +376,24 @@ function surpriseOnside(g, kicker) {
   return g.quarter >= 4 && lead > 0 ? 0 : 0.006;
 }
 
-function doKickoff(g, kicker, freeKick, onside) {
+// How often the kicking team gets an onside kick back: the receiving team brings its hands
+// team when it sees it coming (late and behind); a surprise works far more often. The kicker's
+// touch decides how well it bounces.
+export function onsideOdds(g, kicker) {
+  const ac = kick(g, kicker, 'K', 'kac');
+  return clamp((onsideLean(g, kicker) ? 0.12 : 0.45) + (ac - 60) * 0.003, 0.04, 0.6);
+}
+
+function doKickoff(g, kicker, freeKick, onside, live = null, seconds = 0) {
   const rec = 1 - kicker;
   const leg = kick(g, kicker, 'K', 'kpw');
+  if (live) return liveKickoff(g, kicker, freeKick, live, seconds);
   g.kick = null;
   g.phase = 'play'; g.down = 1; g.toGo = 10;
   g.clockRunning = false;
   let text;
   if (onside) {
-    // The receiving team brings its hands team when it sees it coming; a surprise works far
-    // more often. The kicker's touch decides how well it bounces.
-    const expected = onsideLean(g, kicker);
-    const ac = kick(g, kicker, 'K', 'kac');
-    const p = clamp((expected ? 0.12 : 0.45) + (ac - 60) * 0.003, 0.04, 0.6);
+    const p = onsideOdds(g, kicker);
     const at = (freeKick ? 20 : 35) + between(g, 10, 14);
     g.clock = Math.max(0, g.clock - 4);
     const K = specialist(g, kicker, 'K');
@@ -420,6 +427,52 @@ function doKickoff(g, kicker, freeKick, onside) {
   return e;
 }
 
+// A kickoff played out on the live field (live/kicks.js): live.endX is where the ball ended up,
+// in yards from the kicking team's line.
+function liveKickoff(g, kicker, freeKick, live, seconds) {
+  const rec = 1 - kicker, from = freeKick ? 20 : 35;
+  const K = specialist(g, kicker, 'K'), knm = K != null ? nm(K) : g.teams[kicker].name;
+  const rnm = live.returner != null ? nm(live.returner) : g.teams[rec].name;
+  g.kick = null;
+  g.phase = 'play'; g.down = 1; g.toGo = 10;
+  g.clockRunning = false;
+  const run = live.how === 'touchback' || live.onside ? 0 : clamp(Math.round(seconds), 2, 15);
+  g.clock = Math.max(0, g.clock - run);
+  g.teams[rec].team.top += run;
+  let text, head = 'Kickoff', highlight = null;
+  if (live.onside) {
+    const kept = live.rec === 'kick';
+    g.poss = kept ? kicker : rec;
+    const at = clamp(from + (live.endX ?? 10), 1, 99);
+    g.spot = kept ? at : 100 - at;
+    text = kept ? `${knm} kicks it onside... and ${g.teams[kicker].name} RECOVER at the ${spotText(g)}!`
+      : `${g.teams[kicker].name} try an onside kick. ${g.teams[rec].name} recover at the ${spotText(g)}.`;
+    head = kept ? 'Onside recovered' : 'Onside kick';
+    if (kept) highlight = 'turnover';
+  } else if (live.how === 'touchback') {
+    g.poss = rec; g.spot = 25;
+    text = `${knm} kicks off into the end zone. Touchback.`;
+  } else if (live.how === 'td') {
+    g.poss = rec; g.spot = 100;
+    text = `${knm} kicks off. ${rnm} returns it all the way for a TOUCHDOWN!`;
+    head = 'Kickoff return touchdown'; highlight = 'td';
+  } else if (live.how === 'out' && live.ret == null) {
+    // Out of bounds before anyone touched it: the receiving team takes it at its 40.
+    g.poss = rec; g.spot = 40;
+    text = `${knm}'s kickoff goes out of bounds. ${g.teams[rec].name} take over at the ${spotText(g)}.`;
+  } else {
+    g.poss = rec; g.spot = clamp(100 - (from + (live.endX ?? 65)), 1, 99);
+    const ret = live.ret ?? 0;
+    text = `${knm} kicks off. ${rnm} returns it ${ret} yard${ret === 1 ? '' : 's'} to the ${spotText(g)}${live.tackler != null ? `, tackled by ${nm(live.tackler)}` : live.how === 'out' ? ', out of bounds' : ''}.`;
+    if (ret >= 35) highlight = 'big';
+  }
+  g.toGo = Math.min(10, 100 - g.spot);
+  const e = addLog(g, { kind: 'kick', text, head, highlight, ball: absSpot(g.poss, g.spot) });
+  if (g.spot >= 100) { scoreTD(g, rec, live.returner); return e; }
+  startDrive(g);
+  return e;
+}
+
 function fgChance(dist) {
   const pts = [[20, 0.99], [30, 0.95], [40, 0.86], [45, 0.78], [50, 0.66], [55, 0.48], [60, 0.25], [66, 0.05]];
   if (dist <= 20) return 0.99;
@@ -442,21 +495,23 @@ function scoreTD(g, ti, scorer) {
   g.phase = 'pat'; g.poss = ti; g.spot = 98; g.down = 1; g.toGo = 2; g.clockRunning = false;
   // A two-point play does not count in anyone's stats: they are put back as they were.
   g.patStats = g.teams.map((t) => structuredClone({ stats: t.stats, team: t.team }));
-  if (!g.manual?.[ti]) convert(g, aiConvertCall(g), aiDefenseCall(g));
+  if (!g.manual?.[ti] && !g.liveKicks) convert(g, aiConvertCall(g), aiDefenseCall(g));
 }
 
 // The try after a touchdown. live: a two-point play's result from the live field.
-function convert(g, offCall, defCall, live = null) {
+function convert(g, offCall, defCall, live = null, kickLive = null) {
   const o = g.poss, d = 1 - o;
   const play = OFF_PLAYS[offCall];
   let good, text, pts;
   const base = { kind: 'play', off: offCall, def: defCall, team: o, spotBefore: g.spot, from: absSpot(o, g.spot), yards: 0, conversion: true };
   if (!live && !['run', 'pass'].includes(play?.kind)) {
     const K = specialist(g, o, 'K');
-    good = chance(g, xpOdds(g));
+    // Played on the live field, the kick says whether it went through (or was blocked).
+    good = kickLive ? kickLive.how === 'good' : chance(g, xpOdds(g));
     pts = 1;
     if (K != null) { const s = st(g, o, K); s.xpa = (s.xpa ?? 0) + 1; if (good) s.xpm = (s.xpm ?? 0) + 1; }
-    text = `${K != null ? `${nm(K)}'s extra point` : 'The extra point'} is ${good ? 'good' : 'NO GOOD'}.`;
+    const blocked = kickLive?.how === 'blocked';
+    text = `${K != null ? `${nm(K)}'s extra point` : 'The extra point'} is ${good ? 'good' : blocked ? `BLOCKED${kickLive.blocker != null ? ` by ${nm(kickLive.blocker)}` : ''}` : 'NO GOOD'}.`;
     base.off = 'xp';
   } else {
     const r = live ?? (play.kind === 'run' ? doRun(g, simOff(offCall), simDef(defCall), play.qb === true || (play.qb > 0 && chance(g, play.qb)))
@@ -684,7 +739,14 @@ export function runLivePlay(g, offCall, defCall, r, seconds) {
   if (g.final) return null;
   clockFields(g);
   g.playNo++;
-  if (g.phase === 'pat') return convert(g, offCall, defCall, r.noPlay ? { kind: 'pass', yards: 0, text: 'The snap is fumbled.', turnover: null } : r);
+  if (g.phase === 'pat') {
+    if (r.liveKick) return convert(g, 'xp', defCall, null, r);
+    return convert(g, offCall, defCall, r.noPlay ? { kind: 'pass', yards: 0, text: 'The snap is fumbled.', turnover: null } : r);
+  }
+  if (g.phase === 'kickoff') {
+    const k = g.kick ?? { kicker: g.poss, free: false };
+    return doKickoff(g, k.kicker, k.free, !!OFF_PLAYS[offCall]?.onside, r, seconds);
+  }
   if (r.liveKick) {
     // A punt or field goal played on the field: the kick's own outcome, then the usual bookkeeping.
     const kb = { kind: 'play', off: offCall, def: defCall, down: g.down, toGo: g.toGo, spotBefore: g.spot, from: absSpot(g.poss, g.spot), team: g.poss, yards: 0 };

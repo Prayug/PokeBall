@@ -10,7 +10,7 @@ import { bodyOf } from './body.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
 import { DEF_SCHEMES, coverWant, pursueWant, rushWant, setupDefense } from './live/defense.js';
 import { PLAY_ROUTES, airJumps, ballFlight, buildRoute, contest, coverageRead, looseBall, qbBrain, releasePoint, routeWant, snapFlight, startJump, startThrow, throwAway, windup } from './live/passing.js';
-import { kickResult, kickStep, kickWant, liveKick, setupKick } from './live/kicks.js';
+import { XP_SPOT, kickResult, kickStep, kickWant, liveKick, setupKick } from './live/kicks.js';
 import { RATES, liveFoul, preSnapFoul, sloppy } from './penalties.js';
 export { DEF_SCHEMES } from './live/defense.js';
 export { liveKick } from './live/kicks.js';
@@ -43,10 +43,12 @@ export const sgn = (v) => (v < 0 ? -1 : 1);
 export function createLivePlay(g, offCall, defCall, opts = {}) {
   const o = g.poss, d = 1 - o;
   const play = OFF_PLAYS[offCall];
+  // The extra point lines up at the 15, not at the 2 where a two-point try is run.
+  const spot = play.kind === 'xp' ? XP_SPOT : g.spot;
   const lp = {
     g, o, d, offCall, defCall, play, kind: play.kind, depth: play.depth ?? null,
     t: 0, phase: 'pre', ball: { state: 'held', holder: null, x: 0, y: 0, z: 1.2 },
-    spot: g.spot, goalX: 100 - g.spot, ownGoalX: -g.spot,
+    spot, goalX: 100 - spot, ownGoalX: -spot,
     players: [], off: {}, def: {}, events: [], result: null,
     user: opts.userSide ?? null, autoQB: !!opts.autoQB, control: null, manual: false,
     blitz: [...(DEF_SCHEMES[defCall]?.blitz ?? [])],
@@ -90,9 +92,10 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
     lp.formationIssues = validateFormation(lp);
   }
   if (opts.from) walkIn(lp, opts.from);
-  // The returner and the punter come on from the sideline straight to their spots.
-  if (lp.kick && opts.from) for (const p of [lp.kick.returner, lp.kicker]) if (p && dist(p, p.home) > 12) { p.x = p.home.x; p.y = p.home.y; }
-  lp.ball.holder = lp.off.C ?? lp.off.QB;
+  // The returner and the punter come on from the sideline straight to their spots (on a
+  // kickoff, everyone far from his spot does).
+  if (lp.kick && opts.from) for (const p of lp.kick.ko ? lp.players : [lp.kick.returner, lp.kicker]) if (p && dist(p, p.home) > 12) { p.x = p.home.x; p.y = p.home.y; }
+  if (!lp.kick?.ko) lp.ball.holder = lp.off.C ?? lp.off.QB;
   syncBall(lp);
   // Coach mode (opts.watch): the user called the play and the AI plays every Pokémon.
   if (opts.watch) lp.control = null;
@@ -357,6 +360,8 @@ export function snap(lp) {
       return;
     }
   }
+  // A kickoff has no snap: the kicker starts his run up to the tee.
+  if (lp.kick?.ko) { lp.kick.stage = 'approach'; event(lp, 'snap', '', lp.kicker, lp.kicker); return; }
   const qb = lp.snapTo ?? lp.off.QB, c = lp.off.C;
   if (isGun(lp.formation) && c && qb) {
     // The ball flies back from the center to the quarterback.
@@ -808,6 +813,8 @@ function carrierWant(lp, p) {
       else return seek(p, { x: Math.min(1.5, -1 + e * (lp.play.dir === 'toss' ? 4.5 : 3)), y: lp.holeY }, 1, 0.05);
     } else if (e < (lp.play.dir === 'power' || lp.play.dir === 'qbpower' ? 0.8 : 0.55) && !wide) return seek(p, { x: 1.5, y: lp.holeY }, 1, 0.05);
   }
+  // A fake punt: the up-back gets to the edge first.
+  if (lp.fake === 'punt' && p.x < 0.5 && lp.t - (lp.carrierAt ?? 0) < 1.6) return seek(p, { x: 1.5, y: lp.fakeEdge * 9 }, 1, 0.05);
   let best = null;
   for (let a = -90; a <= 90; a += 15) {
     const r = (a * Math.PI) / 180;
@@ -1408,6 +1415,7 @@ export function finish(lp, end) {
   lp.deadAt = lp.t;
   lp.end = end;
   lp.result = lp.kick ? kickResult(lp, end) : buildResult(lp, end);
+  if (lp.fake && lp.result.text) lp.result.text = `${lp.fake === 'punt' ? 'Fake punt!' : 'Fake field goal!'} ${lp.result.text}`;
   if (lp.fouls?.length) { lp.result.fouls = lp.fouls; lp.result.statSnap = lp.statSnap; }
 }
 
