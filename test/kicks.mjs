@@ -29,6 +29,8 @@ function play(call, spot, i, setup) {
     last = { x: b.x, y: b.y, holder: b.holder };
   }
   if (!lp.result) { problems.push(`${call} seed ${i}: no result (stage ${lp.kick?.stage})`); return null; }
+  // The ball's possession states only move the legal ways (see POSSESSION_FLOW in live.js).
+  for (const e of lp.possErrors ?? []) problems.push(`${call} seed ${i}: possession ${e} (${(lp.possLog ?? []).map((x) => x.state).join(' > ')})`);
   const before = { poss: g.poss, spot: g.spot, score: [...g.score] };
   const e = runLivePlay(g, call, 'base', lp.result, playSeconds(lp));
   if (!e?.text) problems.push(`${call} seed ${i}: no log entry`);

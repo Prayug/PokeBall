@@ -114,6 +114,7 @@ function playOne(g, off, def) {
     if (lp.spotX == null) issues.push('no forward-progress spot');
   }
   if (lp.end?.how === 'sack' && !(lp.spotX < 0)) issues.push(`sack spotted at ${lp.spotX?.toFixed(1)}, not behind the line`);
+  for (const e of lp.possErrors ?? []) issues.push(`possession ${e}`);
   return { lp, r: lp.result, issues: [...new Set(issues)], tr };
 }
 

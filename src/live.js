@@ -114,6 +114,7 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
   if (lp.kick && opts.from) for (const p of lp.kick.ko ? lp.players : [lp.kick.returner, lp.kicker]) if (p && dist(p, p.home) > 12) { p.x = p.home.x; p.y = p.home.y; }
   if (!lp.kick?.ko) lp.ball.holder = lp.off.C ?? lp.off.QB;
   syncBall(lp);
+  trackPossession(lp);
   // Coach mode (opts.watch): the user called the play and the AI plays every Pokémon.
   if (opts.watch) lp.control = null;
   // A kick: the receiving side has the returner; the kicking side takes a cover man once it is away.
@@ -402,7 +403,7 @@ export function snap(lp) {
     }
   }
   // A kickoff has no snap: the kicker starts his run up to the tee.
-  if (lp.kick?.ko) { lp.kick.stage = 'approach'; event(lp, 'snap', '', lp.kicker, lp.kicker); return; }
+  if (lp.kick?.ko) { lp.kick.stage = 'approach'; event(lp, 'snap', '', lp.kicker, lp.kicker); trackPossession(lp); return; }
   const qb = lp.snapTo ?? lp.off.QB, c = lp.off.C;
   if (isGun(lp.formation) && c && qb) {
     // The ball flies back from the center to the quarterback.
@@ -420,6 +421,7 @@ export function snap(lp) {
   const wide = (s) => front.filter((p) => sgn(p.y) === s).sort((a, b) => Math.abs(b.y) - Math.abs(a.y))[0];
   for (const s of [-1, 1]) { const w = wide(s); if (w) w.edge = s; }
   event(lp, 'snap', '', c ?? qb, qb);
+  trackPossession(lp);
 }
 
 // The play's state for the game loop: PRE_SNAP, SNAP (the ball on its way from the center
@@ -444,6 +446,7 @@ export function step(lp, input = null) {
     shiftStep(lp);
     for (const p of lp.players) { orient(lp, p); classify(lp, p); }
     if (lp.set && lp.snapQueued) snap(lp);
+    trackPossession(lp);
     return;
   }
   if (lp.phase !== 'live') {
@@ -457,6 +460,7 @@ export function step(lp, input = null) {
     looseBall(lp);
     syncBall(lp);
     for (const p of lp.players) { orient(lp, p); classify(lp, p); }
+    trackPossession(lp);
     return;
   }
   lp.t += DT;
@@ -505,6 +509,51 @@ export function step(lp, input = null) {
   syncBall(lp);
   for (const p of lp.players) { classify(lp, p); remember(lp, p); }
   if (lp.phase === 'live' && lp.t > MAX_TIME) whistle(lp, 'time');
+  trackPossession(lp);
+}
+
+// ---------- possession ----------
+// Where the ball is, as one state the whole game agrees on:
+//   PRE_SNAP      on the turf at the center
+//   SNAP          on its way back from the center (a shotgun or long snap)
+//   LIVE_PLAY     in the quarterback's (or holder's, or punter's) hands behind the line, or on
+//                 the tee, before anyone runs with it
+//   PASS_IN_AIR   thrown, not yet caught, batted or on the ground
+//   KICK_IN_AIR   punted or kicked
+//   BALL_CARRIED  a runner has it: a handoff, a scramble, a catch, an interception, a return
+//   LOOSE         nobody has it: a fumbled or batted ball bouncing, an onside kick
+//   PLAY_DEAD     the whistle: nothing about the ball changes after this
+// It is derived from the simulation each step and checked against the legal moves below, so a
+// conflicting state (a catch after the whistle, a carrier with the ball in the air) is caught
+// the step it happens; lp.possLog keeps the sequence with the holder at each change.
+export const POSSESSION_FLOW = {
+  PRE_SNAP: ['SNAP', 'LIVE_PLAY', 'BALL_CARRIED', 'PLAY_DEAD'],
+  SNAP: ['LIVE_PLAY', 'BALL_CARRIED', 'LOOSE', 'PLAY_DEAD'],
+  LIVE_PLAY: ['PASS_IN_AIR', 'KICK_IN_AIR', 'BALL_CARRIED', 'LOOSE', 'PLAY_DEAD'],
+  PASS_IN_AIR: ['BALL_CARRIED', 'LOOSE', 'PLAY_DEAD'],
+  KICK_IN_AIR: ['BALL_CARRIED', 'LOOSE', 'PLAY_DEAD'],
+  BALL_CARRIED: ['PASS_IN_AIR', 'LOOSE', 'PLAY_DEAD'],
+  LOOSE: ['BALL_CARRIED', 'PLAY_DEAD'],
+  PLAY_DEAD: [],
+};
+export function possessionOf(lp) {
+  if (lp.phase === 'pre') return 'PRE_SNAP';
+  if (lp.phase === 'dead') return 'PLAY_DEAD';
+  const b = lp.ball;
+  if (b.state === 'snap') return 'SNAP';
+  if (b.state === 'air') return lp.kick?.F && !lp.thrown ? 'KICK_IN_AIR' : 'PASS_IN_AIR';
+  if (b.state === 'loose' || b.state === 'onside') return 'LOOSE';
+  if (b.state === 'held' && lp.carrierSet && b.holder === lp.carrier) return 'BALL_CARRIED';
+  return 'LIVE_PLAY';
+}
+function trackPossession(lp) {
+  const now = possessionOf(lp);
+  if (now === lp.possession) return;
+  const was = lp.possession;
+  if (was && !(POSSESSION_FLOW[was] ?? []).includes(now)) (lp.possErrors ??= []).push(`${was} -> ${now} at t=${lp.t.toFixed(2)}`);
+  lp.possession = now;
+  const h = lp.ball.holder;
+  (lp.possLog ??= []).push({ t: lp.t, state: now, holder: h ? `${h.side}${h.slot}` : null });
 }
 
 // ---------- what the defense can see ----------

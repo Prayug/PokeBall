@@ -125,6 +125,7 @@ for (let i = 0; i < N; i++) {
   if (tackleAt && lp.end && ['tackle', 'sack'].includes(lp.end.how)) { C.tackles++; C.slide.push(len(tackleAt.c.x - tackleAt.x, tackleAt.c.y - tackleAt.y)); }
   // After the whistle nobody keeps running the play: a second of dead-ball steps and the ball
   // stays dead, nobody in the tackle moves off the spot.
+  for (const e of lp.possErrors ?? []) { C.possBad++; if (C.possBad < 5) console.log(`   possession ${e} (${off} vs ${def})`); }
   if (lp.phase === 'dead') {
     const ball = lp.possession;
     for (let s = 0; s < 60; s++) step(lp, null);
