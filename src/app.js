@@ -13,6 +13,9 @@ import { boardRowsHtml, detailHtml, draftTick, renderDraft, renderGrades, userDr
 import { depthClick, renderDepth } from './screens/depth.js';
 import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthers } from './screens/season.js';
 import { renderOffseason } from './screens/offseason.js';
+import { renderFreeAgency } from './screens/freeagency.js';
+import { renderRecords } from './screens/records.js';
+import * as FA from './freeagency.js';
 import { autoAdvance, doCall, renderGame, setMode, startGame, userSide, userTimeout } from './screens/game.js';
 import { L3, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, recall, setCamera, setDebug, stage, startReplay, syncOverlays } from './screens/live3d.js';
 
@@ -35,7 +38,9 @@ function renderTop() {
   if (L) {
     if (L.phase === 'draft') items.push(['draft', 'Draft room']);
     else if (L.phase === 'offseason') items.push(['offseason', 'Offseason'], ['season', 'Last season']);
+    else if (L.phase === 'freeagency') items.push(['freeagency', 'Free agency']);
     else items.push(['grades', 'Draft grades'], ['depth', 'Depth chart'], ['season', 'Season']);
+    items.push(['records', 'Records']);
   }
   if (S.game && !S.game.final) items.push(['game', 'Live game']);
   return `<header class="top">
@@ -75,9 +80,19 @@ function onClick(e) {
     case 'suggestcuts': S.offCuts = new Set(L.offseason.cuts[user().id]); render(); break;
     case 'finishoffseason': {
       LG.finishOffseason(L, [...(S.offCuts ?? [])]);
-      S.offCuts = null;
+      S.offCuts = null; S.faSel = null; S.faRelease = null; S.faAmount = null;
+      setScreen(L.phase === 'freeagency' ? 'freeagency' : 'draft');
+      break;
+    }
+    case 'fasel': S.faSel = Number(el.dataset.id); S.faAmount = null; render(); break;
+    case 'fabid': case 'fapass': case 'faskip': {
+      if (L?.phase !== 'freeagency') break;
+      if (act === 'faskip') FA.skipFreeAgency(L);
+      else FA.runFaRound(L, act === 'fabid' ? { id: S.faSel, release: S.faRelease, amount: S.faAmount } : null);
+      S.faSel = null; S.faRelease = null; S.faAmount = null;
+      if (L.phase === 'freeagency') { save(); render(); break; }
       S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false };
-      setScreen('draft');
+      setScreen(L.phase === 'draft' ? 'draft' : 'grades');
       break;
     }
     case 'subslot': S.subSel = S.subSel === el.dataset.slot ? null : el.dataset.slot; render(); break;
@@ -174,6 +189,13 @@ function onClick(e) {
 
 function onInput(e) {
   const t = e.target;
+  if (t.id === 'fa-amount') {
+    S.faAmount = Math.round(Number(t.value));
+    const pos = t.selectionStart;
+    render();
+    const el = document.getElementById('fa-amount');
+    try { el?.setSelectionRange(pos, pos); } catch { /* number inputs have no selection */ }
+  }
   if (t.id === 'd-search') { S.draft.search = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id?.startsWith('cal-')) {
     const k = t.id.slice(4);
@@ -186,6 +208,8 @@ function onInput(e) {
 }
 function onChange(e) {
   const t = e.target;
+  if (t.id === 'fa-release') { S.faRelease = Number(t.value); render(); }
+  if (t.id === 'rec-team') { S.recTeam = t.value === 'league' ? 'league' : Number(t.value); render(); }
   if (t.id === 'd-type') { S.draft.type = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
@@ -236,6 +260,8 @@ export function render() {
     case 'season': body = L && L.schedule.length ? renderSeason() : renderHome(); break;
     case 'result': body = L ? renderResult() : renderHome(); break;
     case 'offseason': body = L?.phase === 'offseason' ? renderOffseason() : renderHome(); break;
+    case 'freeagency': body = L?.phase === 'freeagency' ? renderFreeAgency() : renderHome(); break;
+    case 'records': body = L ? renderRecords() : renderHome(); break;
     case 'game': ensureStage(); body = renderGame(); break;
     default: body = renderHome();
   }

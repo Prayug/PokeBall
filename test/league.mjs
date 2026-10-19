@@ -1,11 +1,14 @@
 // League mode end to end, the way the app drives it: draft, grades and the trade offer, a full
 // regular season with soreness and subs, the playoff bracket, awards, the offseason (training
-// camp, cuts) and the rookie draft, then the next season. Every step is checked against the
+// camp, cuts), free agency and the rookie draft, then the next season. Career stats, the Hall
+// of Fame, the record books and the playoff rivalries are checked as they build up. Every step is checked against the
 // rules the league screens rely on, and a save exported mid-season (a JSON round trip, as the
 // Export and Import buttons do) must play on to exactly the same results as the original.
 // Exits non-zero on any failure.
 // Usage: node test/league.mjs [seasons, default 2] [seed, default 11]
 import * as LG from '../src/league.js';
+import * as FA from '../src/freeagency.js';
+import * as RC from '../src/records.js';
 import { PLAYERS, SLOT_KEYS, applyGrowth } from '../src/ratings.js';
 import { simUntil } from '../src/engine.js';
 
@@ -166,15 +169,95 @@ function checkOffseason(L, before) {
   }
 }
 
+// Free agency: the pool is everyone cut plus everyone undrafted, nobody goes over the cap, and
+// you win a bid by outbidding the league.
+function runFreeAgency(L, rosterSize) {
+  const s = `season ${L.season} free agency`;
+  check(L.phase === 'freeagency' && L.fa?.round === 0, `${s}: opens after the cuts`);
+  const pool = FA.faPool(L).map((p) => p.id);
+  const cut = Object.keys(L.fa.cuts).map(Number);
+  check(cut.length === L.teams.length * LG.CUTS && cut.every((id) => pool.includes(id)), `${s}: every cut Pokémon is in the pool`);
+  check(pool.every((id) => !L.teams.some((t) => t.roster.includes(id))), `${s}: nobody in the pool is on a roster`);
+  if (!L.settings.legendaries) check(pool.every((id) => !PLAYERS[id].legendary), `${s}: no legendaries in the pool`);
+  for (const t of L.teams) check(FA.capSpace(L, t) >= 0, `${s}: ${t.abbr} opens under the $${L.cap}M cap`);
+  const me = L.teams.find((t) => t.user);
+  // Round 1: you bid the most you can on your best target, so nobody can outbid you.
+  const target = FA.faTargets(L, me).find((x) => FA.typeCapOk(L, me, x.id, x.release));
+  check(target != null, `${s}: you have someone worth signing`);
+  check(FA.bidProblem(L, me, target.id, target.release, target.ask - 1) != null, `${s}: a bid under the asking price is refused`);
+  check(FA.bidProblem(L, me, target.id, target.release, FA.maxBid(L, me, target.release) + 1) != null, `${s}: a bid over the cap is refused`);
+  const amount = FA.maxBid(L, me, target.release);
+  check(FA.bidProblem(L, me, target.id, target.release, amount) == null, `${s}: a bid at your cap room is accepted`);
+  const signed = FA.runFaRound(L, { id: target.id, release: target.release, amount });
+  const mine = signed.find((x) => x.id === target.id);
+  const won = mine?.team === me.id;
+  check(mine != null && (won || mine.amount >= amount), `${s}: your bid is resolved, highest bid wins`);
+  if (won) check(me.roster.includes(target.id) && L.contracts[target.id] === amount, `${s}: you signed ${PLAYERS[target.id].name} for $${amount}M`);
+  check(L.fa.last?.user?.won === won, `${s}: the round reports your result`);
+  check(signed.every((x) => x.bidders.every((b) => b.amount <= x.amount)), `${s}: every signing went to the top bid`);
+  check(new Set(signed.map((x) => x.team)).size === signed.length, `${s}: one signing per team per round`);
+  FA.skipFreeAgency(L);
+  check(L.phase === 'draft' || L.phase === 'grades', `${s}: the rookie draft opens after ${FA.FA_ROUNDS} rounds`);
+  for (const t of L.teams) {
+    check(FA.payroll(L, t) <= L.cap, `${s}: ${t.abbr} stays under the cap ($${FA.payroll(L, t)}M of $${L.cap}M)`);
+    check(t.roster.length <= rosterSize, `${s}: ${t.abbr} roster at most ${rosterSize}`);
+    check(FA.signingsBy(L, t.id).length <= FA.FA_ROUNDS, `${s}: ${t.abbr} signed at most ${FA.FA_ROUNDS}`);
+  }
+  const all = L.teams.flatMap((t) => t.roster);
+  check(new Set(all).size === all.length, `${s}: nobody signed twice`);
+  console.log(`     season ${L.season} free agency: ${L.fa.log.length} signed, cap $${L.cap}M; you ${won ? 'won' : 'lost'} ${PLAYERS[target.id].name} at $${amount}M`);
+}
+
 function checkRookieDraft(L, rosterSize, last) {
   const s = `season ${L.season} rookie draft`;
-  check(L.phase === 'draft' && L.picks.length === L.teams.length * LG.CUTS, `${s}: ${LG.CUTS} rounds open`);
+  check(L.phase === 'draft', `${s}: opens`);
+  const need = L.teams.map((t) => rosterSize - t.roster.length);
+  check(L.picks.length === need.reduce((a, b) => a + b, 0), `${s}: one pick per open roster spot`);
+  check(need.every((k) => k >= LG.CUTS - FA.FA_ROUNDS), `${s}: every team keeps at least ${LG.CUTS - FA.FA_ROUNDS} picks`);
   const first = L.picks.slice(0, L.teams.length).map((p) => p.team);
   check(first[first.length - 1] === last.champion, `${s}: the champion picks last`);
   const others = last.records.map((r) => r.id).filter((id) => id !== last.champion).reverse();
   check(same(first.slice(0, -1), others), `${s}: worst record picks first`);
-  check(L.teams.every((t) => t.roster.length === rosterSize - LG.CUTS), `${s}: every team is down ${LG.CUTS}`);
   check(L.results.length === 0 && Object.keys(L.seasonStats).length === 0 && L.champion == null, `${s}: the new season starts clean`);
+}
+
+// Careers, the Hall of Fame, the record books and rivalries after a season is archived.
+function checkRecords(L, seasonStats) {
+  const s = `season ${L.season} records`;
+  check(L.careerSeason === L.season, `${s}: the season is folded into careers once`);
+  const sum = (k) => Object.values(L.careers).reduce((a, c) => a + (c.st[k] ?? 0), 0);
+  const want = (k) => L.history.reduce((a, h) => a + (h.totals?.[k] ?? 0), 0);
+  for (const k of ['py', 'ry', 'tk']) check(sum(k) === want(k), `${s}: career ${k} totals match every season played (${sum(k)} vs ${want(k)})`);
+  check(Object.values(L.careers).every((c) => c.seasons >= 1 && c.seasons <= L.season), `${s}: seasons per career within the league's age`);
+  const champs = Object.entries(seasonStats).filter(([, x]) => x.team === L.champion).map(([id]) => Number(id));
+  check(champs.length > 0 && champs.every((id) => L.careers[id].rings >= 1), `${s}: the champions get a ring`);
+  const mvp = L.history[L.history.length - 1].awards.find((a) => a.key === 'mvp');
+  check(L.careers[mvp.id].aw.mvp >= 1, `${s}: the MVP is on the MVP's career`);
+  check(L.hof.every((h) => L.careers[h.id].seasons >= RC.HOF_MIN_SEASONS && h.points >= RC.HOF_POINTS), `${s}: Hall of Famers clear the bar`);
+  check(new Set(L.hof.map((h) => h.id)).size === L.hof.length, `${s}: nobody inducted twice`);
+  check(L.hof.filter((h) => h.season === L.season).length <= RC.HOF_CLASS, `${s}: at most ${RC.HOF_CLASS} inducted a year`);
+  // The record book holds the best single game and season seen.
+  const league = RC.recordBook(L);
+  const py = league.season.find((r) => r.key === 'py').rec;
+  const bestPy = Math.max(...Object.values(seasonStats).map((x) => x.py ?? 0));
+  check(py && py.v >= bestPy, `${s}: the passing-yards season record is at least this season's best (${py?.v} vs ${bestPy})`);
+  const wins = league.season.find((r) => r.key === 'w').rec;
+  check(wins && wins.v >= Math.max(...L.history[L.history.length - 1].records.map((r) => r.w)), `${s}: the wins record is at least this season's best`);
+  const pts = league.game.find((r) => r.key === 'pts').rec;
+  check(pts && pts.v === Math.max(...L.meetings.flatMap((m) => [m.hs, m.as])), `${s}: the points-in-a-game record is the best score on the books`);
+  for (const t of L.teams) {
+    const f = RC.franchiseSummary(L, t.id);
+    const played = L.meetings.filter((m) => m.h === t.id || m.a === t.id).length;
+    check(f.w + f.l + f.t + f.pw + f.pl === played, `${s}: ${t.abbr} all-time record covers ${played} games`);
+  }
+  // Every playoff pairing has a rivalry, and its series adds up.
+  const rv = RC.rivalries(L);
+  check(rv.length > 0, `${s}: playoff rivalries exist`);
+  for (const r of rv) {
+    check(r.aWins + r.bWins + r.ties === r.played && r.playoffs.length >= 1, `${s}: ${L.teams[r.a].abbr}-${L.teams[r.b].abbr} series adds up`);
+  }
+  const final = L.meetings.filter((m) => m.s === L.season && m.r === 1);
+  check(final.length === 1, `${s}: the final is in the head-to-head book`);
 }
 
 // ---------- the dynasty ----------
@@ -203,7 +286,14 @@ function runDynasty(seed, seasons, { exportAt = null } = {}) {
     console.log(`ok   season ${L.season}: ${LG.standings(L).map((r) => `${L.teams[r.id].abbr} ${r.w}-${r.l}${r.t ? `-${r.t}` : ''}`).join(', ')}; champion ${champ.abbr}`);
     if (L.season >= seasons) return { L, exported };
     const growthBefore = JSON.parse(JSON.stringify(L.growth));
+    const seasonStats = JSON.parse(JSON.stringify(L.seasonStats));
+    // A rivalry card is ready for the final before it is archived.
+    const fin = LG.bracket(L).final;
+    const card = RC.rivalry(L, fin.home, fin.away);
+    check(card.playoffs.some((g) => g.season === L.season && g.round === 1), `season ${L.season}: the rivalry card shows the final`);
     LG.startOffseason(L);
+    L.history[L.history.length - 1].totals = Object.fromEntries(['py', 'ry', 'tk'].map((k) => [k, Object.values(seasonStats).reduce((a, x) => a + (x[k] ?? 0), 0)]));
+    checkRecords(L, seasonStats);
     checkOffseason(L, growthBefore);
     applyGrowth(L.growth);
     const last = L.history[L.history.length - 1];
@@ -213,9 +303,12 @@ function runDynasty(seed, seasons, { exportAt = null } = {}) {
     const mine = me.roster.slice().sort((a, b) => ovr(a) - ovr(b)).slice(0, LG.CUTS);
     LG.finishOffseason(L, mine);
     check(mine.every((id) => !me.roster.includes(id)), `season ${L.season} cuts: your hand-picked cuts are gone`);
+    check(L.teams.every((t) => t.roster.length === rosterSize - LG.CUTS), `season ${L.season} cuts: every team is down ${LG.CUTS}`);
+    runFreeAgency(L, rosterSize);
+    const picks = L.picks.length;
     checkRookieDraft(L, rosterSize, last);
     draftAll(L);
-    check(L.rookies.length === L.teams.length * LG.CUTS, `season ${L.season}: ${L.rookies.length} rookies drafted`);
+    check(L.rookies.length === picks, `season ${L.season}: ${L.rookies.length} rookies drafted`);
   }
 }
 
