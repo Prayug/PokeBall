@@ -211,7 +211,18 @@ export function tradeCardHtml(L) {
   return `<div class="card trade"><h3>Trade offer <span class="muted">${teamBadge(from)} ${esc(from.coachName)}</span></h3>
     <div class="tswap">${card(T.youGet, 'You get')}<span class="at">for</span>${card(T.youSend, 'You send')}</div>
     <p class="small muted">${esc(from.name)} want ${esc(P(T.youSend).name)}. By overall, your best lineup improves by ${T.gain} points. The offer stands until your first game.</p>
+    ${tradeKickingHtml(L)}
     <div class="actions"><button class="btn primary" data-act="tradeyes">Accept</button><button class="btn" data-act="tradeno">Decline</button></div></div>`;
+}
+
+// When the trade moves your kicker or punter: who kicks for you afterwards, and his range.
+function tradeKickingHtml(L) {
+  const K = LG.tradeKicking(L);
+  if (!K) return '';
+  const who = (x, what) => `${esc(P(x.id).name)} (${x.ovr}, ${what(x)})`;
+  const line = (role, b, a, what) => `<p class="small">Your ${role} after the trade: ${a ? who(a, what) : 'nobody'}${b ? `, replacing ${who(b, what)}` : ''}.</p>`;
+  return (K.k ? line('kicker', K.before.k, K.after.k, (x) => `${x.range}-yd range`) : '')
+    + (K.p ? line('punter', K.before.p, K.after.p, (x) => `about ${x.net} yds a punt`) : '');
 }
 
 export function userDraft(id, slot) {

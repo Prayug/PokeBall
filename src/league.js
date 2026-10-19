@@ -1,7 +1,7 @@
 // League: teams, snake draft with AI drafters, schedule, standings and leaders.
 import { PLAYERS, ALL_IDS, SLOT, SLOT_KEYS, BASELINE, autoDepthChart, unitRatings } from './ratings.js';
 import { bestMultiplier, matchupModifier, ABILITIES } from './types.js';
-import { createGame, simUntil, summary } from './engine.js';
+import { createGame, kickingUnit, simUntil, summary } from './engine.js';
 import { SCHEMES, schemeDraft } from './coach.js';
 import { coverSlot, healWeek, recordInjuries } from './injuries.js';
 import { gameHeadline, weekInReview } from './weekly.js';
@@ -79,6 +79,22 @@ export function migrateLeague(L) {
   L.contracts ??= {}; L.cap ??= null; L.fa ??= null;
   ensureRecords(L);
   return L;
+}
+
+// Box scores are most of a save's size (about 130 KB a season). Keep them for the current and
+// last season and drop older ones, leaving the score and quarters of every game. Covers this
+// season's results and any game lists archived in the league's history.
+export const BOX_SEASONS = 2;
+export function trimBoxScores(L, keep = BOX_SEASONS) {
+  if (!L) return 0;
+  const cur = L.season ?? 1;
+  let n = 0;
+  const lists = [[L.results, cur], ...(L.history ?? []).map((h) => [h.results ?? h.games, h.season])];
+  for (const [list, season] of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const r of list) if (r.box && (r.season ?? season ?? 0) <= cur - keep) { delete r.box; n++; }
+  }
+  return n;
 }
 
 function pickFavTypes(rng) {
@@ -282,7 +298,7 @@ export function scoringPlays(g) {
 
 export function recordResult(L, g, meta) {
   const sm = summary(g);
-  L.results.push({ ...meta, home: g.teams[0].id, away: g.teams[1].id, score: sm.score, winner: sm.winner == null ? null : g.teams[sm.winner].id,
+  L.results.push({ ...meta, season: L.season ?? 1, home: g.teams[0].id, away: g.teams[1].id, score: sm.score, winner: sm.winner == null ? null : g.teams[sm.winner].id,
     quarters: sm.quarters, weather: sm.weather,
     box: { stats: g.teams.map((t) => compactStats(t.stats)), team: g.teams.map((t) => ({ ...t.team, third: [...t.team.third] })), scoring: scoringPlays(g) },
     injuries: (g.injuries ?? []).map((i) => ({ id: i.id, team: i.team, weeks: i.weeks })) });
@@ -441,7 +457,8 @@ export function scoutReport(L, myId, oppId) {
   const inj = L.injuries ?? {};
   const health = L.teams[myId].roster.filter((id) => cond[id] || inj[id]).map((id) => ({ id, ...cond[id], injury: inj[id] ?? null }));
   const theirHurt = L.teams[oppId].roster.filter((id) => inj[id] && Object.values(L.teams[oppId].lineup).includes(id)).map((id) => ({ id, ...inj[id] }));
-  return { me, opp, best, worst, weather, plan, lean, health, theirHurt, coachNote: COACH_NOTES[L.teams[oppId].coach] ?? '' };
+  const kicking = { me: kickingUnit(me.lineup), opp: kickingUnit(opp.lineup) };
+  return { me, opp, best, worst, weather, plan, lean, health, theirHurt, kicking, coachNote: COACH_NOTES[L.teams[oppId].coach] ?? '' };
 }
 
 // ---------- awards, bracket ----------
@@ -520,15 +537,15 @@ export function makeTradeOffer(L) {
   const { r, save } = leagueRng(L);
   const meBase = teamStrength(me.roster);
   const topOvr = (id) => PLAYERS[id].ovr[PLAYERS[id].best[0]];
-  const mine = me.roster.slice().sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 10);
+  // The ten best by overall, plus the kicker and punter, whose value is at their own slot.
+  const mine = [...new Set([...me.roster.slice().sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 10), me.lineup.K, me.lineup.P])].filter((id) => id != null);
+  const upgrade = (id, k) => me.lineup[k] == null || PLAYERS[id].ovr[k] > PLAYERS[me.lineup[k]].ovr[k];
   let best = null;
   for (const t of L.teams) {
     if (t.user) continue;
     const base = teamStrength(t.roster);
-    const theirs = t.roster.filter((id) => {
-      const k = PLAYERS[id].best[0];
-      return me.lineup[k] == null || PLAYERS[id].ovr[k] > PLAYERS[me.lineup[k]].ovr[k];
-    }).sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 8);
+    const theirs = t.roster.filter((id) => upgrade(id, PLAYERS[id].best[0])).sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 8);
+    for (const k of ['K', 'P']) if (t.lineup[k] != null && upgrade(t.lineup[k], k) && !theirs.includes(t.lineup[k])) theirs.push(t.lineup[k]);
     for (const send of mine) {
       for (const get of theirs) {
         const meGain = teamStrength(me.roster.map((x) => (x === send ? get : x))) - meBase;
@@ -544,6 +561,19 @@ export function makeTradeOffer(L) {
   if (!best) return null;
   const { score, ...offer } = best;
   return { ...offer, season: L.season ?? 1, status: 'open' };
+}
+
+// How the user's kicker and punter change if the open trade goes through and the depth chart is
+// auto-arranged (the lineup the offer's gain is measured on). Null when neither changes.
+export function tradeKicking(L) {
+  const T = L.trade, me = L.teams.find((t) => t.user);
+  if (!T || !me) return null;
+  const before = kickingUnit(me.lineup);
+  const after = kickingUnit(autoDepthChart(me.roster.map((x) => (x === T.youSend ? T.youGet : x))).lineup);
+  const touched = [T.youSend, T.youGet];
+  const k = before.k?.id !== after.k?.id && (touched.includes(before.k?.id) || touched.includes(after.k?.id));
+  const p = before.p?.id !== after.p?.id && (touched.includes(before.p?.id) || touched.includes(after.p?.id));
+  return k || p ? { before, after, k, p } : null;
 }
 
 export function tradeOpen(L) {

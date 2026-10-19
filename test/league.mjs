@@ -8,7 +8,7 @@
 // Usage: node test/league.mjs [seasons, default 2] [seed, default 11]
 import * as LG from '../src/league.js';
 import { PLAYERS, SLOT, SLOT_KEYS, applyGrowth } from '../src/ratings.js';
-import { createGame, simUntil } from '../src/engine.js';
+import { createGame, fgRange, simUntil } from '../src/engine.js';
 import { SCHEMES, schemeBonus } from '../src/coach.js';
 import { injuryOdds } from '../src/injuries.js';
 import * as FA from '../src/freeagency.js';
@@ -377,6 +377,50 @@ check(firstSeason(L) === again.champion, 'dynasty: the same seed crowns the same
   delete v1.version;
   LG.migrateLeague(v1);
   check(v1.version === 2 && v1.season === 1 && Array.isArray(v1.history) && v1.growth && v1.condition && Array.isArray(v1.rookies), 'save: a version 1 save migrates');
+}
+
+// Box scores: every result carries its season, and trimming keeps the current and last season's.
+{
+  check(L.results.length > 0 && L.results.every((r) => r.season === L.season && r.box), 'saves: results carry their season and box score');
+  const T = JSON.parse(JSON.stringify(L));
+  const games = (season, tag) => T.results.map((r) => { const c = { ...r }; if (tag) c.season = season; else delete c.season; return c; });
+  T.history = [{ season: T.season, results: games(T.season, true) }, { season: T.season + 1, results: games(T.season + 1, false) }];
+  T.season += 2; T.results = games(T.season, true);
+  const before = JSON.stringify(T).length;
+  const n = LG.trimBoxScores(T);
+  check(n === L.results.length && T.history[0].results.every((r) => !r.box && r.score), 'saves: box scores two seasons back are dropped, scores kept');
+  check(T.history[1].results.every((r) => r.box) && T.results.every((r) => r.box), 'saves: last season and this season keep their box scores');
+  check(JSON.stringify(T).length < before, 'saves: trimming shrinks the save');
+  check(LG.trimBoxScores(T) === 0, 'saves: trimming twice changes nothing');
+}
+
+// Kicking: the scouting report rates both kickers and punters with their range.
+{
+  const me = L.teams.find((t) => t.user), opp = L.teams.find((t) => !t.user);
+  const R = LG.scoutReport(L, me.id, opp.id);
+  for (const [side, u] of Object.entries(R.kicking)) {
+    check(u.k && u.k.range >= 20 && u.k.range <= 70 && u.k.ovr === PLAYERS[u.k.id].ovr.K, `scouting: ${side} kicker has a rating and a range (${u.k?.range})`);
+    check(u.p && u.p.net > 20 && u.p.net < 70 && u.p.ovr === PLAYERS[u.p.id].ovr.P, `scouting: ${side} punter has a rating and a net (${u.p?.net})`);
+  }
+  // A stronger leg and truer aim never shorten the range.
+  const ids = Object.keys(PLAYERS).map(Number).sort((a, b) => PLAYERS[a].attrs.kac + PLAYERS[a].attrs.kpw - PLAYERS[b].attrs.kac - PLAYERS[b].attrs.kpw);
+  check(fgRange(ids[ids.length - 1]) >= fgRange(ids[0]), 'kicking: the best leg out-ranges the worst');
+}
+
+// Trades weigh kickers and punters: across seeds some offers move one, and the trade card's
+// kicking line names the right Pokémon.
+{
+  let kp = 0;
+  for (let seed = 1; seed <= 24; seed++) {
+    const M = LG.createLeague({ seed });
+    draftAll(M);
+    const K = LG.tradeKicking(M);
+    if (!K) continue;
+    kp++;
+    const T = M.trade;
+    check([K.before.k?.id, K.after.k?.id, K.before.p?.id, K.after.p?.id].some((id) => id === T.youSend || id === T.youGet), `trades: seed ${seed} kicking line involves the traded Pokémon`);
+  }
+  check(kp > 0, `trades: ${kp} of 24 offers change your kicker or punter`);
 }
 
 // Injuries stay rare: a few per season league-wide, not one a game.
