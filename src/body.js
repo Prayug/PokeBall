@@ -34,8 +34,10 @@ export function sizeScore(m, kg) { return Math.log2(Math.max(0.1, m) / 0.4) + 0.
 export const CORE_SIDE = 1.35, CORE_DEPTH = 1.6;
 export const TIP_SIDE = 1.9, TIP_DEPTH = 2.3;
 // A model is never shrunk below this share of its class height to fit, so it stays
-// recognizable (scaling is uniform, apart from the few GIRTH bodies below).
+// recognizable (scaling is uniform, apart from the few GIRTH bodies below), unless that would
+// still spread it past TIP_HARD times the tip limits.
 export const MIN_FIT = 0.8;
+const TIP_HARD = 1.8;
 
 // Bodies the uniform fit draws far too thin: a serpent standing as tall as a lineman is a
 // rope. These are drawn wider and deeper than their height alone gives (sides and front to
@@ -86,7 +88,12 @@ export function fitModel(B, h, core, tips) {
   lim(Math.max(core.front, core.back), B.r * CORE_DEPTH);
   lim(tips.side, B.r * TIP_SIDE);
   lim(Math.max(tips.front, tips.back), B.r * TIP_DEPTH);
-  return Math.max(s, full * MIN_FIT);
+  s = Math.max(s, full * MIN_FIT);
+  // But never a body a whole formation wide (Kyogre's fins, Wailord, a lying Steelix): past
+  // this the model shrinks after all, down to half its class height at the least.
+  const hard = TIP_HARD * B.r;
+  s = Math.min(s, hard * TIP_SIDE / Math.max(1e-6, tips.side), hard * TIP_DEPTH / Math.max(1e-6, tips.front, tips.back));
+  return Math.max(s, full * 0.5);
 }
 
 // The older box-only fit, for the generated figures (their sprite bodies have no appendages
