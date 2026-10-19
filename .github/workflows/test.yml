@@ -35,6 +35,8 @@ jobs:
         run: node test/formations.mjs
       - name: League mode
         run: node test/league.mjs
+      - name: Pre-snap adjustments and difficulty
+        run: node test/presnap.mjs
       - name: Live kicks
         run: node test/kicks.mjs
       - name: Clock rules

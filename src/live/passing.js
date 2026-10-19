@@ -118,7 +118,7 @@ export function qbBrain(lp) {
   const read = () => lp.off[lp.reads[lp.readIdx]];
   if (lp.qbState === 'read') {
     // A beat per read; sharper quarterbacks move through it faster.
-    const beat = 0.62 - (qb.a.awr - 60) * 0.004;
+    const beat = (0.62 - (qb.a.awr - 60) * 0.004) * (lp.user === lp.d ? lp.aiRead ?? 1 : 1);
     if (lp.t - lp.readSince > beat && lp.readIdx < lp.reads.length - 1) { lp.readIdx++; lp.readSince = lp.t; }
     lp.qbLook = read() ?? lp.qbLook;
   } else lp.qbLook = lp.off[lp.reads[0]] ?? null;
@@ -501,7 +501,8 @@ function arrival(lp) {
   const r = T.target;
   const dr = dist(r, spot);
   // Up in the air at the catch point, a player gets his hands on balls a little farther away.
-  const reachOf = (p) => 1.45 + traitMod('catchReach', { p }).v + (upNow(p) ? 0.3 : 0);
+  // The difficulty widens (Rookie) or tightens (Legend) the user's receivers' reach.
+  const reachOf = (p) => 1.45 + traitMod('catchReach', { p }).v + (upNow(p) ? 0.3 : 0) + (p.side === 'off' && lp.user === lp.o ? lp.userReach ?? 0 : 0);
   let dfd = null, dd = 99;
   for (const q of lp.players) if (q.side === 'def' && !q.eng) { const d = dist(q, spot); if (d < dd) { dd = d; dfd = q; } }
   lp.sepAtArrival = dd; lp.drAtArrival = dr;

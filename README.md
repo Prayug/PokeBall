@@ -25,6 +25,8 @@ Games are played on a 3D field, Madden style: pick a play from the playbook, sna
 | `1` to `8`, `P`, `F` | Between plays, call the play with that key on the open page of the playbook (`←` `→` turn the page) |
 | `←` `→` | Between plays, move between the call sheet's categories (Run, Short pass, Deep pass, Special teams) |
 | `` ` `` | Debug view: position labels, collision circles, velocity and facing, assignment lines, remaining routes and the ball's flight on the field, plus a panel with the game state, camera shot, ball and every player's action, contact state, role, speed and target, the last events, the formation check and camera calibration sliders (also `?debug` in the URL or the menu) |
+| `V` `B` `N` | At the line before the snap. On offense: `V` audible, `B` hot route, `N` motion, then a number to pick from the list that opens. On defense: `V` shade the coverage, `B` show blitz, `N` back out (see **Pre-snap adjustments**) |
+| `I` | Between plays, open the scouting board on the call sheet: the biggest type edges both ways and the other team's tendencies |
 | `Z` | Between plays, cycle the formation (offense) or front (defense) for your call |
 | `H` | Fold or unfold the call sheet |
 | `X` | Between plays, open every play in the playbook at once (with each play's description), or go back to the single strip |
@@ -38,6 +40,29 @@ Games are played on a 3D field, Madden style: pick a play from the playbook, sna
 Adding `?seed=4242` (any number) to the address makes the quick game repeatable: the same rosters, weather and coin toss, and the AI's formations and fronts follow from the seed, so the same calls give the same pre-snap picture in every camera.
 
 The stadium fills the screen under a broadcast scoreboard (teams, score, possession, quarter, clock, down and distance, ball spot and a 40-second play clock: while the call sheet is up it runs only while the call is yours, and at :00 on offense it is a delay of game (5 yards, and the full play clock comes off a running game clock) or, on defense, the call that fits is made for you; once a play is lined up it snaps the ball for you when it runs out. Opening the menu stops it). Between plays a compact call sheet rises from the bottom center: one strip of play cards for the current page of the playbook, so the formation stays visible above it. The offense has Run (Inside Zone, Outside Zone, Power O with the backside guard pulling, Counter, Toss Sweep, HB Dive, HB Draw), QB runs (Zone Read, QB Power, QB Draw, QB Sneak), Quick (Slants, Quick Out, Stick, Curl Flat, Mesh, HB Screen, WR Bubble), Intermediate (Curls, Smash, Dagger, Levels, Flood, Y-Cross, TE Seam), Shots (Four Verticals, Deep Post, PA Bootleg, PA Shot) and Special teams (Punt, Coffin Corner, Fake Punt, Field goal, Fake FG); the defense has Man (Cover 1, Cover 1 Robber, 2 Man Under, Press Man, Goal Line), Zone (Cover 2, Tampa 2, Cover 3, Cover 4, Prevent) and Pressure (Mike Blitz, LB Dogs, Double A Mug, Nickel Blitz, Fire Zone, Cover 0). Number keys count from 1 on each page. Each card leads with the play's art drawn from the real assignments (routes, run lane, blocks, zones, man coverage, rushers) with its shortcut key, then the play's name in large type, then a colored run or pass tag and the formation. A "Fits" tag marks the call that suits the down, and the sheet opens on that call's tab. A formation menu in the header picks another set (shotgun spread, trips, singleback, I-form or pistol on offense; 4-3, nickel or goal line on defense), `X` or "All plays" opens every tab at once with each play's description, and the sheet folds away when you pick. While it is up the camera frames the players in the space above it, so it never covers anyone. The last play's summary fades after a few seconds, the scoreboard flashes the team that scored, and touchdowns, sacks, interceptions and fumbles get a short banner. After the call both teams jog from where the last play ended into the formation, and the field shows the play art (bold routes, the run lane, blocks, pulling guards and the lead fullback on offense; zones, man matchups and rushers on defense, each a bright stroke on a dark edge), receiver numbers, the line of scrimmage in blue and the first-down line in yellow until the snap. A snap called before everyone is set is a hurry-up: they sprint to their spots and the ball is snapped within about a second. Before the snap every player stands on a team base, solid for the offense and dashed for the defense, the quarterback has a gold QB marker, and the ball carrier gets a football icon once the ball is snapped. The game clock runs while the ball is live, and between plays it runs off at the snap unless something stopped it (see **Clock, timeouts and the try** below). Everything else lives in the menu. On a phone or tablet the field shows a joystick and buttons. Every kick is played on the field: punts, field goals, kickoffs, extra points and fakes (see **Kicks** below). Spikes and kneels are resolved instantly. Both use the kicker's and punter's own ratings (kick power and kick accuracy): a strong leg kicks more touchbacks, hits longer field goals and punts farther, and an accurate one makes more kicks and drops a coffin-corner punt closer to the goal line. The field goal card shows that kicker's odds from the spot. Every team drafts a kicker (K) and a punter (P), who have their own slots in the depth chart; a team without one uses whoever on its roster kicks best. "Sim drive", "Sim quarter" and "Sim to the end" still use the fast simulator. Without WebGL the game falls back to the original 2D field.
+
+### Pre-snap adjustments
+
+Once both teams are set, a bar over the snap button offers the adjustments for your side (buttons on a phone, `V` `B` `N` on a keyboard). Each one changes the play on the field, and the play art redraws.
+
+- **Audible** (offense): switch to another play from the same formation against the same defense, without going back to the call sheet. The list is short, like a real audible menu: one call from each family the formation can run (inside run, outside run, quick pass, screen, intermediate, a shot), with the scouting "Fits" call first.
+- **Hot route** (offense, pass plays): pick a receiver by his throw number, then his new route (go, slant, out, curl, drag, post, corner, flat, or stay in to block).
+- **Motion** (offense): one receiver off the line jogs across the formation before the snap; a back motions out wide. Snap while he is moving and he starts the play at speed, his route starting from where he is. A defender in man coverage on him follows him across; a zone defense lets him go, so motion tells you which one you are facing.
+- **Shade the coverage** (defense): cycles normal, over the top (deeper zones and more cushion in man), underneath (shallower zones, tighter man), inside and outside (zones squeezed toward the middle or widened, man leverage on that side).
+- **Show blitz** (defense): the linebackers and the strong safety walk up into the gaps. If the call does not blitz they have to bail to their coverage at the snap, but the AI offense reads the look: it keeps the back in to block and the quarterback gets to his first read sooner.
+- **Back out** (defense, on a blitz): the blitzers line up at normal depth, so the blitz is hidden and the back goes out on his route, but they start farther from the quarterback.
+
+### Difficulty
+
+Rookie, Pro and Legend, picked on the home screen or in the game menu (it applies from the next play, and to games you sim from the season screen). Pro is the game as designed. The levels tune three things in your games only; AI-against-AI games are unchanged.
+
+| | Rookie | Pro | Legend |
+| --- | --- | --- | --- |
+| AI reads (its quarterback's beat per read, its defenders' reaction to cuts and to the throw) | 30% slower | as designed | 20% quicker |
+| Your receivers' catch radius | +0.35 yards | as designed | −0.15 yards |
+| Luck (the form roll's swing, and an edge for your side) | 1.25× swing, +3% | as designed | 0.75× swing, −2.5% |
+
+Between two evenly matched AI-drafted rosters in the simulator, your side wins about 65% of games on Rookie, 53% on Pro (home field included) and 35% on Legend. `test/presnap.mjs` checks the order.
 
 ### How a play runs
 
@@ -180,6 +205,9 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/ratings.js` | Base stats to football attributes, the 22 slots, position overalls, auto depth chart |
 | `src/types.js` | Type chart, type traits, weather and the curated abilities |
 | `src/parity.js` | How far form, home field, types and weather can swing a game |
+| `src/difficulty.js` | Rookie, Pro and Legend: AI read speed, the user's catch radius and the luck |
+| `src/scout.js` | In-game scouting: type edges for the down, the other team's tendencies and the "Fits" call they point to |
+| `src/live/presnap.js` | Pre-snap adjustments: audibles, hot routes, motion, shading the coverage, show blitz and back out |
 | `src/app.js`, `src/index.html` | The entry point (rendering and the click, key and form handlers) and the styles |
 | `src/state.js`, `src/ui.js` | The shared UI state with save and preference storage; small view helpers such as `esc`, `sprite` and `teamBadge` |
 | `src/screens/` | One module per screen: `home`, `draft` (and grades), `depth`, `season` (and box scores), `offseason`, `freeagency`, `records`, `game`, the play-call sheet (`callsheet`) and the live 3D game loop and input (`live3d`) |
@@ -203,6 +231,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/traits.js` | Abilities and types that act during a live snap |
 | `test/top.mjs` | Lists the top Pokémon at each position |
 | `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness, injuries, subs and the weekly reviews, scheme edges and draft lean, the playoffs and awards, the offseason, cuts, free agency and the rookie draft, then the next season, with career records, the Hall of Fame, record books and rivalries) and checks every step, plus that an exported save plays on to the same results, that box scores older than two seasons are trimmed, and that the scouting report and trades rate kickers and punters (exits 1 on failure) |
+| `test/presnap.mjs` | Audibles, hot routes, motion (and the man defender following), shading, show blitz and back out on live plays; Pro matching the game without a difficulty and the win rate falling from Rookie to Legend; the "Fits" hint following tendencies (exits 1 on failure) |
 | `test/clock.mjs` | Checks the clock rules (runoff by tempo, what stops the clock, the two-minute warning, timeouts, spike and kneel, the try and onside kicks) in set situations, then plays seeded games with the rules checked after every snap (exits 1 on failure) |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
 
@@ -218,6 +247,7 @@ node test/plays.mjs                 # the ten complete plays plus a 160-play swe
 node test/scenarios.mjs             # the fifteen fixed-seed scenarios plus a strict sweep (exits 1 on failure)
 node test/formations.mjs            # 600 formation and front pairings through the formation check
 node test/league.mjs                # two seasons of league mode, draft to rookie draft (exits 1 on failure)
+node test/presnap.mjs               # pre-snap adjustments, difficulty and the Fits hint (exits 1 on failure)
 node test/browser.mjs out 3         # three snaps in a real browser: video, screenshots, results.json
 node test/tiers.mjs 300             # how much ratings matter (add `live` for live plays)
 ```

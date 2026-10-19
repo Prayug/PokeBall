@@ -4,7 +4,7 @@ import * as LG from '../league.js';
 import { render, setScreen } from '../app.js';
 import { S, firstFreeSlot, savedSlots } from '../state.js';
 import { P, esc, sprite, teamBadge } from '../ui.js';
-import { autoAdvance } from './game.js';
+import { autoAdvance, difficultyHtml } from './game.js';
 import { SCHEMES, SCHEME_KEYS } from '../coach.js';
 
 function resumeScreen(L, game) {
@@ -62,6 +62,9 @@ export function renderHome() {
       <div class="card side ${slots.some((x) => x.save) ? 'has-saves' : ''}">
         <h2>Your leagues</h2>
         <ul class="saveslots">${slots.map(slotRow).join('')}</ul>
+        <hr>
+        <h2>Difficulty</h2>
+        ${difficultyHtml()}
         <hr>
         <h2>Quick game</h2>
         <p>Two AI-drafted rosters, kickoff right away. You coach the home side.</p>
