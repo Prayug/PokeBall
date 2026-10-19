@@ -138,6 +138,8 @@ function makePlayer(g, ti, side, slot, id, lp) {
     // Top speed from Speed; getting there from Acceleration; braking and cutting from Agility.
     // Heavy bodies are slower to get going and to turn.
     top: 5.6 + 0.04 * a.spd, accel: (6 + 0.03 * a.spd + 0.035 * a.acl) * (1 - heavy), cut: (1.4 + a.agi / 100) * (1 - heavy * 0.8),
+    // Sideways grip in a cut, yards per second squared: agility, less for a heavy body.
+    grip: (11 + a.agi * 0.09) * (1 - heavy * 0.7),
     role: 'idle', eng: null, engT: 0, stun: 0, cool: 0, slow: 0, wp: 0, route: null, man: null, zone: null,
     react: 0, manual: false, anim: rand(g) * 8, juke: -1, truck: -1, spin: -1, burst: 1,
     // Authoritative state the renderer, the HUD and the tests read: the action this player is
@@ -985,15 +987,46 @@ export function steer(lp, p, vx, vy) {
   return [(nx / l) * sp, (ny / l) * sp];
 }
 
-// Accelerate toward a wanted velocity; braking and cutting are quicker than speeding up.
+// Locomotion. A body has a speed and a heading, not a velocity it can rewrite at will: it
+// speeds up from its Acceleration (harder from a standstill than near top speed), brakes
+// harder than it speeds up (Agility), and swings its path no faster than its feet can grip
+// the turf at the speed it carries (lateral grip / speed, so a sprinter bends his path and a
+// player at a jog changes direction almost on the spot). Asked to go somewhere well off his
+// heading, he plants: he sheds the speed he cannot turn with, cuts, and drives out of it, so
+// a sharp route break, a juke or a defender flipping his hips all cost what they should.
+// Nearly stopped, he simply pivots and goes. boost scales the whole engine for moves (a juke,
+// the sprint burst).
+const PIVOT = 0.8;
 export function kin(p, vx, vy, top, dt, boost = 1) {
-  const wl = len(vx, vy);
-  if (wl > top) { vx *= top / wl; vy *= top / wl; }
-  let dvx = vx - p.vx, dvy = vy - p.vy;
-  const brake = dvx * p.vx + dvy * p.vy < 0 ? (p.cut ?? 2) : 1;
-  const dl = len(dvx, dvy), amax = p.accel * dt * boost * brake;
-  if (dl > amax) { dvx *= amax / dl; dvy *= amax / dl; }
-  p.vx += dvx; p.vy += dvy;
+  let wl = len(vx, vy);
+  if (wl > top) { vx *= top / wl; vy *= top / wl; wl = top; }
+  const s = len(p.vx, p.vy);
+  const acc = p.accel * boost * (1.15 - 0.45 * clamp(s / (p.top || top), 0, 1));
+  const brake = p.accel * (p.cut ?? 2) * Math.max(1, boost * 0.8);
+  if (s < PIVOT || wl < 0.05) {
+    // From a standstill (or stopping): accelerate straight toward what he wants.
+    let dvx = vx - p.vx, dvy = vy - p.vy;
+    const dl = len(dvx, dvy), amax = (wl < 0.05 ? brake : Math.max(acc, s < 0.3 ? acc : brake * 0.6)) * dt;
+    if (dl > amax) { dvx *= amax / dl; dvy *= amax / dl; }
+    p.vx += dvx; p.vy += dvy;
+    integrate(p, dt);
+    return;
+  }
+  const hx = p.vx / s, hy = p.vy / s, ux = vx / wl, uy = vy / wl;
+  const err = Math.atan2(hx * uy - hy * ux, hx * ux + hy * uy);
+  // The speed he can carry through this much turn: all of it straight ahead, none of it on a
+  // reversal (he plants and comes back).
+  const keep = Math.cos(Math.min(Math.abs(err), Math.PI / 2));
+  const sWant = wl * keep * keep;
+  const ds = clamp(sWant - s, -brake * dt, acc * dt);
+  const sn = Math.max(0, s + ds);
+  // Grip: how hard he can bend his path (yards per second squared, sideways).
+  const grip = (p.grip ?? 16) * boost;
+  const wMax = grip / Math.max(sn, 1.6);
+  const turn = clamp(err, -wMax * dt, wMax * dt);
+  const c = Math.cos(turn), sn2 = Math.sin(turn);
+  const nx = hx * c - hy * sn2, ny = hx * sn2 + hy * c;
+  p.vx = nx * sn; p.vy = ny * sn;
   integrate(p, dt);
 }
 
@@ -1099,22 +1132,15 @@ export function separate(lp, passes = 2) {
   }
 }
 
-// p pressed against a body in direction (ux, uy): the speed into it turns into a slide around
-// it, toward the side he was already drifting (or the side of the spot he wants).
+// p pressed against a body in direction (ux, uy): running into it costs him the speed he had
+// into it (a soft contact, over a few frames), but it never spins his path around: going
+// around the body is his feet's job (steer and kin), at the rate they can turn.
 function slide(p, ux, uy) {
   const vn = p.vx * ux + p.vy * uy;
   if (vn <= 0) return;
-  const sp0 = len(p.vx, p.vy);
-  p.vx -= ux * vn; p.vy -= uy * vn;
-  const tx = -uy, ty = ux;
-  const w = p.want ?? p;
-  const vt = p.vx * tx + p.vy * ty, wt = w.vx * tx + w.vy * ty;
-  const s = sgn(vt * 3 + wt || 1);
-  // Keep at least half the lost speed as a slide along the body, never more than he had.
-  const want = Math.max(Math.abs(vt), vn * 0.6);
-  p.vx += tx * (s * want - vt); p.vy += ty * (s * want - vt);
-  const sp = len(p.vx, p.vy);
-  if (sp > sp0) { p.vx *= sp0 / sp; p.vy *= sp0 / sp; }
+  const s = len(p.vx, p.vy) || 1;
+  const k = 1 - 0.35 * (vn / s);
+  p.vx *= k; p.vy *= k;
 }
 
 // ---------- blocking ----------

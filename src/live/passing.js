@@ -357,7 +357,7 @@ export function flightAt(F, e) {
 
 function futureRoute(r, T) {
   // Run a copy of the receiver along his route for T seconds.
-  const c = { x: r.x, y: r.y, vx: r.vx, vy: r.vy, fx: r.fx, fy: r.fy, top: r.top, accel: r.accel, route: r.route, wp: r.wp, role: 'route' };
+  const c = { x: r.x, y: r.y, vx: r.vx, vy: r.vy, fx: r.fx, fy: r.fy, top: r.top, accel: r.accel, cut: r.cut, grip: r.grip, route: r.route, wp: r.wp, role: 'route' };
   const stub = { thrown: null, t: 9, goalX: 999 };
   for (let t = 0; t < T; t += DT) {
     const w = c.route?.[c.wp];
