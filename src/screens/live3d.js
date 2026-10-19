@@ -3,12 +3,13 @@
 import { DEF_PLAYS, OFF_PLAYS, clockText, downText, runLivePlay, spotText } from '../engine.js';
 import { DT, createLivePlay, hurry, playSeconds, playState, snap, step as stepLive, worldSpots } from '../live.js';
 import { measureVersion } from '../body.js';
+import { RATES } from '../penalties.js';
 import { Stage, webglAvailable } from '../field3d.js';
 import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
 import { S, save, savePrefs, timers } from '../state.js';
 import { esc } from '../ui.js';
-import { autoAdvance, doCall, needsUser, setMode, userSide } from './game.js';
+import { autoAdvance, doCall, needsUser, playClockOut, setMode, userSide, userTimeout } from './game.js';
 import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions } from './callsheet.js';
 import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 
@@ -29,6 +30,7 @@ function keysHelp() {
     <span>At the line on offense: <kbd>V</kbd> audible, <kbd>B</kbd> hot route, <kbd>N</kbd> motion, then a number to pick</span>
     <span>At the line on defense: <kbd>V</kbd> shade the coverage, <kbd>B</kbd> show blitz, <kbd>N</kbd> back out</span>
     <span><kbd>I</kbd> on the play sheet: type edges and their tendencies</span>
+    <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
     <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
   </div>`;
@@ -67,8 +69,9 @@ function setFlow(st) {
 const setState = setFlow;
 export let stage = null;
 let stageWrap = null;
-// Hooks for the browser tests (test/browser.mjs): read-only views of the game's state.
-if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug };
+// Hooks for the browser tests (test/browser.mjs): read-only views of the game's state, and the
+// foul rates so a test can force a flag.
+if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug, RATES };
 
 export function ensureStage() {
   if (stage || !webglAvailable()) return;
@@ -147,8 +150,12 @@ export function startLive(off, def, opts) {
   if (L3.replay) stopReplay();
   // The replay recording: the game as it was before the play (its random seed included) and
   // every simulation step's input, so the play can be run again exactly, step for step.
-  L3.rec = { g: structuredClone(g), off, def, opts: { ...opts, from }, log: [], done: false };
-  L3.lp = createLivePlay(g, off, def, { ...opts, from });
+  // Officials on the field: fouls are called as the contact happens (see penalties.js).
+  const o = { flags: true, ...opts, from };
+  L3.rec = { g: structuredClone(g), off, def, opts: o, log: [], done: false };
+  L3.lp = createLivePlay(g, off, def, o);
+  // No huddle: everyone sprints straight to the line.
+  if (opts.hurry) hurry(L3.lp);
   L3.paused = false;
   L3.off = off; L3.def = def; L3.acc = 0; L3.deadT = 0; L3.ev = 0; L3.committed = null;
   L3.autoSnap = opts.autoSnap ?? null;
@@ -282,7 +289,7 @@ function resultBanner(e, lp, before) {
   const how = lp?.end?.how;
   const yd = e.yards ?? 0;
   const kickKind = lp?.kick ? lp.kind : ['punt', 'fg'].includes(OFF_PLAYS[e.off]?.kind) && !OFF_PLAYS[e.off]?.fake ? OFF_PLAYS[e.off].kind : null;
-  const yds = how === 'incomplete' || e.kind === 'punt' || e.kind === 'fg' || kickKind ? '' : yd === 0 ? 'No gain' : `${yd > 0 ? '+' : '−'}${Math.abs(yd)} yd${Math.abs(yd) === 1 ? '' : 's'}`;
+  const yds = how === 'incomplete' || e.kind === 'punt' || e.kind === 'fg' || kickKind || e.head || e.conversion ? '' : yd === 0 ? 'No gain' : `${yd > 0 ? '+' : '−'}${Math.abs(yd)} yd${Math.abs(yd) === 1 ? '' : 's'}`;
   const changed = g.poss !== b.poss && !g.final;
   let head = '', tone = '';
   const td = e.highlight === 'td' || (e.kind === 'score' && before && g.score.some((v, i) => v - before.score[i] >= 6));
@@ -300,10 +307,16 @@ function resultBanner(e, lp, before) {
   else if (!changed && g.down === 1 && b.down >= 1 && yd > 0) { head = 'First down'; tone = 'big'; }
   else if (how === 'out') head = 'Out of bounds';
   else head = yd < 0 ? 'Loss' : 'Tackle';
+  // The engine names some results itself: the try, kickoffs, the clock (quarter ends, the
+  // two-minute warning, timeouts).
+  if (e.head) {
+    head = e.head;
+    tone = e.highlight === 'miss' ? 'to' : e.kind === 'score' ? 'td' : e.highlight === 'turnover' ? 'to' : e.kind === 'quarter' || e.kind === 'info' || e.kind === 'timeout' ? 'muted' : e.highlight === 'flag' ? 'flag' : '';
+  }
   // Why it happened, when a Pokémon's type, ability or size decided part of the play.
   const notes = (lp?.notes ?? []).filter((n) => n.kind === 'type' || n.kind === 'ability' || n.kind === 'size').slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
-  const next = g.final ? 'Final' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
-  const clock = e.clockStop && !td ? 'Clock stopped' : '';
+  const next = g.final ? 'Final' : g.phase === 'penalty' ? 'Accept or decline the penalty' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
+  const clock = !g.final && g.phase === 'play' && !changed && !td && e.down ? (g.clockRunning ? '' : 'Clock stopped') : '';
   return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed };
 }
 function showBanner(B) {
@@ -365,11 +378,11 @@ function hudTip(lp) {
   const c = lp.control;
   if (f === 'FORMATION_SETUP') return 'Lining up…';
   if (lp.kick) {
-    if (lp.phase === 'pre') return lp.user === lp.o ? 'Space snap · the kick goes on its own · Esc change call' : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
+    if (lp.phase === 'pre') return lp.user === lp.o ? `Space ${lp.kick.ko ? 'kick off' : 'snap'} · the kick goes on its own · Esc change call` : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
     if (lp.phase === 'dead') return '';
     if (c && c === lp.kick.returner && !c.carrier) return 'Get under it · arrows move · Shift sprint';
     if (c && !c.carrier && c.side === 'off') return 'Cover the kick · arrows move · Shift sprint · Space dive';
-    if (!c) return lp.kick.kickedAt != null ? 'Kick away' : 'The long snap…';
+    if (!c) return lp.kick.kickedAt != null ? 'Kick away' : lp.kick.ko ? 'The kicker runs up…' : 'The long snap…';
   }
   if (lp.phase === 'pre') {
     if (!c) return 'Coach mode · Space to snap now · Esc to change the call';
@@ -476,7 +489,12 @@ function loop(now) {
       showPreview();
       if (L3.preview) { L3.preview.mv = mv; L3.preview.rebuilt = now; }
     }
-    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && L3.flow === 'PLAY_SELECTION') L3.pclock = Math.max(0, L3.pclock - dt);
+    // The play clock runs while the call is yours; at :00 it is a delay of game on offense, or
+    // the fitting call is made for you (see playClockOut).
+    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && !S.menuOpen && !L3.replay && L3.flow === 'PLAY_SELECTION') {
+      L3.pclock = Math.max(0, L3.pclock - dt);
+      if (L3.pclock <= 0) { L3.pclock = 40; playClockOut(); }
+    }
   }
   if (g && !g.final) setFlow(flowNow(now));
   // The game clock runs during the play and stops on the whistle.
@@ -620,11 +638,13 @@ export function onKey(e, down) {
     if (code === 'KeyI' && !L3.lp) { e.preventDefault(); S.csScout = !S.csScout; S.csFold = false; render(); return; }
     if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
-    if (code === 'KeyP') { e.preventDefault(); togglePause(); return; }
+    // P pauses a play on the field; between plays it falls through to the call sheet (Punt).
+    if (code === 'KeyP' && L3.lp && L3.lp.phase !== 'dead') { e.preventDefault(); togglePause(); return; }
     if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
     if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; render(); return; }
+    if (code === 'KeyT' && !L3.lp && !L3.replay) { e.preventDefault(); userTimeout(); return; }
     if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
     if (code === 'Escape') {
       if (S.menuOpen) { S.menuOpen = false; render(); return; }

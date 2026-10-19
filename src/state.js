@@ -2,34 +2,75 @@
 import { CAMERA_ALIASES, CAMERA_MODES, CAMERA_SHOTS, cameraDefaults } from './camera3d.js';
 import * as LG from './league.js';
 
-const SAVE_KEY = 'pokeball.save.v1';
+// Leagues live in numbered save slots. The key carries no data version (the league's own
+// `version` field does, and migrateLeague upgrades it); a save from before slots, under the old
+// single key, moves into the first free slot on load.
+export const SAVE_SLOTS = 3;
+const slotKey = (n) => `pokeball.league.${n}`;
+const OLD_SAVE_KEY = 'pokeball.save.v1';
 const PREF_KEY = 'pokeball.prefs.v1';
 export const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 export const S = {
   screen: 'home', league: null, game: null, gameMeta: null,
   draft: { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false },
-  depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 24, legendaries: false, typeCap: true, clock: true },
+  depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 24, legendaries: false, typeCap: true, clock: true, scheme: 'balanced' },
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
   menuOpen: false, cam: 'gameplay', weatherFx: true, quality: 'auto',
   names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
-  sound: true, seenHelp: false, helpOpen: false, difficulty: 'pro',
+  sound: true, seenHelp: false, helpOpen: false, difficulty: 'pro', slot: 1, confirmDelete: null,
 };
 export const timers = { draft: null, clock: null, auto: null, banner: null };
 
 // ---------- persistence ----------
-export function save() {
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot()));
-    savePrefs();
-  } catch { /* storage unavailable: play continues unsaved */ }
+function writeSlot(n, snap) {
+  if (snap.league) LG.trimBoxScores(snap.league);
+  localStorage.setItem(slotKey(n), JSON.stringify(snap));
 }
-export function loadSaved() {
+export function save() {
+  const snap = snapshot();
+  if (snap.league) {
+    try { writeSlot(S.slot, snap); } catch {
+      // Storage is full: keep only this season's box scores and try once more. If that fails
+      // too, play continues unsaved.
+      try { LG.trimBoxScores(snap.league, 1); writeSlot(S.slot, snap); } catch { /* storage unavailable */ }
+    }
+  }
+  savePrefs();
+}
+export function loadSaved(n = S.slot) {
   try {
-    const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
-    if (s?.league) LG.migrateLeague(s.league);
+    const s = JSON.parse(localStorage.getItem(slotKey(n)) || 'null');
+    if (!s?.league) return null;
+    LG.migrateLeague(s.league);
     return s;
   } catch { return null; }
+}
+// Every slot, with its saved league or null when empty.
+export function savedSlots() {
+  return Array.from({ length: SAVE_SLOTS }, (_, i) => ({ n: i + 1, save: loadSaved(i + 1) }));
+}
+export function firstFreeSlot() {
+  return savedSlots().find((x) => !x.save)?.n ?? null;
+}
+export function deleteSlot(n) {
+  try { localStorage.removeItem(slotKey(n)); } catch { /* ignore */ }
+  if (n === S.slot) { S.league = null; if (!S.gameMeta?.quick) { S.game = null; S.gameMeta = null; } }
+}
+// Moves a save written before slots existed into the first free slot, and makes it the active one.
+export function migrateStorage() {
+  try {
+    const old = localStorage.getItem(OLD_SAVE_KEY);
+    if (old == null) return;
+    const parsed = JSON.parse(old);
+    if (!parsed?.league) { localStorage.removeItem(OLD_SAVE_KEY); return; }
+    const free = firstFreeSlot();
+    if (free == null) return;
+    localStorage.setItem(slotKey(free), old);
+    localStorage.removeItem(OLD_SAVE_KEY);
+    S.slot = free;
+    savePrefs();
+  } catch { /* storage unavailable or the old save is unreadable: leave it */ }
 }
 export function snapshot() {
   if (S.league && !S.gameMeta?.quick) return { league: S.league, game: S.game, gameMeta: S.gameMeta, screen: S.screen };
@@ -54,13 +95,14 @@ export function loadPrefs() {
       if (p.sound != null) S.sound = !!p.sound;
       if (p.seenHelp) S.seenHelp = true;
       if (['rookie', 'pro', 'legend'].includes(p.difficulty)) S.difficulty = p.difficulty;
+      if (p.slot >= 1 && p.slot <= SAVE_SLOTS) S.slot = p.slot;
       // Lens settings saved before version 3 belong to the older framing and are dropped.
       if (p.camShots && p.camV === 4) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
     }
   } catch { /* ignore */ }
 }
 export function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 4, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, difficulty: S.difficulty, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 4, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, difficulty: S.difficulty, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
 }
 export function clearTimers() {
   for (const k of Object.keys(timers)) { clearTimeout(timers[k]); clearInterval(timers[k]); timers[k] = null; }
