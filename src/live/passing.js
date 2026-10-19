@@ -1,9 +1,10 @@
 // The passing game in a live play: routes, the quarterback's reads, the throw and the ball's
 // flight, and the catch, the contested ball, the interception and the incompletion.
 import { traitMod } from '../traits.js';
+import { RATES, liveFoul, sloppy } from '../penalties.js';
 import { PLAYERS } from '../ratings.js';
 import { chance, clamp, nm, rand, randn, rep, st } from '../engine.js';
-import { DT, GRAVITY, SIDE, dist, event, finish, kin, len, note, passBlockWant, seek, setCarrier, sgn, traitNotes, unengage } from '../live.js';
+import { DT, GRAVITY, SIDE, dist, event, finish, kin, len, mustGain, note, passBlockWant, seek, setCarrier, sgn, sticks, traitNotes, unengage } from '../live.js';
 
 // The quarterback's throwing motion, from the decision to the ball leaving his hand.
 const WINDUP_T = 0.24;
@@ -133,10 +134,15 @@ export function qbBrain(lp) {
   lp.pressure = nearRush < 2.6;
   const vision = (qb.a.acc + qb.a.awr) / 2;
   const noise = 0.4 + Math.max(0, 99 - vision) * 0.03 + (lp.pressure ? 0.8 : 0);
+  // Down and distance: on third and fourth down a catch short of the sticks loses the ball, so
+  // a man short of them has to be much more open to be worth it (less so once the play is
+  // breaking down); on early downs a throw that moves the chains is a little better.
+  const line = sticks(lp), must = mustGain(lp);
+  const sticksBonus = (x) => x >= line - 0.3 ? (must ? 0.6 : 0.25) : must ? -clamp((line - x) * 0.22, 0, 1.8) * (elapsed > 1.8 || lp.pressure ? 0.45 : 1) : 0;
   const scoreOf = (r) => {
     if (!r || r.open == null) return null;
-    const gain = clamp(r.lead.x, -3, 25) * 0.07;
-    return r.open + gain + noise * randn(g);
+    const gain = clamp(r.lead.x, -3, 25) * 0.04;
+    return r.open + gain + sticksBonus(r.lead.x) + noise * randn(g);
   };
   const cur = read(), cs = scoreOf(cur);
   // Everyone else: only a man left wide open catches his eye off the read.
@@ -149,22 +155,56 @@ export function qbBrain(lp) {
     const seen = s - 1.6; // off-read throws need more
     if (!best || seen > best.score) best = { r, score: seen };
   }
-  const need = 3.2 - elapsed * 0.9;
+  // Early in the read only a clearly open man gets the ball; the bar drops as he holds it.
+  const need = 6 - elapsed;
+  // Nobody clearly open and the defense has left a wide lane in front of him (the rush
+  // flushed past, the coverage turned its back): a mobile quarterback pulls it down and runs.
+  if (elapsed > 1.2 && !(best && best.score > need)) {
+    const lane = runLane(lp, qb);
+    if (lane > 4.5 && chance(g, clamp((qb.a.spd - 55) / 160 + (qb.a.awr - 60) / 400, 0.02, 0.3))) {
+      lp.qbState = 'run'; lp.scramble = true; setCarrier(lp, qb); event(lp, 'scramble', '', qb); return;
+    }
+  }
   if (best && (best.score > need || (lp.pressure && best.score > 1.9))) {
     // A tight window short gets a bullet; a man running free deep gets air under it.
     const r = best.r, deep = (r.lead?.x ?? 0) > 20;
     startThrow(lp, r, false, { type: r.open < 2 && !deep ? 'bullet' : deep && r.open > 4.5 ? 'lob' : 'touch' });
     return;
   }
-  if (nearRush < 1.8 || elapsed > 2.6) {
-    const spd = qb.a.spd;
-    if (chance(g, clamp((spd - 50) / 120, 0.05, 0.4) * 0.35)) { lp.qbState = 'run'; lp.scramble = true; setCarrier(lp, qb); event(lp, 'scramble', '', qb); return; }
-    if (elapsed > 2.6 && chance(g, 0.12)) { throwAway(lp); return; }
-    // The checkdown: whoever is most open, if anyone is.
-    let dump = null;
-    for (const k of lp.reads) { const r = lp.off[k]; if (r?.open != null && (!dump || r.open > dump.open)) dump = r; }
-    if (dump && elapsed > 1.7 && dump.open > 1.3) throwTo(lp, dump);
+  if (lp.pressure || elapsed > 2.6) {
+    // Pressure, or nobody open: take off, but only through a real running lane (no free
+    // defender in the space ahead of him). Quick, aware quarterbacks see it; the rest rarely go.
+    const lane = runLane(lp, qb);
+    const spd = qb.a.spd, awr = qb.a.awr;
+    const go = lane > 3.2 ? clamp(0.12 + (spd - 55) / 110 + (awr - 60) / 300, 0.06, 0.55) : lane > 2 ? 0.04 : 0.01;
+    if (chance(g, go)) { lp.qbState = 'run'; lp.scramble = true; setCarrier(lp, qb); event(lp, 'scramble', '', qb); return; }
+    // The checkdown: whoever is most open, counting the sticks on a money down.
+    let dump = null, ds = -99;
+    for (const k of lp.reads) {
+      const r = lp.off[k];
+      if (r?.open == null) continue;
+      const v = r.open + (must ? sticksBonus(r.lead.x) : 0);
+      if (v > ds) { ds = v; dump = r; }
+    }
+    if (dump && elapsed > 1.7 && dump.open > 1.3 && (!must || ds > 0.5 || elapsed > 2.6)) { throwTo(lp, dump); return; }
+    // Nothing there and the play is breaking down: an aware passer throws it away rather than
+    // forcing it or taking the sack.
+    if (elapsed > 2.6 && chance(g, clamp(0.08 + (awr - 60) * 0.004, 0.05, 0.2))) { throwAway(lp); return; }
   }
+}
+
+// The room a scrambling quarterback would have: how far the nearest unblocked defender is from
+// the spot four yards ahead of him (straight up or angled either way, the best of them).
+function runLane(lp, qb) {
+  let best = 0;
+  for (const a of [-0.6, 0, 0.6]) {
+    const px = qb.x + Math.cos(a) * 4, py = qb.y + Math.sin(a) * 4;
+    if (Math.abs(py) > SIDE - 2) continue;
+    let near = 99;
+    for (const q of lp.players) if (q.side === 'def' && !q.eng && !(q.stun > 0.3)) near = Math.min(near, Math.hypot(q.x - px, q.y - py) - q.r);
+    best = Math.max(best, near);
+  }
+  return best;
 }
 
 export function routeWant(lp, p) {
@@ -290,6 +330,12 @@ function release(lp, r, away, kind = 'touch', place = null) {
   if (lp.user === lp.o && lp.control === qb && !lp.autoQB) { lp.control = r; lp.manual = false; lp.handoverLock = true; }
   lp.stats.target = r;
   lp.stats.cov = nearestDef(lp, r);
+  // A defender hanging on a receiver downfield the ball is not going to: defensive holding.
+  if (lp.flags) for (const q of lp.players) {
+    const m = q.man;
+    if (q.side !== 'def' || !m || m === r || m.x < 5 || dist(q, m) > 1.3) continue;
+    if (chance(g, RATES.holdCoverLive * sloppy(q.a.awr)) && liveFoul(lp, 'hold_def', q, m)) { event(lp, 'flag', '', q, m); break; }
+  }
   event(lp, 'throw', `${nm(qb.id)} throws for ${nm(r.id)}`, qb, r);
 }
 
@@ -477,6 +523,7 @@ function arrival(lp) {
     if (inBounds && contest(lp, pI(R.diff), pI(R.base), R, dfd, r, 'for the interception')) { interception(lp, dfd, spot); return; }
     const pB = (diff) => clamp(0.3 + diff * 0.01 - dd * 0.15 + (userPlay ? 0.25 : 0) + (dUp ? 0.1 : 0) - (rUp ? 0.08 : 0), 0.15, 0.9);
     if (dr > rReach || contest(lp, pB(R.diff), pB(R.base), R, dfd, r, 'at the catch point')) {
+      interference(lp, dfd, r, dd, dr, spot);
       st(g, lp.d, dfd.id).pd++;
       dropBall(lp, 0.12, 3.2);
       event(lp, 'deflect', '', dfd, r);
@@ -512,6 +559,8 @@ function arrival(lp) {
     const k = rac ? 0.6 : deepCatch || aggro ? 0.3 : 0.45;
     r.vx *= k; r.vy *= k; r.slow = rac ? 0.08 : deepCatch ? 0.5 : 0.3;
     lp.catchKind = rac ? 'rac' : aggro || contested ? 'aggressive' : 'possession';
+    // Shoving off to make a contested catch: offensive pass interference.
+    if (contested && lp.flags && chance(g, RATES.opi * 4 * sloppy(r.a.awr)) && liveFoul(lp, 'opi', r)) event(lp, 'flag', '', r, dfd);
     r.caughtAt = lp.t;
     lp.caught = true;
     lp.catchX = r.x;
@@ -520,9 +569,16 @@ function arrival(lp) {
     event(lp, 'catch', `${nm(r.id)} makes the catch`, r, lp.off.QB);
     return;
   }
-  if (contested) st(g, lp.d, dfd.id).pd++;
+  if (contested) { st(g, lp.d, dfd.id).pd++; interference(lp, dfd, r, dd, dr, spot); }
   dropBall(lp, 0.2, 1.5);
   incomplete(lp, `${nm(lp.off.QB.id)}'s pass for ${nm(r.id)} is dropped${contested ? ` with ${nm(dfd.id)} draped on him` : ''}.`);
+}
+
+// A defender who gets there late and through the receiver, not to the ball: pass interference,
+// spotted where the ball came down. Likelier for a careless defender and the later he is.
+function interference(lp, d, r, dd, dr, spot) {
+  if (!lp.flags || !d || dd > 1.6 || dd < dr - 0.2) return;
+  if (chance(lp.g, RATES.dpiLive * sloppy(d.a.awr) * (1 + Math.max(0, dd - dr))) && liveFoul(lp, 'dpi', d, spot)) event(lp, 'flag', '', d, r);
 }
 
 function interception(lp, d, spot) {

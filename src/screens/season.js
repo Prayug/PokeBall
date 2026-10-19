@@ -11,6 +11,8 @@ import { tradeCardHtml } from './draft.js';
 import { SCHEMES } from '../coach.js';
 import { injuryReport } from '../injuries.js';
 import { powerRanking } from '../weekly.js';
+import { rivalryCardHtml } from './records.js';
+import { signingsHtml } from './freeagency.js';
 import { boxHtml } from './game.js';
 
 // ---------- season ----------
@@ -36,6 +38,7 @@ export function renderSeason() {
       ${bracketHtml(L)}
       <div class="actions">${mine ? '<button class="btn primary" data-act="playweek">Play your playoff game</button><button class="btn" data-act="simweek">Simulate it</button>'
         : '<p class="muted">You missed this round. Watch it play out.</p><button class="btn primary" data-act="simweek">Simulate the round</button>'}</div></div>
+      ${P_.games.map((g) => (g === mine || (!mine && P_.round === 1) ? rivalryCardHtml(L, g.home, g.away, P_.round) : '')).join('')}
       ${mine ? scoutHtml(L, me.id, mine.home === me.id ? mine.away : mine.home) : ''}`;
   } else if (L.phase === 'done') {
     main = championHtml(L, st);
@@ -51,6 +54,7 @@ export function renderSeason() {
         ${L.phase === 'season' ? '' : reviewHtml(L)}
         <div class="card"><h3>Results ${results.length ? '<span class="muted small">Open a game for its box score</span>' : ''}</h3>${results.length ? `<ul class="results scroll">${results.map(({ r, i }) => resultLine(r, i)).join('')}</ul>` : '<p class="muted">No games played yet.</p>'}</div>
         ${historyHtml(L)}
+        ${L.fa?.log?.length && L.phase !== 'offseason' ? signingsHtml(L, `Season ${L.season} free agency`) : ''}
       </div>
       <div class="col">
         <div class="card"><h3>Standings</h3><div class="tablewrap"><table class="stand"><thead><tr><th>Team</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">PF</th><th class="num">PA</th><th class="num">Diff</th></tr></thead>
@@ -127,7 +131,7 @@ function championHtml(L, st) {
     <h4>Awards</h4>${awardsHtml(L, LG.awards(L))}
     <h4>Playoff bracket</h4>${bracketHtml(L)}
     <div class="actions"><button class="btn primary" data-act="offseason">Start the offseason</button><button class="btn" data-act="recap">Download recap</button><button class="btn" data-act="newleague">Start a new league</button></div>
-    <p class="small muted">The offseason keeps all eight rosters. Pokémon who played a lot of snaps develop, every team cuts ${LG.CUTS}, and a rookie draft refills the roster, worst record first.</p></div>`;
+    <p class="small muted">The offseason keeps all eight rosters. Pokémon who played a lot of snaps develop, every team cuts ${LG.CUTS}, free agents sign by bidding under the cap, and a rookie draft fills the rest, worst record first.</p></div>`;
 }
 
 function historyHtml(L) {

@@ -9,7 +9,7 @@ import { SCHEMES, SCHEME_KEYS } from '../coach.js';
 
 function resumeScreen(L, game) {
   if (game && !game.final) return 'game';
-  return { draft: 'draft', grades: 'grades', offseason: 'offseason' }[L.phase] ?? 'season';
+  return { draft: 'draft', grades: 'grades', offseason: 'offseason', freeagency: 'freeagency' }[L.phase] ?? 'season';
 }
 export function loadSnapshot(snap) {
   S.league = LG.migrateLeague(snap.league); S.game = snap.game ?? null; S.gameMeta = snap.gameMeta ?? null;
@@ -80,5 +80,6 @@ function phaseLabel(L) {
   if (L.phase === 'season') return `Week ${L.week + 1} of ${L.schedule.length}`;
   if (L.phase === 'playoffs') return 'Playoffs';
   if (L.phase === 'offseason') return 'Offseason';
+  if (L.phase === 'freeagency') return `Free agency, round ${(L.fa?.round ?? 0) + 1}`;
   return 'Season over';
 }
