@@ -1,7 +1,12 @@
 // League: teams, snake draft with AI drafters, schedule, standings and leaders.
 import { PLAYERS, ALL_IDS, SLOT, SLOT_KEYS, BASELINE, autoDepthChart, unitRatings } from './ratings.js';
 import { bestMultiplier, matchupModifier, ABILITIES } from './types.js';
-import { createGame, simUntil, summary } from './engine.js';
+import { createGame, kickingUnit, simUntil, summary } from './engine.js';
+import { SCHEMES, schemeDraft } from './coach.js';
+import { coverSlot, healWeek, recordInjuries } from './injuries.js';
+import { gameHeadline, weekInReview } from './weekly.js';
+import { archiveSeason, ensureRecords, noteGame } from './records.js';
+import { openFreeAgency } from './freeagency.js';
 
 export const AI_TEAMS = [
   { name: 'Cerulean Surf', abbr: 'CER', color: '#2F6FD6', coach: 'speed', coachName: 'Speed Kills' },
@@ -30,13 +35,13 @@ export function makeRng(seed) {
 }
 
 export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', rounds = 24, legendaries = false,
-  typeCap = true, numTeams = 8, seed = Date.now(), userColor = '#C8102E', userPick = null } = {}) {
+  typeCap = true, numTeams = 8, seed = Date.now(), userColor = '#C8102E', userPick = null, scheme = 'balanced' } = {}) {
   const rng = makeRng(seed);
   const pool = AI_TEAMS.slice();
   const ai = [];
   while (ai.length < numTeams - 1) ai.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   const teams = [
-    { id: 0, name: teamName, abbr, color: userColor, coach: 'balanced', coachName: 'You', user: true },
+    { id: 0, name: teamName, abbr, color: userColor, coach: SCHEMES[scheme] ? scheme : 'balanced', coachName: 'You', user: true },
     ...ai.map((t, i) => ({ id: i + 1, ...t, user: false })),
   ];
   for (const t of teams) {
@@ -56,6 +61,8 @@ export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', round
     version: 2, seed, rngState: rng.state(), settings: { rounds, legendaries, typeCap, numTeams },
     teams, picks, pickIndex: 0, phase: 'draft', week: 0, schedule: [], results: [], playoffs: null, champion: null,
     seasonStats: {}, season: 1, history: [], growth: {}, condition: {}, rookies: [], trade: null, offseason: null,
+    injuries: {}, weekly: [],
+    contracts: {}, cap: null, fa: null, careers: {}, careerSeason: 0, hof: [], records: {}, meetings: [],
   };
 }
 
@@ -67,7 +74,27 @@ export function migrateLeague(L) {
     L.trade ??= null; L.offseason ??= null;
     L.version = 2;
   }
+  L.injuries ??= {}; L.weekly ??= [];
+  // Free agency and career records arrived within version 2: fill them in where missing.
+  L.contracts ??= {}; L.cap ??= null; L.fa ??= null;
+  ensureRecords(L);
   return L;
+}
+
+// Box scores are most of a save's size (about 130 KB a season). Keep them for the current and
+// last season and drop older ones, leaving the score and quarters of every game. Covers this
+// season's results and any game lists archived in the league's history.
+export const BOX_SEASONS = 2;
+export function trimBoxScores(L, keep = BOX_SEASONS) {
+  if (!L) return 0;
+  const cur = L.season ?? 1;
+  let n = 0;
+  const lists = [[L.results, cur], ...(L.history ?? []).map((h) => [h.results ?? h.games, h.season])];
+  for (const [list, season] of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const r of list) if (r.box && (r.season ?? season ?? 0) <= cur - keep) { delete r.box; n++; }
+  }
+  return n;
 }
 
 function pickFavTypes(rng) {
@@ -146,6 +173,7 @@ export function aiChoosePick(L, teamId = currentPick(L).team) {
     if (team.coach === 'speed' && S && ['WR', 'CB', 'RB', 'S'].includes(S.group)) score += (p.attrs.spd - 70) * 0.25;
     if (team.coach === 'trench' && S && ['OL', 'DL'].includes(S.group)) score += 4;
     if (team.coach === 'types' && team.favTypes.some((t) => p.types.includes(t))) score += 5;
+    if (S) score += schemeDraft(team.coach, S.group);
     score += (r() - 0.5) * 6;
     if (!best || score > best.score) best = { id, slot, score };
   }
@@ -154,6 +182,9 @@ export function aiChoosePick(L, teamId = currentPick(L).team) {
 }
 
 export function finishDraft(L) {
+  // The random state as the first draft ended: a shared league (share.js) rebuilds the same
+  // schedule and trade offer from it.
+  if ((L.season ?? 1) === 1) L.draftRng = L.rngState;
   for (const t of L.teams) {
     const { lineup, bench } = autoDepthChart(t.roster);
     // Keep the drafter's slot choices when they fill every slot; otherwise fall back.
@@ -206,13 +237,21 @@ function letter(z) {
   return scale.find(([t]) => z >= t)[1];
 }
 
-// Game-day side. With a league, players who are out sit (when the bench can cover them)
-// and sore players start below full energy.
+// Game-day side. With a league, injured players sit (the bench covers them, or with no bench
+// a starter from the other side of the ball plays both ways), players who are out sore sit
+// when the bench can cover them, and sore players start below full energy.
 export function teamForGame(t, L = null) {
   const side = { id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach, lineup: { ...t.lineup }, bench: [...t.bench] };
   const cond = L?.condition;
   if (!cond) return side;
-  let bench = side.bench.filter((id) => !cond[id]?.out);
+  const hurt = (id) => !!L.injuries?.[id];
+  for (const k of SLOT_KEYS) {
+    if (!hurt(side.lineup[k])) continue;
+    const bench = side.bench.filter((id) => !hurt(id) && !cond[id]?.out && !Object.values(side.lineup).includes(id));
+    const sub = coverSlot(side.lineup, bench, k, (id) => hurt(id) || !!cond[id]?.out);
+    if (sub != null) side.lineup[k] = sub;
+  }
+  let bench = side.bench.filter((id) => !cond[id]?.out && !hurt(id) && !Object.values(side.lineup).includes(id));
   for (const k of SLOT_KEYS) {
     if (!cond[side.lineup[k]]?.out || !bench.length) continue;
     const sub = bench.reduce((a, b) => (PLAYERS[b].ovr[k] > PLAYERS[a].ovr[k] ? b : a));
@@ -241,7 +280,7 @@ export function newGameSeed(L) {
 }
 
 export function startLeagueGame(L, home, away, playoff = false) {
-  return createGame({ home: teamForGame(L.teams[home], L), away: teamForGame(L.teams[away], L), seed: newGameSeed(L), playoff });
+  return createGame({ home: teamForGame(L.teams[home], L), away: teamForGame(L.teams[away], L), seed: newGameSeed(L), playoff, injuries: true });
 }
 
 const compactStats = (stats) => Object.fromEntries(Object.entries(stats)
@@ -262,14 +301,16 @@ export function scoringPlays(g) {
 
 export function recordResult(L, g, meta) {
   const sm = summary(g);
-  L.results.push({ ...meta, home: g.teams[0].id, away: g.teams[1].id, score: sm.score, winner: sm.winner == null ? null : g.teams[sm.winner].id,
+  L.results.push({ ...meta, season: L.season ?? 1, home: g.teams[0].id, away: g.teams[1].id, score: sm.score, winner: sm.winner == null ? null : g.teams[sm.winner].id,
     quarters: sm.quarters, weather: sm.weather,
-    box: { stats: g.teams.map((t) => compactStats(t.stats)), team: g.teams.map((t) => ({ ...t.team, third: [...t.team.third] })), scoring: scoringPlays(g) } });
+    box: { stats: g.teams.map((t) => compactStats(t.stats)), team: g.teams.map((t) => ({ ...t.team, third: [...t.team.third] })), scoring: scoringPlays(g) },
+    injuries: (g.injuries ?? []).map((i) => ({ id: i.id, team: i.team, weeks: i.weeks })) });
+  L.results[L.results.length - 1].headline = gameHeadline(L, L.results[L.results.length - 1]);
   L.condition ??= {};
   for (const [ti, t] of g.teams.entries()) {
     const played = new Set(t.roster);
     // Only the most worn-out few sit; the rest come back sore.
-    const sit = new Set(t.roster.filter((id) => (t.energy[id] ?? 100) < OUT_BELOW)
+    const sit = new Set(t.roster.filter((id) => !t.out?.[id] && (t.energy[id] ?? 100) < OUT_BELOW)
       .sort((a, b) => t.energy[a] - t.energy[b]).slice(0, MAX_OUT));
     for (const id of t.roster) {
       const c = nextCondition(t.energy[id] ?? 100, sit.has(id));
@@ -279,6 +320,7 @@ export function recordResult(L, g, meta) {
       if (!played.has(id) && L.condition[id]?.out) L.condition[id] = { energy: 85 };
     }
   }
+  recordInjuries(L, g, meta);
   for (const t of g.teams) {
     for (const [id, s] of Object.entries(t.stats)) {
       const agg = (L.seasonStats[id] ??= { team: t.id });
@@ -289,6 +331,7 @@ export function recordResult(L, g, meta) {
       agg.gp = (agg.gp ?? 0) + 1;
     }
   }
+  noteGame(L, L.results[L.results.length - 1]);
 }
 
 export function simWeekOthers(L, skipTeam = 0) {
@@ -316,6 +359,8 @@ export function standings(L) {
 }
 
 export function advanceWeek(L) {
+  weekInReview(L, { week: L.week });
+  healWeek(L);
   L.week++;
   if (L.week >= L.schedule.length) {
     const top = standings(L).slice(0, 4).map((r) => r.id);
@@ -326,6 +371,8 @@ export function advanceWeek(L) {
 
 export function advancePlayoffs(L) {
   const P = L.playoffs;
+  weekInReview(L, { playoff: true, round: P.round });
+  healWeek(L);
   const winners = L.results.filter((r) => r.playoff && r.round === P.round).map((r) => r.winner);
   if (P.round === 0) {
     const [a, b] = winners;
@@ -380,6 +427,7 @@ const COACH_NOTES = {
   trench: 'Trench Builder: runs inside more and blitzes more often.',
   types: 'Type Stacker: drafted for its favorite types.',
   balanced: 'Best Available: no strong lean.',
+  ...Object.fromEntries(Object.entries(SCHEMES).filter(([k]) => k !== 'balanced').map(([k, s]) => [k, `${s.name}: ${s.blurb}`])),
 };
 
 // Pre-game report for the user's next opponent.
@@ -409,8 +457,11 @@ export function scoutReport(L, myId, oppId) {
     plan = `Their ${theirSlot} ${PLAYERS[theirP].name} is ${PLAYERS[theirP].types.join('/')}; your ${mySlot} ${PLAYERS[myP].name} (${PLAYERS[myP].types.join('/')}) wins that battle.`;
   }
   const cond = L.condition ?? {};
-  const health = L.teams[myId].roster.filter((id) => cond[id]).map((id) => ({ id, ...cond[id] }));
-  return { me, opp, best, worst, weather, plan, lean, health, coachNote: COACH_NOTES[L.teams[oppId].coach] ?? '' };
+  const inj = L.injuries ?? {};
+  const health = L.teams[myId].roster.filter((id) => cond[id] || inj[id]).map((id) => ({ id, ...cond[id], injury: inj[id] ?? null }));
+  const theirHurt = L.teams[oppId].roster.filter((id) => inj[id] && Object.values(L.teams[oppId].lineup).includes(id)).map((id) => ({ id, ...inj[id] }));
+  const kicking = { me: kickingUnit(me.lineup), opp: kickingUnit(opp.lineup) };
+  return { me, opp, best, worst, weather, plan, lean, health, theirHurt, kicking, coachNote: COACH_NOTES[L.teams[oppId].coach] ?? '' };
 }
 
 // ---------- awards, bracket ----------
@@ -469,11 +520,11 @@ export function bracket(L) {
 
 // ---------- trades ----------
 
-function teamStrength(ids) {
+export function teamStrength(ids) {
   const { lineup } = autoDepthChart(ids);
   return SLOT_KEYS.reduce((s, k) => s + (lineup[k] != null ? SLOT[k].value * PLAYERS[lineup[k]].ovr[k] : 0), 0);
 }
-function aiLikes(team, id) {
+export function aiLikes(team, id) {
   const p = PLAYERS[id];
   const grp = SLOT[p.best[0]].group;
   if (team.coach === 'types' && team.favTypes?.some((t) => p.types.includes(t))) return 6;
@@ -489,15 +540,15 @@ export function makeTradeOffer(L) {
   const { r, save } = leagueRng(L);
   const meBase = teamStrength(me.roster);
   const topOvr = (id) => PLAYERS[id].ovr[PLAYERS[id].best[0]];
-  const mine = me.roster.slice().sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 10);
+  // The ten best by overall, plus the kicker and punter, whose value is at their own slot.
+  const mine = [...new Set([...me.roster.slice().sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 10), me.lineup.K, me.lineup.P])].filter((id) => id != null);
+  const upgrade = (id, k) => me.lineup[k] == null || PLAYERS[id].ovr[k] > PLAYERS[me.lineup[k]].ovr[k];
   let best = null;
   for (const t of L.teams) {
     if (t.user) continue;
     const base = teamStrength(t.roster);
-    const theirs = t.roster.filter((id) => {
-      const k = PLAYERS[id].best[0];
-      return me.lineup[k] == null || PLAYERS[id].ovr[k] > PLAYERS[me.lineup[k]].ovr[k];
-    }).sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 8);
+    const theirs = t.roster.filter((id) => upgrade(id, PLAYERS[id].best[0])).sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 8);
+    for (const k of ['K', 'P']) if (t.lineup[k] != null && upgrade(t.lineup[k], k) && !theirs.includes(t.lineup[k])) theirs.push(t.lineup[k]);
     for (const send of mine) {
       for (const get of theirs) {
         const meGain = teamStrength(me.roster.map((x) => (x === send ? get : x))) - meBase;
@@ -513,6 +564,19 @@ export function makeTradeOffer(L) {
   if (!best) return null;
   const { score, ...offer } = best;
   return { ...offer, season: L.season ?? 1, status: 'open' };
+}
+
+// How the user's kicker and punter change if the open trade goes through and the depth chart is
+// auto-arranged (the lineup the offer's gain is measured on). Null when neither changes.
+export function tradeKicking(L) {
+  const T = L.trade, me = L.teams.find((t) => t.user);
+  if (!T || !me) return null;
+  const before = kickingUnit(me.lineup);
+  const after = kickingUnit(autoDepthChart(me.roster.map((x) => (x === T.youSend ? T.youGet : x))).lineup);
+  const touched = [T.youSend, T.youGet];
+  const k = before.k?.id !== after.k?.id && (touched.includes(before.k?.id) || touched.includes(after.k?.id));
+  const p = before.p?.id !== after.p?.id && (touched.includes(before.p?.id) || touched.includes(after.p?.id));
+  return k || p ? { before, after, k, p } : null;
 }
 
 export function tradeOpen(L) {
@@ -542,7 +606,7 @@ export const GROWTH_CAP = 16;
 export const SNAPS_PER_POINT = 180;
 
 // Keep-value for a rostered Pokémon; the lowest values get cut.
-function keepValue(team, id) {
+export function keepValue(team, id) {
   const p = PLAYERS[id];
   const slot = Object.keys(team.lineup).find((k) => team.lineup[k] === id);
   let v = slot ? 100 + SLOT[slot].value * p.ovr[slot] : 0.5 * p.ovr[p.best[0]];
@@ -557,7 +621,9 @@ export function suggestCuts(team, count = CUTS) {
 export function startOffseason(L) {
   if (L.phase !== 'done') return;
   const st = standings(L);
-  L.history.push({ season: L.season, champion: L.champion, awards: awards(L), records: st.map((r) => ({ id: r.id, w: r.w, l: r.l, t: r.t })) });
+  const aw = awards(L);
+  const hof = archiveSeason(L, { awards: aw, standings: st, champion: L.champion });
+  L.history.push({ season: L.season, champion: L.champion, awards: aw, records: st.map((r) => ({ id: r.id, w: r.w, l: r.l, t: r.t })), hof: hof.map((h) => h.id) });
   const growth = { ...L.growth };
   const camp = [];
   for (const [key, s] of Object.entries(L.seasonStats)) {
@@ -587,29 +653,52 @@ export function startOffseason(L) {
   L.phase = 'offseason';
 }
 
-// Apply cuts and open a rookie draft, worst record picking first.
+// Apply cuts and open free agency; the rookie draft follows it.
 export function finishOffseason(L, userCuts) {
   if (L.phase !== 'offseason') return;
-  const last = L.history[L.history.length - 1];
+  // Remember who cut whom for the free agent pool.
+  const cutBy = {};
+  L.contracts ??= {};
   for (const t of L.teams) {
     const cuts = new Set(t.user && userCuts?.length === Math.min(CUTS, t.roster.length) ? userCuts : L.offseason.cuts[t.id]);
+    for (const id of cuts) { cutBy[id] = t.id; delete L.contracts[id]; }
     t.roster = t.roster.filter((id) => !cuts.has(id));
     t.bench = t.bench.filter((id) => !cuts.has(id));
     for (const k of Object.keys(t.lineup)) if (cuts.has(t.lineup[k])) delete t.lineup[k];
     t.slots = { ...t.lineup };
   }
+  if ((L.season ?? 1) === 1 && !L.firstDraft) {
+    L.firstDraft = { picks: L.picks.slice(0, L.pickIndex).map((p) => [p.player, p.slot]), rng: L.draftRng ?? null };
+  }
+  L.season++;
+  L.picks = []; L.pickIndex = 0; L.week = 0; L.schedule = []; L.results = []; L.seasonStats = {};
+  L.playoffs = null; L.champion = null; L.condition = {}; L.rookies = []; L.trade = null; L.offseason = null;
+  L.injuries = {}; L.weekly = [];
+  openFreeAgency(L, cutBy);
+}
+
+// Rookie draft order: worst record first, the champion last.
+export function rookieOrder(L) {
+  const last = L.history[L.history.length - 1];
   const order = last.records.map((r) => r.id).reverse();
   const champ = order.indexOf(last.champion);
   if (champ >= 0) { order.splice(champ, 1); order.push(last.champion); }
-  const rounds = Math.min(CUTS, L.settings.rounds);
+  return order;
+}
+
+// After free agency: a snake rookie draft that fills every roster back to full. A team that
+// signed free agents has fewer picks and sits out the later rounds.
+export function openRookieDraft(L) {
+  const order = rookieOrder(L);
+  const need = Object.fromEntries(L.teams.map((t) => [t.id, Math.max(0, L.settings.rounds - t.roster.length)]));
+  const rounds = Math.max(0, ...Object.values(need));
   L.picks = [];
   for (let r = 0; r < rounds; r++) {
     const row = r % 2 === 0 ? order : [...order].reverse();
-    for (const id of row) L.picks.push({ round: r + 1, team: id, player: null, slot: null });
+    for (const id of row) if (need[id] > r) L.picks.push({ round: r + 1, team: id, player: null, slot: null });
   }
-  L.season++;
-  L.pickIndex = 0; L.phase = 'draft'; L.week = 0; L.schedule = []; L.results = []; L.seasonStats = {};
-  L.playoffs = null; L.champion = null; L.condition = {}; L.rookies = []; L.trade = null; L.offseason = null;
+  L.pickIndex = 0; L.phase = 'draft';
+  if (!L.picks.length) finishDraft(L);
 }
 
 // Quick game: two AI-drafted rosters.
