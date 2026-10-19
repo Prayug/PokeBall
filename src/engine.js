@@ -9,16 +9,17 @@ import { coverSlot, injuryOdds, injuryWeeks } from './injuries.js';
 import { PENALTIES, announce, enforce, foul, preSnapFoul, simFouls, stateValue } from './penalties.js';
 
 // The playbook. Each run or pass has its kind, the fast simulator's numbers (depth, air yards,
-// target weights) and, for plays added on top of the original eleven, `sim`: the original play
-// the fast simulator resolves it as. The live field runs every play for real (routes and run
-// schemes in live.js).
+// target weights) and, for plays added on top of the original eleven, either `sim`: the original
+// play the fast simulator resolves it as, or `like`: the original play whose AI weight it shares
+// when the fast simulator resolves it as itself. The live field runs every play for real (routes
+// and run schemes in live.js).
 export const OFF_PLAYS = {
   inside_run: { name: 'Inside Zone', kind: 'run', dir: 'inside', blurb: 'Read the A and B gaps' },
   outside_run: { name: 'Outside Zone', kind: 'run', dir: 'outside', blurb: 'Stretch to the edge, cut up' },
-  power: { name: 'Power O', kind: 'run', dir: 'power', sim: 'inside_run', blurb: 'Backside guard pulls, off tackle' },
-  counter: { name: 'Counter', kind: 'run', dir: 'counter', sim: 'inside_run', blurb: 'Step one way, run the other' },
+  power: { name: 'Power O', kind: 'run', dir: 'power', like: 'inside_run', blurb: 'Backside guard pulls, off tackle' },
+  counter: { name: 'Counter', kind: 'run', dir: 'counter', like: 'inside_run', blurb: 'Step one way, run the other' },
   toss: { name: 'Toss Sweep', kind: 'run', dir: 'toss', sim: 'outside_run', blurb: 'Pitch it wide and race the edge' },
-  dive: { name: 'HB Dive', kind: 'run', dir: 'dive', sim: 'inside_run', blurb: 'Quick hit straight ahead' },
+  dive: { name: 'HB Dive', kind: 'run', dir: 'dive', like: 'inside_run', blurb: 'Quick hit straight ahead' },
   draw: { name: 'HB Draw', kind: 'run', dir: 'draw', blurb: 'Show pass, hand off late' },
   qb_sneak: { name: 'QB Sneak', kind: 'run', dir: 'sneak', blurb: 'Push for a yard' },
   qb_draw: { name: 'QB Draw', kind: 'run', dir: 'qbdraw', sim: 'draw', qb: true, blurb: 'Drop like a pass, then the QB takes off' },
@@ -59,7 +60,8 @@ export const OFF_PLAYS = {
   decline: { name: 'Decline', kind: 'penalty', blurb: 'Keep the result of the play' },
 };
 
-// Defensive calls. `sim` is the original call the fast simulator resolves a newer one as.
+// Defensive calls. `sim` is the original call the fast simulator resolves a newer one as;
+// `like` is the original call a newer one that the simulator plays as itself shares weight with.
 export const DEF_PLAYS = {
   base: { name: 'Cover 1', blurb: 'Man across, free safety deep' },
   cover1_robber: { name: 'Cover 1 Robber', sim: 'base', blurb: 'Man, strong safety robs the middle' },
@@ -69,14 +71,14 @@ export const DEF_PLAYS = {
   cover2: { name: 'Cover 2', blurb: 'Two deep halves, five under' },
   tampa2: { name: 'Tampa 2', sim: 'cover2', blurb: 'Cover 2, Mike runs the deep middle' },
   cover3: { name: 'Cover 3', blurb: 'Three deep thirds, four under' },
-  cover4: { name: 'Cover 4', sim: 'cover3', blurb: 'Quarters, four deep' },
+  cover4: { name: 'Cover 4', like: 'cover3', blurb: 'Quarters, four deep' },
   prevent: { name: 'Prevent', blurb: 'Give up short, stop long' },
   run_blitz: { name: 'Mike Blitz', blurb: 'Middle linebacker hits the A gap' },
   pass_blitz: { name: 'LB Dogs', blurb: 'Both linebackers rush' },
   mug: { name: 'Double A Mug', sim: 'pass_blitz', blurb: 'Linebackers walk up in the A gaps' },
   nickel_blitz: { name: 'Nickel Blitz', sim: 'pass_blitz', blurb: 'Slot corner off the edge' },
-  fire_zone: { name: 'Fire Zone', sim: 'cover3', blurb: 'Zone blitz, end drops to the flat' },
-  cover0: { name: 'Cover 0', sim: 'pass_blitz', blurb: 'Send six, no help deep' },
+  fire_zone: { name: 'Fire Zone', like: 'cover3', blurb: 'Zone blitz, end drops to the flat' },
+  cover0: { name: 'Cover 0', like: 'pass_blitz', blurb: 'Send six, no help deep' },
 };
 // The original call the fast simulator (and its tables) resolves a play as.
 export const simOff = (call) => OFF_PLAYS[call]?.sim ?? call;
@@ -92,10 +94,19 @@ export const SCHEME = {
   man_press: { screen: 1, short: -4, mid: -1, deep: 3, run: 0, zone: false },
   prevent: { screen: 4, short: 6, mid: -2, deep: -10, run: 5, zone: true },
   goal_line: { screen: 3, short: 2, mid: 5, deep: 6, run: -7, zone: false },
+  // Quarters: four deep take away the shots, the flats and hooks are softer.
+  cover4: { screen: 2, short: 2, mid: -1, deep: -6, run: 0, zone: true },
+  // Zone blitz: the Mike comes, the end drops into the flat where the hot throw goes.
+  fire_zone: { screen: 0, short: -1, mid: 1, deep: -1, run: -1, zone: true },
+  // Send six with nobody deep: get there or give up the big one.
+  cover0: { screen: 7, short: 8, mid: 7, deep: 8, run: -2, zone: false },
 };
+// Who rushes on top of the front four, by call. Fire Zone sends five and drops the right end
+// into the flat, so the right tackle picks up the outside backer.
+const BLITZ = { pass_blitz: ['OLB', 'MLB'], run_blitz: ['MLB'], cover0: ['OLB', 'MLB', 'SS'], fire_zone: ['OLB', 'MLB'] };
 // The base completion and run numbers sit a little low to offset the scoring that the parity
-// swings (parity.js) add, so a league still averages about 23 points a team.
-const SEP_OFFSET = 13.5;
+// swings and the chaos floor (parity.js) add, so a league still averages about 23 points a team.
+const SEP_OFFSET = 14.3;
 const BASE_CMP = { screen: 0.83, short: 0.71, mid: 0.59, deep: 0.37 };
 
 // ---------- random numbers (state lives in the game so saves resume exactly) ----------
@@ -1053,6 +1064,21 @@ function doPunt(g, base, live = null) {
     g.spot = clamp(100 - (base.spotBefore - 8), 1, 99); g.toGo = Math.min(10, 100 - g.spot);
     text = `${pnm}'s punt is BLOCKED! ${g.teams[d].name} take over at the ${spotText(g)}.`;
     highlight = 'turnover';
+  } else if (land < 100 && chance(g, PARITY.puntSwing)) {
+    // The chaos floor on special teams: a muffed punt the kicking team falls on, or a return
+    // that goes the distance.
+    const ret = returnMan(g, d);
+    if (chance(g, 0.5)) {
+      g.poss = o; g.spot = land; g.toGo = Math.min(10, 100 - land);
+      text = `${pnm} punts ${net} yards and it's MUFFED by ${nm(ret)}! ${g.teams[o].name} recover at the ${spotText(g)}.`;
+      highlight = 'turnover';
+    } else {
+      if (P != null) { const s = st(g, o, P); s.punts = (s.punts ?? 0) + 1; s.puntYds = (s.puntYds ?? 0) + net - (100 - land); }
+      const entry = addLog(g, { ...base, kind: 'score', highlight: 'td', text: `${pnm} punts ${net} yards. ${nm(ret)} returns it ${100 - land} yards for a TOUCHDOWN!`, to: absSpot(d, 100) });
+      g.spot = 100;
+      scoreTD(g, d, ret);
+      return { special: true, entry, clockStop: true };
+    }
   } else if (land >= 100) { g.spot = 20; text = `${pnm} punts into the end zone. Touchback.`; }
   else { g.spot = 100 - land; text = `${pnm} punts ${net} net yards${call.aim === 'coffin' && land >= 90 ? ', out of bounds inside the 10' : ''}. ${g.teams[d].name} take over at the ${spotText(g)}.`; }
   if (P != null) { const s = st(g, o, P); s.punts = (s.punts ?? 0) + 1; s.puntYds = (s.puntYds ?? 0) + net; }
@@ -1088,6 +1114,13 @@ function doFieldGoal(g, base, live = null) {
 }
 
 // A punt played out on the live field: where it came down and what the return team did with it.
+// The receiving side's return man in the fast simulator: its fastest corner or back.
+function returnMan(g, ti) {
+  const L = g.teams[ti].lineup;
+  return ['CB3', 'CB2', 'RB', 'CB1'].map((k) => L[k]).filter((id) => id != null)
+    .sort((a, b) => eff(g, ti, b, 'spd') - eff(g, ti, a, 'spd'))[0] ?? L.CB1;
+}
+
 // live.endX is where the ball ended up, in yards downfield from the line of scrimmage.
 function livePunt(g, base, live, pnm) {
   const o = g.poss, d = 1 - o;
@@ -1169,14 +1202,29 @@ export function fumbleCheck(g, o, d, carrier, tackler) {
 
 function seNote(flag) { return flag ? " It's super effective!" : ''; }
 
+// Who blocks whom on each run, and how much each matchup decides the lane. Power pulls the
+// backside guard up onto the Mike and kicks the end out; the counter does the same the other way.
+const RUN_PAIRS = {
+  outside: [['LT', 'LE', 1.2], ['RT', 'DE', 1.2], ['TE', 'OLB', 1.2], ['LG', 'DT1', 0.6], ['RG', 'DT2', 0.6], ['C', 'MLB', 0.5]],
+  inside: [['LG', 'DT1', 1.2], ['C', 'MLB', 1.0], ['RG', 'DT2', 1.2], ['LT', 'LE', 0.6], ['RT', 'DE', 0.6], ['TE', 'OLB', 0.4]],
+  power: [['RT', 'DE', 1.2], ['TE', 'OLB', 1.0], ['RG', 'DT2', 1.0], ['LG', 'MLB', 1.1], ['C', 'DT1', 0.6], ['LT', 'LE', 0.3]],
+  counter: [['LT', 'LE', 1.2], ['LG', 'MLB', 1.0], ['C', 'DT1', 1.0], ['RG', 'OLB', 0.9], ['TE', 'DE', 0.5], ['RT', 'DT2', 0.4]],
+  dive: [['C', 'MLB', 1.2], ['LG', 'DT1', 1.3], ['RG', 'DT2', 1.3], ['LT', 'LE', 0.3], ['RT', 'DE', 0.3]],
+};
+const RUN_TACKLERS = {
+  outside: { OLB: 3, CB1: 2, SS: 2.5, MLB: 2, LE: 1, DE: 1 },
+  inside: { MLB: 4, DT1: 2, DT2: 2, OLB: 1.5, SS: 2, LE: 0.7, DE: 0.7 },
+  power: { OLB: 3, MLB: 3, SS: 2.5, DE: 1.5, DT2: 1 },
+  counter: { MLB: 3, LE: 2, OLB: 2, SS: 2, FS: 1, DT1: 1 },
+  dive: { MLB: 4, DT1: 3, DT2: 3, SS: 1 },
+};
+
 function doRun(g, call, defCall, qbRun = false) {
   const o = g.poss, d = 1 - o;
   const O = (s) => g.teams[o].lineup[s], D = (s) => g.teams[d].lineup[s];
   const dir = OFF_PLAYS[call].dir;
   const carrier = dir === 'sneak' || qbRun ? O('QB') : O('RB');
-  const pairs = dir === 'outside'
-    ? [['LT', 'LE', 1.2], ['RT', 'DE', 1.2], ['TE', 'OLB', 1.2], ['LG', 'DT1', 0.6], ['RG', 'DT2', 0.6], ['C', 'MLB', 0.5]]
-    : [['LG', 'DT1', 1.2], ['C', 'MLB', 1.0], ['RG', 'DT2', 1.2], ['LT', 'LE', 0.6], ['RT', 'DE', 0.6], ['TE', 'OLB', 0.4]];
+  const pairs = RUN_PAIRS[dir] ?? RUN_PAIRS.inside;
   let lane = 0, wsum = 0, keyRep = null;
   const extras = [];
   for (const [b, rr, w] of pairs) {
@@ -1186,8 +1234,11 @@ function doRun(g, call, defCall, qbRun = false) {
     lane += R.diff * w; wsum += w;
     if (!keyRep || Math.abs(R.diff) > Math.abs(keyRep.diff)) keyRep = { ...R, b: O(b), r: D(rr) };
   }
-  lane = lane / wsum + SCHEME[defCall].run;
-  if (dir === 'draw') lane += { pass_blitz: 6, prevent: 4, cover2: 2, run_blitz: -4, goal_line: -3 }[defCall] ?? 0;
+  // The dive hits before the defense's call matters much; the counter's misdirection punishes a
+  // defense that flies upfield, and a disciplined front sits on it.
+  lane = lane / wsum + SCHEME[defCall].run * (dir === 'dive' ? 0.6 : 1);
+  if (dir === 'draw') lane += { pass_blitz: 6, cover0: 7, fire_zone: 2, prevent: 4, cover2: 2, cover4: 1, run_blitz: -4, goal_line: -3 }[defCall] ?? 0;
+  if (dir === 'counter') lane += { run_blitz: 4, pass_blitz: 3, cover0: 3, fire_zone: 2, goal_line: -1, base: -1 }[defCall] ?? 0;
 
   const power = eff(g, o, carrier, 'str', { run: true }), speed = eff(g, o, carrier, 'spd', { run: true });
   let yards;
@@ -1200,23 +1251,31 @@ function doRun(g, call, defCall, qbRun = false) {
     if (dir === 'outside') {
       const edge = (eff(g, d, D('OLB'), 'spd') + eff(g, d, D('CB1'), 'spd')) / 2;
       mean += (speed - edge) * 0.06 + (speed - 65) * 0.02; sd = 4.3;
+    } else if (dir === 'power') {
+      // A downhill run behind the pulling guard: the back's strength counts most.
+      mean += (power - 65) * 0.055 + (speed - 65) * 0.01; sd = 3.2;
+    } else if (dir === 'counter') {
+      // A slow-developing cutback: feast or famine.
+      mean += -0.6 + (power - 65) * 0.04 + (speed - 65) * 0.02; sd = 4.0;
+    } else if (dir === 'dive') {
+      // A quick hit straight ahead: rarely stuffed, rarely breaks long.
+      mean += 0.2 + (power - 65) * 0.045 + (speed - 65) * 0.01; sd = 2.3;
     } else {
       mean += (power - 65) * 0.04 + (speed - 65) * 0.02; sd = dir === 'draw' ? 3.8 : 3.0;
     }
     yards = Math.round(mean + sd * randn(g));
     yards = Math.max(yards, -4);
   }
-  let tackler = pickTackler(g, d, dir === 'outside' ? { OLB: 3, CB1: 2, SS: 2.5, MLB: 2, LE: 1, DE: 1 }
-    : { MLB: 4, DT1: 2, DT2: 2, OLB: 1.5, SS: 2, LE: 0.7, DE: 0.7 });
+  let tackler = pickTackler(g, d, RUN_TACKLERS[dir] ?? RUN_TACKLERS.inside);
   // broken tackle at the second level
   if (yards >= 2 && dir !== 'sneak') {
-    const bt = sigmoid(((eff(g, o, carrier, 'str', { breakTackle: true }) * 0.5 + speed * 0.5) - eff(g, d, tackler, 'tkl')) / 10 - 2.1)
+    const bt = Math.max(PARITY.missedTackle, sigmoid(((eff(g, o, carrier, 'str', { breakTackle: true }) * 0.5 + speed * 0.5) - eff(g, d, tackler, 'tkl')) / 10 - 2.1))
       + (has(carrier, 'slippery') ? 0.04 : 0);
     if (chance(g, bt)) { yards += Math.round(expo(g, 5)); extras.push(`breaks a tackle from ${nm(tackler)}`); }
   }
   if (yards >= 5 && dir !== 'sneak') {
     const fs = D('FS');
-    const p = sigmoid((speed - eff(g, d, fs, 'spd')) / 10 - 2.5) + (has(carrier, 'luck') ? 0.04 : 0);
+    const p = (Math.max(PARITY.openField, sigmoid((speed - eff(g, d, fs, 'spd')) / 10 - 2.5)) + (has(carrier, 'luck') ? 0.04 : 0)) * (dir === 'dive' ? 0.6 : 1);
     if (chance(g, p)) { yards += Math.round(expo(g, 14)); tackler = fs; extras.push('breaks into the open field'); }
   }
   if (PLAYERS[carrier].types.includes('Ghost') && !g.ghostUsed[carrier] && yards >= 1 && yards <= 9 && chance(g, 0.35)) {
@@ -1226,7 +1285,7 @@ function doRun(g, call, defCall, qbRun = false) {
   }
   const s = st(g, o, carrier);
   s.ra++; s.ry += Math.min(yards, 100 - g.spot); s.rlong = Math.max(s.rlong, yards);
-  const where = { inside: 'up the middle', outside: chance(g, 0.5) ? 'around the left end' : 'around the right end', draw: 'on the draw', sneak: 'on the sneak' }[dir];
+  const where = { inside: 'up the middle', outside: chance(g, 0.5) ? 'around the left end' : 'around the right end', draw: 'on the draw', sneak: 'on the sneak', power: 'off tackle', counter: 'on the counter', dive: 'on the dive' }[dir];
   const gain = yards > 0 ? `for ${yards} yard${yards === 1 ? '' : 's'}` : yards === 0 ? 'for no gain' : `for a loss of ${-yards}`;
   let text = extras.length ? `${nm(carrier)} runs ${where}, ${extras.join(' and ')}. Gain of ${yards}.` : `${nm(carrier)} runs ${where} ${gain}.`;
   const se = keyRep && Math.abs(keyRep.diff) > 12 && (keyRep.diff > 0 ? keyRep.aSE : keyRep.dSE);
@@ -1258,23 +1317,26 @@ function doPass(g, call, defCall) {
   const O = (s) => g.teams[o].lineup[s], D = (s) => g.teams[d].lineup[s];
   const play = OFF_PLAYS[call];
   const qb = O('QB');
-  const blitz = defCall === 'pass_blitz' ? ['OLB', 'MLB'] : defCall === 'run_blitz' ? ['MLB'] : [];
+  const blitz = BLITZ[defCall] ?? [];
   const rbBlocks = blitz.length > 0 && call !== 'screen';
   const qs = st(g, o, qb);
   const depth = play.depth;
   const T = g.teams[o].team;
 
   // Pass rush
-  const reps = [['LT', 'LE'], ['LG', 'DT1'], ['RG', 'DT2'], ['RT', 'DE']];
+  const reps = [['LT', 'LE'], ['LG', 'DT1'], ['RG', 'DT2']];
+  if (defCall !== 'fire_zone') reps.push(['RT', 'DE']);
   if (blitz.includes('MLB')) reps.push(['C', 'MLB']);
-  if (blitz.includes('OLB')) reps.push([rbBlocks ? 'RB' : null, 'OLB']);
+  if (blitz.includes('OLB')) reps.push([defCall === 'fire_zone' ? 'RT' : rbBlocks ? 'RB' : null, 'OLB']);
+  if (blitz.includes('SS')) reps.push([null, 'SS']);
   let pressure = 0, sacker = null, sackSE = false, pressAbility = false;
   const timing = (play.pa ? 0.3 : 0) + ({ screen: -1.6, short: -0.6, mid: 0, deep: 0.35 })[depth];
   for (const [b, rr] of reps) {
     const rid = D(rr), bid = b ? O(b) : null;
     let p;
     let se = false;
-    if (bid == null) p = 0.5;
+    // Cover 0's sixth rusher, the strong safety, comes from depth: a quick throw beats him.
+    if (bid == null) p = rr === 'SS' ? 0.3 * Math.exp(timing * 0.8) : 0.5;
     else {
       const bv = eff(g, o, bid, 'blk') * 0.75 + eff(g, o, bid, 'str') * 0.25;
       const rv = eff(g, d, rid, 'rush');
@@ -1324,12 +1386,12 @@ function doPass(g, call, defCall) {
   // Coverage and the read
   const sch = SCHEME[defCall];
   const man = {
-    WR1: D('CB1'), WR2: D('CB2'), WR3: D('CB3'), TE: D('SS'),
-    RB: !blitz.includes('OLB') ? D('OLB') : !blitz.includes('MLB') ? D('MLB') : null,
+    WR1: D('CB1'), WR2: D('CB2'), WR3: D('CB3'), TE: blitz.includes('SS') ? D('FS') : D('SS'),
+    RB: defCall === 'fire_zone' ? D('DE') : !blitz.includes('OLB') ? D('OLB') : !blitz.includes('MLB') ? D('MLB') : null,
   };
   const targets = ['WR1', 'WR2', 'WR3', 'TE', 'RB'].filter((t) => !(t === 'RB' && rbBlocks));
   const deep = depth === 'deep';
-  const safetyHelp = Math.max(0, (eff(g, d, D('FS'), 'cov') - 55) * (defCall === 'cover2' || defCall === 'prevent' ? 0.2 : 0.12));
+  const safetyHelp = defCall === 'cover0' ? 0 : Math.max(0, (eff(g, d, D('FS'), 'cov') - 55) * (['cover2', 'cover4', 'prevent'].includes(defCall) ? 0.2 : 0.12));
   let best = null;
   const vision = eff(g, o, qb, 'acc');
   const noiseSd = 3 + (90 - vision) * 0.12 + (pressure ? 4 : 0);
@@ -1351,10 +1413,12 @@ function doPass(g, call, defCall) {
       sep = R.diff; se = R.aSE;
     }
     sep += sch[depth];
-    if (play.pa && ['base', 'run_blitz', 'goal_line'].includes(defCall)) sep += 4;
+    if (play.pa && ['base', 'run_blitz', 'goal_line', 'cover0'].includes(defCall)) sep += 4;
     if (deep) sep -= safetyHelp;
     if (t === 'RB' && depth !== 'screen') sep -= 4;
     sep += 8 * randn(g) - SEP_OFFSET;
+    // The chaos floor: now and then somebody blows the coverage, however good he is.
+    if (cid != null && chance(g, PARITY.blown)) sep = Math.max(sep, 8);
     const read = sep + noiseSd * randn(g) + (play.targets[t] ?? 0) * 14;
     if (!best || read > best.read) best = { t, rid, cid, sep, read, se };
   }
@@ -1379,19 +1443,22 @@ function doPass(g, call, defCall) {
   rs.tg++;
   const route = { screen: 'on the screen', short: call === 'out' ? 'on the out' : 'on the slant', mid: call === 'te_seam' ? 'up the seam' : 'on the curl', deep: 'deep downfield' }[depth];
 
-  if (chance(g, pc)) {
+  // The chaos floor: a ball batted at the line or tipped at the catch point, whoever threw it.
+  const tipped = depth !== 'screen' && chance(g, PARITY.tipped);
+  if (!tipped && chance(g, pc)) {
     const tackler = cov ?? D(deep ? 'FS' : 'SS');
     let yacMean = deep ? 2.5 : depth === 'screen' ? 4.5 : 2.1;
     yacMean += (eff(g, o, tgt, 'spd') - eff(g, d, tackler, 'spd')) * 0.05;
     if (depth === 'screen') {
       const olb = (eff(g, o, O('LT'), 'blk') + eff(g, o, O('C'), 'blk') + eff(g, o, O('RT'), 'blk')) / 3;
-      yacMean += (olb - eff(g, d, D('MLB'), 'tkl')) * 0.05 + (blitz.length ? 3 : 0);
+      // Rushers who bit leave the screen open; a zone blitz's dropping end sits on it.
+      yacMean += (olb - eff(g, d, D('MLB'), 'tkl')) * 0.05 + (blitz.length && defCall !== 'fire_zone' ? 3 : 0);
     }
     let yac = Math.round(expo(g, Math.max(1, yacMean)));
     let extra = '';
     let finalTackler = tackler;
     const stop = eff(g, d, tackler, 'tkl') * 0.5 + eff(g, d, tackler, 'spd') * 0.5;
-    const bt = sigmoid(((eff(g, o, tgt, 'str', { breakTackle: true }) * 0.4 + eff(g, o, tgt, 'spd') * 0.6) - stop) / 9 - 2.7)
+    const bt = Math.max(PARITY.missedTackle, sigmoid(((eff(g, o, tgt, 'str', { breakTackle: true }) * 0.4 + eff(g, o, tgt, 'spd') * 0.6) - stop) / 9 - 2.7))
       + (has(tgt, 'slippery') ? 0.04 : 0);
     if (chance(g, bt)) { yac += Math.round(expo(g, 9)); extra = `, shakes ${nm(tackler)}`; finalTackler = D('FS'); }
     if (PLAYERS[tgt].types.includes('Ghost') && !g.ghostUsed[tgt] && chance(g, 0.12)) {
@@ -1427,7 +1494,7 @@ function doPass(g, call, defCall) {
   if (hawk) pInt += 0.03;
   if (depth === 'screen') pInt *= 0.3;
   const picker = cov ?? D('FS');
-  if (chance(g, clamp(pInt, 0.01, 0.3))) {
+  if (tipped ? chance(g, PARITY.tippedPick) : chance(g, clamp(pInt, 0.01, 0.3))) {
     qs.pint++; st(g, d, picker).dint++;
     const catchAt = g.spot + air;
     let returnSpot;
@@ -1436,11 +1503,12 @@ function doPass(g, call, defCall) {
       const ret = Math.round(expo(g, 7 + (eff(g, d, picker, 'spd') - 65) * 0.08));
       returnSpot = 100 - catchAt + ret;
     }
-    return { kind: 'pass', yards: 0, carrier: picker, qb, text: `${nm(qb)} throws for ${nm(tgt)}... INTERCEPTED by ${nm(picker)}!`,
+    const how = tipped ? `${nm(qb)}'s pass for ${nm(tgt)} is tipped... and INTERCEPTED by ${nm(picker)}!` : `${nm(qb)} throws for ${nm(tgt)}... INTERCEPTED by ${nm(picker)}!`;
+    return { kind: 'pass', yards: 0, carrier: picker, qb, text: how,
       turnover: 'int', returnSpot, returner: picker, highlight: 'turnover', clockStop: true };
   }
-  let text = `${nm(qb)}'s pass for ${nm(tgt)} ${route} falls incomplete`;
-  if (cov != null && chance(g, 0.45)) { st(g, d, cov).pd++; text += `, broken up by ${nm(cov)}`; }
+  let text = `${nm(qb)}'s pass for ${nm(tgt)} ${route} ${tipped ? 'is tipped and' : ''} falls incomplete`.replace('  ', ' ');
+  if (!tipped && cov != null && chance(g, 0.45)) { st(g, d, cov).pd++; text += `, broken up by ${nm(cov)}`; }
   return { kind: 'pass', yards: 0, carrier: qb, qb, text: text + '.', clockStop: true, incomplete: true, cov, air };
 }
 
@@ -1576,8 +1644,9 @@ const SHARE = { bubble: 0.5, stick: 0.8, curl_flat: 0.7, mesh: 0.8, smash: 0.7, 
 function spread(w, kind) {
   const table = kind === 'def' ? DEF_PLAYS : OFF_PLAYS;
   for (const [k, P] of Object.entries(table)) {
-    if (!P.sim || w[P.sim] == null || (kind !== 'def' && P.kind !== kind)) continue;
-    w[k] = w[P.sim] * (SHARE[k] ?? 0.6);
+    const base = P.sim ?? P.like;
+    if (!base || w[base] == null || (kind !== 'def' && P.kind !== kind)) continue;
+    w[k] = w[base] * (SHARE[k] ?? 0.6);
   }
   return w;
 }

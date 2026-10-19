@@ -12,6 +12,14 @@ export const PARITY = {
   coastFrom: 14,    // after halftime, a side leading by more than this eases off...
   coastPerPoint: 0.01, // ...by 1% for each point past it...
   coastMax: 0.15,   // ...up to 15%, so blowouts stay football scores
+  // The chaos floor: things that happen whatever the ratings, so a mismatch is never a sure
+  // thing. Close games barely notice, since their own odds sit above these floors.
+  missedTackle: 0.06, // any ball carrier slips at least this share of first tackles...
+  openField: 0.04,    // ...and breaks into the open field at least this often on a 5+ yard run
+  tipped: 0.015,      // share of throws batted or tipped at the line or the catch point...
+  tippedPick: 0.3,    // ...and the share of those that end up intercepted
+  blown: 0.02,        // share of routes where the coverage is blown and the man is open
+  puntSwing: 0.012,   // share of returnable punts muffed (half) or taken back all the way (half)
 };
 
 // A game's form roll, taken from its seed alone so it never shifts the play-by-play random

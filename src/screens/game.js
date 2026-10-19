@@ -12,7 +12,7 @@ import { P, edgeRow, esc, ovr, sprite, teamBadge, typeChips } from '../ui.js';
 import { adjustHtml, aiFormation, aiFront, callSheet, callSheetHtml, clockRow, formFor, frontFor } from './callsheet.js';
 import { DIFFICULTY, DIFFICULTY_LEVELS, applyDifficulty } from '../difficulty.js';
 import { tendencyLines, typeEdges } from '../scout.js';
-import { L3, afterLivePlay, replayReady, stage, startLive, stopReplay } from './live3d.js';
+import { L3, afterLivePlay, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
 
 // ---------- game ----------
 // A two-player quick game: player one has the home team, player two the away team, and each
@@ -510,8 +510,7 @@ export function startGame(game, meta) {
   // out on the field rather than resolved on the spot.
   const us = game.teams[0].id === (meta?.userTeamId ?? 0) ? 0 : 1;
   game.manual = [us === 0, us === 1]; game.liveKicks = true; S.gameTab = 'log'; S.busy = false; S.subSel = null; S.p2Call = null;
-  L3.lp = null; L3.preview = null; L3.spots = null; L3.pclock = 40; L3.rec = null; L3.paused = false;
-  if (L3.replay) stopReplay();
+  resetBetweenGames();
   // The first game shows the controls once, and so does the first two-player game.
   if (!S.seenHelp || (meta.twoPlayer && !S.seen2p)) { S.helpOpen = true; if (meta.twoPlayer) S.seen2p = true; }
   setScreen('game');
