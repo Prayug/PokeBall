@@ -11,6 +11,7 @@ import { sfx, tickAudio } from './audio.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SPRITE_INDEX } from './sprites3d.js';
 import { PLAYERS } from './ratings.js';
+import { TYPE_COLORS } from './types.js';
 import { absSpot } from './engine.js';
 import { Stadium, HALF_W } from './stadium3d.js';
 import { template, upgradeTemplate, makeFigure, disposeFigure, placeholder, flies } from './figure3d.js';
@@ -500,6 +501,10 @@ export class Stage {
           this.dropFlag(a?.pos ?? this.ball.position);
           break;
         case 'incomplete': if (a) a.act = { kind: 'miss', t0: t, dur: 0.7 }; sfx('groan'); break;
+        case 'typefx': this.typeFx(a, b, e.fx, e.type); break;
+        case 'slip':
+          if (a) { a.flash = 0.25; this.dust(a.pos, 0.5, 0.5); this.dust(a.pos, -0.5, 0.3); }
+          break;
         default: break;
       }
     }
@@ -1100,6 +1105,47 @@ export class Stage {
     this.addFx(ring, 0.45, (u) => { const s = 0.6 + u * 2.4 * size; ring.scale.set(s, s, 1); ring.material.opacity = 0.75 * (1 - u); }, () => ring.material.dispose());
   }
 
+  // Type theater: a contact where the typing showed. Super effective is a big burst in the
+  // attacker's type colour with a shake; not very effective a small dull puff; no effect a pale
+  // ripple. The game's own line for it floats up over the pair.
+  typeFx(a, b, fx, type) {
+    if (!a || !b) return;
+    const at = b.pos.clone().lerp(a.pos, 0.4);
+    const col = TYPE_COLORS[type] ?? '#ffffff';
+    if (fx === 'se') {
+      this.burst(at, col, 1.6); this.burst(at, '#ffffff', 0.9);
+      b.flash = Math.max(b.flash ?? 0, 0.6);
+      this.rig.shake = Math.max(this.rig.shake, 0.28);
+      sfx('super');
+    } else if (fx === 'nve') {
+      this.burst(at, '#9aa3a0', 0.5);
+      sfx('weak');
+    } else {
+      this.burst(at, '#dfe8ff', 0.9);
+      sfx('immune');
+    }
+    this.floatText(at, { se: 'SUPER EFFECTIVE!', nve: 'not very effective...', immune: 'NO EFFECT' }[fx], fx === 'nve' ? '#c9d1ce' : col, fx === 'se' ? 1.6 : 1.1);
+  }
+
+  // A line of text that rises and fades over a spot on the field.
+  floatText(pos, text, color, size = 1) {
+    if (!pos) return;
+    const tex = floatTexture(text, color);
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, fog: false }));
+    m.renderOrder = 20;
+    const h = 0.9 * size;
+    m.scale.set(h * 6, h, 1);
+    const x0 = pos.x, z0 = pos.z;
+    m.position.set(x0, 2.6, z0);
+    const rise = reduceMotion ? 0 : 1.4;
+    this.addFx(m, 1.3, (u) => {
+      m.position.y = 2.6 + u * rise;
+      const pop = reduceMotion ? 1 : u < 0.12 ? 0.6 + (u / 0.12) * 0.5 : 1.1 - Math.min(0.1, (u - 0.12));
+      m.scale.set(h * 6 * pop, h * pop, 1);
+      m.material.opacity = u > 0.7 ? (1 - u) / 0.3 : 1;
+    }, () => { m.material.dispose(); tex.dispose(); });
+  }
+
   dust(pos, vx, vy) {
     if (!pos || reduceMotion) return;
     const m = new THREE.Mesh(DUST_GEO, new THREE.MeshBasicMaterial({ color: '#cfc3a4', transparent: true, depthWrite: false }));
@@ -1277,6 +1323,17 @@ function badgeTexture(label, color, st = null) {
   x.lineWidth = st ? 3 : 4; x.strokeStyle = 'rgba(10,20,15,0.85)'; x.stroke();
   x.fillStyle = '#0d1a14'; x.font = (st ? '700 30px' : '700 36px') + ' "Barlow Condensed", Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
   x.fillText(label, 32, 34);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
+// The floating type-theater line: bold outlined text on a clear background.
+function floatTexture(text, color) {
+  const c = document.createElement('canvas'); c.width = 768; c.height = 128;
+  const x = c.getContext('2d');
+  x.font = 'italic 800 76px "Barlow Condensed", Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.lineJoin = 'round'; x.lineWidth = 12; x.strokeStyle = 'rgba(8,14,12,0.9)';
+  x.strokeText(text, 384, 66, 740);
+  x.fillStyle = color; x.fillText(text, 384, 66, 740);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 

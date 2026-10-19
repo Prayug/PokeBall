@@ -35,6 +35,8 @@ jobs:
         run: node test/formations.mjs
       - name: League mode
         run: node test/league.mjs
+      - name: Abilities, type theater and weather
+        run: node test/abilities.mjs
       - name: Two players in one play
         run: node test/controls.mjs
       - name: Pre-snap adjustments and difficulty
