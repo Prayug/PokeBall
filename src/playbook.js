@@ -24,10 +24,10 @@ export function diagram(g, call, side, form = null) {
   if (side === 'off' && !['run', 'pass'].includes(OFF_PLAYS[call]?.kind)) { svg = kickArt(OFF_PLAYS[call]?.kind, OFF_PLAYS[call]); cache.set(key, svg); return svg; }
   const saved = g.rng;
   // Deep in the opponent's end the routes are cut short; draw them from midfield.
-  const spot = g.spot;
+  const spot = g.spot, call0 = g.call;
   g.spot = 50;
   let lp;
-  try { lp = side === 'off' ? createLivePlay(g, call, 'base', { formation: form }) : createLivePlay(g, 'slant', call, { defFormation: form }); } finally { g.rng = saved; g.spot = spot; }
+  try { lp = side === 'off' ? createLivePlay(g, call, 'base', { formation: form }) : createLivePlay(g, 'slant', call, { defFormation: form }); } finally { g.rng = saved; g.spot = spot; g.call = call0; }
   // Play frame to SVG: downfield is up, the field's width across.
   const X = (p) => (p.y).toFixed(2), Y = (p) => (-p.x).toFixed(2);
   const parts = [];
@@ -109,6 +109,26 @@ export function diagram(g, call, side, form = null) {
 }
 
 function kickArt(kind, P = {}) {
+  // Clock plays: the ball spiked into the turf, or the quarterback down on a knee.
+  if (kind === 'spike' || kind === 'kneel') {
+    const art = kind === 'spike' ? '<path d="M0 2 L0 7.5" stroke="#ffd23f" stroke-width="1.2"/><polygon points="-1.6,6.6 1.6,6.6 0,9" fill="#ffd23f"/><path d="M-3 9.4 L-1.4 8.6 M3 9.4 L1.4 8.6" stroke="#ffffff" stroke-width="0.6"/>'
+      : '<path d="M-2 4 L0 9 L3 9" fill="none" stroke="#ffd23f" stroke-width="1.2"/>';
+    return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>${art}<circle cx="0" cy="${kind === 'spike' ? 0 : 2}" r="1.05" class="o on"/></svg>`;
+  }
+  // After a flag: the yellow flag, with the march off (accept) or crossed out (decline).
+  if (kind === 'penalty') {
+    const flag = '<path d="M-2 8 L-2 -12" stroke="#ffffff" stroke-width="0.7"/><path d="M-2 -12 L7 -9 L-2 -5 Z" fill="#ffd23f"/>';
+    const mark = P.name === 'Accept' ? '<path d="M-14 -16 L14 -16" stroke="#ffd23f" stroke-width="1" stroke-dasharray="2 1"/><polygon points="14,-18 17,-16 14,-14" fill="#ffd23f"/>'
+      : '<path d="M-9 -15 L7 3 M7 -15 L-9 3" stroke="#ff6b6b" stroke-width="1.2"/>';
+    return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>${flag}${mark}</svg>`;
+  }
+  // The try kicks through the uprights; a kickoff flies deep, an onside kick bounces short.
+  if (kind === 'xp') kind = 'fg';
+  if (kind === 'kickoff') {
+    const arc = P.onside ? 'M0 9 Q2 6 4 3 Q6 0 7 -4' : 'M0 9 Q0 -40 0 -24';
+    return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/><line x1="-23" y1="-10" x2="23" y2="-10" class="los" opacity="0.4"/>
+      <path d="${arc}" fill="none" stroke="#ffffff" stroke-width="0.6" stroke-dasharray="1 0.8"/><circle cx="0" cy="9" r="1.05" class="o on"/></svg>`;
+  }
   // Punt: a high arc downfield (a coffin-corner kick angles out short of the goal line).
   // Field goal: the uprights. A fake shows the run or the throw instead, the kick dashed.
   const arc = kind === 'punt' ? (P.aim === 'coffin' ? 'M0 9 Q4 -34 17 -20' : 'M0 9 Q0 -40 0 -24') : 'M0 9 Q0 -30 0 -25';

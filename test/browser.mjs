@@ -31,6 +31,8 @@ await page.waitForTimeout(800);
 await page.click('[data-act="quick"]');
 await page.waitForFunction(() => window.__pb?.stage && window.__pb.L3.flow === 'PLAY_SELECTION', null, { timeout: 90000 });
 await page.evaluate(() => window.__pb.setMode('coach'));
+// A pre-snap flag ends a play before the snap; the flow checks here are about plays that run.
+await page.evaluate(() => { const R = window.__pb.RATES; R.falseStart = 0; R.offside = 0; });
 // The first game opens with the controls card; it pauses play until it is dismissed.
 await page.waitForSelector('#help-ov:not([hidden])', { timeout: 10000 });
 await page.click('[data-act="helpok"]');
@@ -43,7 +45,7 @@ const state = () => page.evaluate(() => {
   if (lp && st) { const w = st.world(lp.ball.x, lp.ball.y); camToBall = Math.hypot(st.rig.look.x - w.x, st.rig.look.z - w.z); }
   return { flow: pb.L3.flow, t: lp?.t ?? null, phase: lp?.phase ?? null, cam: st?.rig.shot ?? null, camToBall,
     banner: document.querySelector('#lower3.on')?.innerText ?? null,
-    downCell: document.querySelector('.bc-down')?.textContent ?? null, down: g.down, toGo: g.toGo, poss: g.poss, score: [...g.score] };
+    downCell: document.querySelector('.bc-down')?.textContent ?? null, down: g.down, toGo: g.toGo, poss: g.poss, score: [...g.score], phase: g.phase ?? 'play' };
 });
 const results = [];
 for (let n = 0; n < plays; n++) {
@@ -103,9 +105,10 @@ for (let n = 0; n < plays; n++) {
   const want = ['PRE_SNAP', 'SNAP', 'LIVE_PLAY', 'PLAY_RESULT', 'RESET_FORMATION', 'PLAY_SELECTION'];
   const seen = r.trace.filter((s) => want.includes(s));
   if (seen.join() !== want.join()) r.problems.push(`flow ${r.trace.join(' > ')}`);
-  // The scoreboard shows the game's down and distance for the next snap.
-  const dn = ['1st', '2nd', '3rd', '4th'][after.down - 1];
-  if (after.downCell && !after.downCell.toLowerCase().includes(dn.toLowerCase())) r.problems.push(`scoreboard says "${after.downCell}" but it is ${dn} down`);
+  // The scoreboard shows the game's down and distance for the next snap (or Try, Kickoff or Flag
+  // between downs).
+  const dn = { pat: 'Try', kickoff: 'Kickoff', penalty: 'Flag' }[after.phase] ?? ['1st', '2nd', '3rd', '4th'][after.down - 1];
+  if (after.downCell && !after.downCell.toLowerCase().includes(dn.toLowerCase())) r.problems.push(`scoreboard says "${after.downCell}" but it should say ${dn}`);
   // Camera: the aim point stays with the ball (deep passes lean ahead of it, so allow room).
   const far = r.samples.filter((s) => s.camToBall != null && s.camToBall > 22);
   if (far.length) r.problems.push(`camera ${far[0].camToBall.toFixed(1)} yd from the ball at t=${far[0].t?.toFixed(2)}`);

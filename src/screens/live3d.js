@@ -1,15 +1,17 @@
 // The live 3D game: the stage, the play flow state machine, the frame loop, keyboard and touch
 // input, the result banner, pause, replay, the controls card and the debug HUD.
-import { DEF_PLAYS, OFF_PLAYS, aiDefenseCall, aiOffenseCall, clockText, downText, runLivePlay, spotText } from '../engine.js';
-import { DT, createLivePlay, hurry, playSeconds, playState, snap, step as stepLive, worldSpots } from '../live.js';
+import { DEF_PLAYS, OFF_PLAYS, clockText, downText, runLivePlay, spotText } from '../engine.js';
+import { DT, createLivePlay, hurry, playSeconds, playState, snap, step as stepLive, swapPads, worldSpots } from '../live.js';
 import { measureVersion } from '../body.js';
+import { RATES } from '../penalties.js';
 import { Stage, webglAvailable } from '../field3d.js';
 import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
 import { S, save, savePrefs, timers } from '../state.js';
 import { esc } from '../ui.js';
-import { autoAdvance, doCall, needsUser, setMode, userSide } from './game.js';
-import { KICK_KEYS, csMove, csTabs, cycleForm } from './callsheet.js';
+import { autoAdvance, doCall, needsUser, playClockOut, setMode, twoPlayer, userSide, userTimeout } from './game.js';
+import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions } from './callsheet.js';
+import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 
 function keysHelp() {
   return `<div class="keygrid">
@@ -25,15 +27,42 @@ function keysHelp() {
     <span><kbd>E</kbd> truck through a tackler</span>
     <span><kbd>R</kbd> spin move</span>
     <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
+    <span>At the line on offense: <kbd>V</kbd> audible, <kbd>B</kbd> hot route, <kbd>N</kbd> motion, then a number to pick</span>
+    <span>At the line on defense: <kbd>V</kbd> shade the coverage, <kbd>B</kbd> show blitz, <kbd>N</kbd> back out</span>
+    <span><kbd>I</kbd> on the play sheet: type edges and their tendencies</span>
+    <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
     <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
+  </div>
+  <h4>Gamepad</h4>
+  <div class="keygrid">
+    <span>Left stick or D-pad: move · <kbd>RT</kbd> sprint · <kbd>A</kbd> snap, juke, dive, go up for the ball</span>
+    <span><kbd>B</kbd> spin · <kbd>X</kbd> truck · <kbd>Y</kbd> switch defender · right stick click: throw it away</span>
+    <span>On a pass, <kbd>A</kbd> <kbd>B</kbd> <kbd>X</kbd> <kbd>Y</kbd> <kbd>RB</kbd> throw to receivers 1-5: tap for touch, hold for a bullet, with <kbd>LB</kbd> held for a lob</span>
+    <span>Between plays the D-pad moves between plays and <kbd>A</kbd> calls one · <kbd>LB</kbd> <kbd>RB</kbd> turn the page · <kbd>B</kbd> change the call · <kbd>Start</kbd> pause or menu · <kbd>Back</kbd> camera</span>
+  </div>
+  <h4>Two players on one screen</h4>
+  <div class="keygrid">
+    <span>Player 1 (home): <kbd>W A S D</kbd> move · <kbd>Left Shift</kbd> sprint · <kbd>Space</kbd> snap, juke, dive · <kbd>E</kbd> truck · <kbd>R</kbd> spin · <kbd>Q</kbd> switch</span>
+    <span>Player 2 (away): arrows move · <kbd>Right Shift</kbd> sprint · <kbd>Enter</kbd> snap, juke, dive · <kbd>L</kbd> truck · <kbd>K</kbd> spin · <kbd>.</kbd> switch</span>
+    <span>Whoever has the ball throws with <kbd>1</kbd>-<kbd>5</kbd> and <kbd>T</kbd>. The offense calls its play first, then the defense, and only the offense can snap.</span>
+    <span>One gamepad plays for player 2; with two, the first is player 1 and the second player 2.</span>
   </div>`;
 }
 
 // ---------- the live 3D game ----------
 export const L3 = { lp: null, off: null, def: null, acc: 0, last: 0, deadT: 0, autoSnap: null, keys: new Set(), edges: new Set(), ev: 0, raf: 0, flashT: 0,
   preview: null, spots: null, pclock: 40, pcKey: null, before: null, state: null, flow: null, flowAt: 0, trace: [], resultUntil: 0, resetUntil: 0,
-  tickerUntil: 0, scoreFlash: [0, 0], committed: null, hold: 0, banner: null };
+  tickerUntil: 0, scoreFlash: [0, 0], committed: null, hold: 0, banner: null,
+  // Player two's keys in a two-player game (the same shape as player one's fields above), and
+  // each player's gamepad stick.
+  p2in: { keys: new Set(), edges: new Set(), hold: null, lob: null, stick: null, padStick: null }, padStick: null, padAt: 0 };
+
+// Player one is the home team (side 0) in a two-player game; player two the away team.
+export function inputFor(ti) { return twoPlayer() && ti === 1 ? L3.p2in : L3; }
+export function clearInput(keys = false) {
+  for (const src of [L3, L3.p2in]) { src.edges.clear(); if (keys) src.keys.clear(); }
+}
 
 // The game flow, one state at a time, each with its own controls, camera and UI:
 //   PLAY_SELECTION   the call sheet is up; the teams stand at the new spot
@@ -50,7 +79,7 @@ function setFlow(st) {
   if (L3.flow === st) return;
   L3.flow = st;
   L3.flowAt = performance.now();
-  L3.edges.clear();
+  clearInput();
   if (st !== 'PRE_SNAP' && st !== 'FORMATION_SETUP') L3.snapWant = false;
   const g = S.game;
   L3.trace.push({ state: st, at: Math.round(performance.now()), clock: g?.clock, poss: g?.poss, down: g?.down, toGo: g?.toGo, spot: g?.spot, score: g ? [...g.score] : null });
@@ -63,8 +92,9 @@ function setFlow(st) {
 const setState = setFlow;
 export let stage = null;
 let stageWrap = null;
-// Hooks for the browser tests (test/browser.mjs): read-only views of the game's state.
-if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug };
+// Hooks for the browser tests (test/browser.mjs): read-only views of the game's state, and the
+// foul rates so a test can force a flag.
+if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug, RATES };
 
 export function ensureStage() {
   if (stage || !webglAvailable()) return;
@@ -143,14 +173,18 @@ export function startLive(off, def, opts) {
   if (L3.replay) stopReplay();
   // The replay recording: the game as it was before the play (its random seed included) and
   // every simulation step's input, so the play can be run again exactly, step for step.
-  L3.rec = { g: structuredClone(g), off, def, opts: { ...opts, from }, log: [], done: false };
-  L3.lp = createLivePlay(g, off, def, { ...opts, from });
+  // Officials on the field: fouls are called as the contact happens (see penalties.js).
+  const o = { flags: true, ...opts, from };
+  L3.rec = { g: structuredClone(g), off, def, opts: o, log: [], done: false };
+  L3.lp = createLivePlay(g, off, def, o);
+  // No huddle: everyone sprints straight to the line.
+  if (opts.hurry) hurry(L3.lp);
   L3.paused = false;
   L3.off = off; L3.def = def; L3.acc = 0; L3.deadT = 0; L3.ev = 0; L3.committed = null;
   L3.autoSnap = opts.autoSnap ?? null;
   L3.pclock = Math.max(L3.pclock, 10);
   L3.edges.clear(); L3.hold = null; L3.lob = null;
-  S.menuOpen = false;
+  S.menuOpen = false; S.psPick = null;
   hideBanner();
   stage.setPlay(L3.lp);
   setFlow(L3.lp.set ? 'PRE_SNAP' : 'FORMATION_SETUP');
@@ -166,7 +200,57 @@ export function doSnap() {
   if (L3.rec) try { L3.rec.atSnap = structuredClone(lp); } catch { L3.rec.atSnap = null; }
   snap(lp);
   L3.autoSnap = null;
+  S.psPick = null;
   render();
+}
+
+// ---------- pre-snap adjustments ----------
+// Audible: the same formation and the same defense, a new call; the players stay where they stand.
+function audible(call) {
+  const lp = L3.lp;
+  if (!lp || lp.phase !== 'pre' || !audibles(lp, call).includes(call)) return;
+  const { from, ...opts } = L3.rec?.opts ?? { userSide: lp.user };
+  void from;
+  L3.spots = worldSpots(lp); L3.preview = null; L3.lp = null;
+  startLive(call, L3.def, { ...opts, formation: lp.formation, defFormation: lp.defFormation });
+  flash(`Audible: ${OFF_PLAYS[call].name}`);
+}
+// One adjustment from the buttons or the keys: open a picker (audible, hot route, motion), take
+// a choice from it, or change the defense's look.
+export function presnapAct(act, arg) {
+  const lp = L3.lp;
+  if (!lp || lp.phase !== 'pre' || S.coachDown || lp.user == null) return;
+  if (!lp.set && act !== 'open') { flash('Wait until everyone is set', 'muted'); return; }
+  const mine = lp.user === lp.o;
+  let ok = true, msg = '';
+  switch (act) {
+    case 'open': if (mine) S.psPick = S.psPick?.kind === arg ? null : { kind: arg }; break;
+    case 'aud': S.psPick = null; audible(arg); return;
+    case 'hotpick': S.psPick = { kind: 'hot', slot: arg }; break;
+    case 'hot': ok = hotRoute(lp, S.psPick?.slot, arg); msg = `Hot route: ${S.psPick?.slot} ${arg}`; S.psPick = null; break;
+    case 'motion': ok = startMotion(lp, arg); msg = `${arg} in motion`; S.psPick = null; break;
+    case 'shade': ok = cycleShade(lp); msg = `Shade: ${SHADES.find(([k]) => k === (lp.shade ?? null))[1]}`; break;
+    case 'show': ok = setDisguise(lp, 'show'); msg = lp.disguise === 'show' ? 'Showing blitz' : 'Blitz look off'; break;
+    case 'back': ok = setDisguise(lp, 'back'); msg = lp.disguise === 'back' ? 'Backed out' : 'Blitz look back'; break;
+    default: return;
+  }
+  if (msg) flash(ok ? msg : 'Not on this play', ok ? '' : 'muted');
+  stage?.drawArt?.();
+  render();
+}
+// The keys at the line: V, B and N, and a number for the open picker.
+function presnapKey(code) {
+  const lp = L3.lp;
+  const mine = lp.user === lp.o;
+  const keys = { KeyV: mine ? ['open', 'audible'] : ['shade'], KeyB: mine ? ['open', 'hot'] : ['show'], KeyN: mine ? ['open', 'motion'] : ['back'] };
+  if (keys[code]) { presnapAct(...keys[code]); return true; }
+  const n = /^Digit([1-9])$/.exec(code);
+  if (n && S.psPick) {
+    const o = psOptions(lp)[Number(n[1]) - 1];
+    if (o && !o.off) presnapAct(o.act, o.arg);
+    return true;
+  }
+  return false;
 }
 
 // The whistle has blown: the game takes the result now (score, down and distance, possession,
@@ -228,7 +312,7 @@ function resultBanner(e, lp, before) {
   const how = lp?.end?.how;
   const yd = e.yards ?? 0;
   const kickKind = lp?.kick ? lp.kind : ['punt', 'fg'].includes(OFF_PLAYS[e.off]?.kind) && !OFF_PLAYS[e.off]?.fake ? OFF_PLAYS[e.off].kind : null;
-  const yds = how === 'incomplete' || e.kind === 'punt' || e.kind === 'fg' || kickKind ? '' : yd === 0 ? 'No gain' : `${yd > 0 ? '+' : '−'}${Math.abs(yd)} yd${Math.abs(yd) === 1 ? '' : 's'}`;
+  const yds = how === 'incomplete' || e.kind === 'punt' || e.kind === 'fg' || kickKind || e.head || e.conversion ? '' : yd === 0 ? 'No gain' : `${yd > 0 ? '+' : '−'}${Math.abs(yd)} yd${Math.abs(yd) === 1 ? '' : 's'}`;
   const changed = g.poss !== b.poss && !g.final;
   let head = '', tone = '';
   const td = e.highlight === 'td' || (e.kind === 'score' && before && g.score.some((v, i) => v - before.score[i] >= 6));
@@ -246,10 +330,16 @@ function resultBanner(e, lp, before) {
   else if (!changed && g.down === 1 && b.down >= 1 && yd > 0) { head = 'First down'; tone = 'big'; }
   else if (how === 'out') head = 'Out of bounds';
   else head = yd < 0 ? 'Loss' : 'Tackle';
-  // Why it happened, when a Pokémon's type, ability or size decided part of the play.
-  const notes = (lp?.notes ?? []).filter((n) => n.kind === 'type' || n.kind === 'ability' || n.kind === 'size').slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
-  const next = g.final ? 'Final' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
-  const clock = e.clockStop && !td ? 'Clock stopped' : '';
+  // The engine names some results itself: the try, kickoffs, the clock (quarter ends, the
+  // two-minute warning, timeouts).
+  if (e.head) {
+    head = e.head;
+    tone = e.highlight === 'miss' ? 'to' : e.kind === 'score' ? 'td' : e.highlight === 'turnover' ? 'to' : e.kind === 'quarter' || e.kind === 'info' || e.kind === 'timeout' ? 'muted' : e.highlight === 'flag' ? 'flag' : '';
+  }
+  // Why it happened, when a Pokémon's type, ability or size, or the weather, decided part of the play.
+  const notes = (lp?.notes ?? []).filter((n) => ['type', 'ability', 'size', 'weather'].includes(n.kind)).slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
+  const next = g.final ? 'Final' : g.phase === 'penalty' ? 'Accept or decline the penalty' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
+  const clock = !g.final && g.phase === 'play' && !changed && !td && e.down ? (g.clockRunning ? '' : 'Clock stopped') : '';
   return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed };
 }
 function showBanner(B) {
@@ -259,22 +349,12 @@ function showBanner(B) {
   L3.banner = B;
   el.className = `lower3 on ${B.tone}${B.possession ? ' poss' : ''}`;
   el.innerHTML = `<div class="l3-head"><b>${esc(B.head)}</b>${B.yds ? `<span class="l3-yds">${esc(B.yds)}</span>` : ''}${B.clock ? `<span class="l3-clock">${B.clock}</span>` : ''}</div>
-    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}<p class="l3-next">${esc(B.next)}</p>`;
+    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size', weather: 'Weather' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}<p class="l3-next">${esc(B.next)}</p>`;
 }
 function hideBanner(after = 0) {
   clearTimeout(timers.banner);
   const go = () => { const el = document.getElementById('lower3'); if (el) el.className = 'lower3'; L3.banner = null; };
   if (after) timers.banner = setTimeout(go, after); else go();
-}
-
-// The play clock ran out on the call sheet: the sideline calls the play for you (the same call
-// the AI would make for your side), and the snap then has what is left of the play clock.
-function playClockCall(g) {
-  const call = g.poss === userSide() ? aiOffenseCall(g) : aiDefenseCall(g);
-  const name = (OFF_PLAYS[call] ?? DEF_PLAYS[call])?.name ?? call;
-  doCall(call);
-  if (!L3.lp && !L3.resultUntil) L3.pclock = 40;
-  flash(`Play clock: ${name}`, 'muted');
 }
 
 function flash(text, tone = '') {
@@ -285,10 +365,11 @@ function flash(text, tone = '') {
   L3.flashT = performance.now() + 1200;
 }
 
-function readInput(lp) {
-  const k = L3.keys, e = L3.edges;
-  const up = (k.has('ArrowUp') || k.has('KeyW') ? 1 : 0) - (k.has('ArrowDown') || k.has('KeyS') ? 1 : 0) + (L3.stick?.up ?? 0);
-  const right = (k.has('ArrowRight') || k.has('KeyD') ? 1 : 0) - (k.has('ArrowLeft') || k.has('KeyA') ? 1 : 0) + (L3.stick?.right ?? 0);
+// One player's input for a step: from L3 (player one) or L3.p2in (player two).
+function readInput(lp, src = L3) {
+  const k = src.keys, e = src.edges;
+  const up = (k.has('ArrowUp') || k.has('KeyW') ? 1 : 0) - (k.has('ArrowDown') || k.has('KeyS') ? 1 : 0) + (src.stick?.up ?? 0) + (src.padStick?.up ?? 0);
+  const right = (k.has('ArrowRight') || k.has('KeyD') ? 1 : 0) - (k.has('ArrowLeft') || k.has('KeyA') ? 1 : 0) + (src.stick?.right ?? 0) + (src.padStick?.right ?? 0);
   const m = stage.toPlayFrame(up, right);
   // Throws: tap a receiver's number for a touch pass, hold it for a bullet, Shift with it for a
   // lob. The stick at release places the ball.
@@ -296,13 +377,13 @@ function readInput(lp) {
   const pressed = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].find((d) => e.has(d));
   let throwKey = null, throwType = null;
   if (pressed) {
-    if (shift || L3.lob === pressed) { throwKey = pressed; throwType = 'lob'; L3.hold = null; L3.lob = null; }
-    else L3.hold = { key: pressed, t0: performance.now() };
+    if (shift || src.lob === pressed) { throwKey = pressed; throwType = 'lob'; src.hold = null; src.lob = null; }
+    else src.hold = { key: pressed, t0: performance.now() };
   }
-  if (L3.hold && !throwKey) {
-    const held = performance.now() - L3.hold.t0;
-    if (!k.has(L3.hold.key)) { throwKey = L3.hold.key; throwType = 'touch'; L3.hold = null; }
-    else if (held >= 220) { throwKey = L3.hold.key; throwType = 'bullet'; L3.hold = null; }
+  if (src.hold && !throwKey) {
+    const held = performance.now() - src.hold.t0;
+    if (!k.has(src.hold.key)) { throwKey = src.hold.key; throwType = 'touch'; src.hold = null; }
+    else if (held >= 220) { throwKey = src.hold.key; throwType = 'bullet'; src.hold = null; }
   }
   const inp = {
     mx: m.mx, my: m.my, sprint: shift && !throwKey,
@@ -314,22 +395,50 @@ function readInput(lp) {
   return inp;
 }
 
-// The one line of controls for the moment, at the bottom of the screen.
+// The one line of controls for the moment, at the bottom of the screen (a line per player in a
+// two-player game, each with that player's own keys or gamepad buttons).
+const KEY_NAMES = {
+  p1: { Arrows: 'WASD', arrows: 'WASD', Shift: 'Left Shift' },
+  p2: { Space: 'Enter', Shift: 'Right Shift', Q: '.', R: 'K', E: 'L' },
+  pad: { Space: 'A', Arrows: 'Stick', arrows: 'stick', Shift: 'RT', Q: 'Y', R: 'B', E: 'X', T: 'RS', '1-5': 'A B X Y RB', Esc: 'B' },
+};
+// A lob is either Shift on the keyboard (LB on a pad); only the sprint has a side.
+const renameKeys = (t, names) => t.replace(/\b(Space|Esc|Shift|Arrows|arrows|Q|R|E|T|1-5)\b( lob)?/g, (m, k, lob) => (lob ? (names === KEY_NAMES.pad ? 'LB lob' : m) : names[k] ?? k));
+function tipText(lp) {
+  if (!twoPlayer() || !lp?.p2) {
+    const t = hudTip(lp);
+    return padRecent(0) ? renameKeys(t, KEY_NAMES.pad) : t;
+  }
+  const g = S.game, line = (n, t) => (t ? `P${n + 1} ${g.teams[n].abbr} · ${renameKeys(t, padRecent(n) ? KEY_NAMES.pad : KEY_NAMES[`p${n + 1}`])}` : '');
+  const t1 = hudTip(lp);
+  swapPads(lp);
+  let t2;
+  try { t2 = hudTip(lp); } finally { swapPads(lp); }
+  return [line(0, t1), line(1, t2)].filter(Boolean).join('\n');
+}
+// Has this player used a gamepad in the last few seconds (its buttons go in the tips)?
+function padRecent(n) { return performance.now() - ((n === 0 ? L3 : L3.p2in).padAt ?? 0) < 8000; }
 function hudTip(lp) {
   const f = L3.flow;
-  if (!lp) return f === 'PLAY_SELECTION' && S.game && !S.game.final && needsUser(S.game) && !S.busy ? 'Pick a play · number keys · ← → categories' : '';
+  if (!lp) {
+    if (!(f === 'PLAY_SELECTION' && S.game && !S.game.final && needsUser(S.game) && !S.busy)) return '';
+    if (twoPlayer()) { const s = userSide(); return `Player ${s + 1} (${S.game.teams[s].abbr}): call your ${S.game.poss === s ? 'offense' : 'defense'} · number keys · ← → categories`; }
+    return padRecent(0) ? 'Pick a play · D-pad and A · LB RB categories' : 'Pick a play · number keys · ← → categories';
+  }
   const c = lp.control;
+  // Two players: the defense waits for the offense to snap.
+  if (lp.p2 && lp.phase === 'pre' && lp.user === lp.d) return lp.kick ? (c && c === lp.kick.returner ? 'You are back to return it' : '') : 'Q pick a defender · the offense snaps';
   if (f === 'FORMATION_SETUP') return 'Lining up…';
   if (lp.kick) {
-    if (lp.phase === 'pre') return lp.user === lp.o ? 'Space snap · the kick goes on its own · Esc change call' : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
+    if (lp.phase === 'pre') return lp.user === lp.o ? `Space ${lp.kick.ko ? 'kick off' : 'snap'} · the kick goes on its own · Esc change call` : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
     if (lp.phase === 'dead') return '';
     if (c && c === lp.kick.returner && !c.carrier) return 'Get under it · arrows move · Shift sprint';
     if (c && !c.carrier && c.side === 'off') return 'Cover the kick · arrows move · Shift sprint · Space dive';
-    if (!c) return lp.kick.kickedAt != null ? 'Kick away' : 'The long snap…';
+    if (!c) return lp.kick.kickedAt != null ? 'Kick away' : lp.kick.ko ? 'The kicker runs up…' : 'The long snap…';
   }
   if (lp.phase === 'pre') {
     if (!c) return 'Coach mode · Space to snap now · Esc to change the call';
-    return lp.user === lp.o ? `Space snap${lp.kind === 'pass' ? ' · then 1-5 throw' : ''} · Esc change call` : 'Space start · Q pick a defender';
+    return lp.user === lp.o ? `Space snap${lp.kind === 'pass' ? ' · then 1-5 throw' : ''} · V audible · B hot route · N motion · Esc change call` : 'Space start · Q pick a defender · V shade · B show blitz · N back out';
   }
   if (lp.phase === 'dead') return '';
   if (!c) return 'Watching the AI run your call';
@@ -375,15 +484,18 @@ function loop(now) {
       // Snap only once set, and only on a press made in this state (no carried-over keys).
       // A press while the line is still settling is kept and snaps the moment it is set.
       const ready = lp.set && now - L3.flowAt > 250;
-      if (L3.edges.has('Space')) { L3.snapWant = true; if (!lp.set) hurry(lp); }
-      if (L3.snapWant && ready) { L3.edges.clear(); L3.snapWant = false; doSnap(); }
-      else if (L3.edges.has('KeyQ') || L3.edges.has('Tab')) {
-        L3.edges.clear();
-        if (lp.user === lp.d && lp.control) {
+      // Two players: only the offense snaps, and the defense picks its man with its own key.
+      const offIn = lp.p2 ? inputFor(lp.o) : L3, defIn = lp.p2 ? inputFor(lp.d) : L3;
+      if (offIn.edges.has('Space')) { L3.snapWant = true; if (!lp.set) hurry(lp); }
+      if (L3.snapWant && ready) { clearInput(); L3.snapWant = false; doSnap(); }
+      else if (defIn.edges.has('KeyQ') || defIn.edges.has('Tab')) {
+        clearInput();
+        const pad = lp.user === lp.d ? lp : lp.p2?.user === lp.d ? lp.p2 : null;
+        if (pad?.control) {
           const order = ['MLB', 'OLB', 'SS', 'FS', 'CB1', 'CB2', 'CB3', 'LE', 'DE', 'DT1', 'DT2'].map((k) => lp.def[k]).filter(Boolean);
-          lp.control = order[(order.indexOf(lp.control) + 1) % order.length];
+          pad.control = order[(order.indexOf(pad.control) + 1) % order.length];
         }
-      } else L3.edges.clear();
+      } else clearInput();
       if (L3.autoSnap != null && lp.set) { L3.autoSnap -= dt; if (L3.autoSnap <= 0) doSnap(); }
       // Play clock: when it runs out on a lined-up play, the ball is snapped.
       if (lp.set && L3.autoSnap == null) { L3.pclock = Math.max(0, L3.pclock - dt); if (L3.pclock <= 0) doSnap(); }
@@ -391,6 +503,7 @@ function loop(now) {
       L3.acc += dt;
       while (L3.acc >= DT) {
         const inp = lp.phase === 'live' ? readInput(lp) : null;
+        if (inp && lp.p2) inp.p2 = readInput(lp, L3.p2in);
         stepLive(lp, inp);
         L3.rec?.log.push(inp);
         L3.acc -= DT;
@@ -432,9 +545,11 @@ function loop(now) {
       showPreview();
       if (L3.preview) { L3.preview.mv = mv; L3.preview.rebuilt = now; }
     }
-    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && L3.flow === 'PLAY_SELECTION') {
+    // The play clock runs while the call is yours; at :00 it is a delay of game on offense, or
+    // the fitting call is made for you (see playClockOut).
+    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && !S.menuOpen && !L3.replay && L3.flow === 'PLAY_SELECTION') {
       L3.pclock = Math.max(0, L3.pclock - dt);
-      if (L3.pclock <= 0) playClockCall(g);
+      if (L3.pclock <= 0) { L3.pclock = 40; playClockOut(); }
     }
   }
   if (g && !g.final) setFlow(flowNow(now));
@@ -453,10 +568,10 @@ function loop(now) {
     if (pc.textContent !== txt) { pc.textContent = txt; pc.classList.toggle('low', L3.pclock <= 5); }
   }
   const tip = document.getElementById('hud-tip');
-  const t = hudTip(L3.lp);
+  const t = tipText(L3.lp);
   if (tip && tip.textContent !== t) tip.textContent = t;
   const call = document.getElementById('hud-call');
-  const ct = L3.lp && L3.lp.phase === 'live' ? `${OFF_PLAYS[L3.off].name} vs ${DEF_PLAYS[L3.def].name}` : '';
+  const ct = L3.lp && L3.lp.phase === 'live' && !L3.lp.p2 ? `${OFF_PLAYS[L3.off].name} vs ${DEF_PLAYS[L3.def].name}` : '';
   if (call && call.textContent !== ct) call.textContent = ct;
   if (L3.flashT && now > L3.flashT) { L3.flashT = 0; const f = document.getElementById('hud-flash'); if (f) f.className = 'hud-flash'; }
   syncOverlays();
@@ -467,10 +582,10 @@ function loop(now) {
 // ---------- pause, replay and the controls card ----------
 function endKey(lp) { return `${lp.end?.how ?? lp.phase}@${(lp.spotX ?? lp.ball.x).toFixed(2)},${lp.ball.y.toFixed(2)}`; }
 function isPaused() { return !!L3.lp && L3.lp.phase !== 'dead' && (L3.paused || S.helpOpen || (S.menuOpen && L3.lp.phase === 'live')); }
-function togglePause() {
+export function togglePause() {
   if (!L3.lp || L3.lp.phase === 'dead') return;
   L3.paused = !L3.paused;
-  L3.keys.clear(); L3.edges.clear();
+  clearInput(true);
 }
 export function replayReady() { return !!(stage && L3.rec?.done && !L3.lp && !L3.replay && L3.rec.log.some((e) => e?.snap)); }
 export function startReplay() {
@@ -543,11 +658,12 @@ function debugHud() {
 // Back to the call sheet from a lined-up play; the players stay where they are.
 export function recall() {
   if (L3.lp?.phase !== 'pre') return;
+  S.psPick = null;
   L3.spots = worldSpots(L3.lp); L3.preview = null; L3.lp = null;
   render();
 }
 
-function cycleCamera() {
+export function cycleCamera() {
   const i = CAMERA_MODES.findIndex(([k]) => k === S.cam);
   setCamera(CAMERA_MODES[(i + 1) % CAMERA_MODES.length][0]);
   flash(CAMERA_MODES.find(([k]) => k === S.cam)[1], 'muted');
@@ -563,7 +679,7 @@ export function setCamera(k) { S.cam = k; stage?.setCameraMode(k); savePrefs(); 
 export function onKey(e, down) {
   // A release always counts, whatever is on screen: a key let go between plays (the dive held
   // through the whistle) would otherwise stay "held" and its next press would never register.
-  if (!down) L3.keys.delete(e.code);
+  if (!down) { L3.keys.delete(e.code); L3.p2in.keys.delete(P2_KEYS[e.code] ?? e.code); }
   if (S.screen !== 'game' || !stage || !S.game) return;
   if (e.target.closest?.('input, select, textarea')) return;
   const code = e.code;
@@ -573,6 +689,9 @@ export function onKey(e, down) {
       return;
     }
     if (code === 'Slash') { e.preventDefault(); S.helpOpen = true; syncOverlays(); return; }
+    if (code === 'Escape' && S.psPick) { e.preventDefault(); S.psPick = null; render(); return; }
+    if (L3.lp?.phase === 'pre' && !S.coachDown && L3.lp.user != null && !L3.lp.kick && presnapKey(code)) { e.preventDefault(); return; }
+    if (code === 'KeyI' && !L3.lp) { e.preventDefault(); S.csScout = !S.csScout; S.csFold = false; render(); return; }
     if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
     // P pauses a play on the field; between plays it falls through to the call sheet (Punt).
@@ -581,6 +700,7 @@ export function onKey(e, down) {
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
     if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; render(); return; }
+    if (code === 'KeyT' && !L3.lp && !L3.replay) { e.preventDefault(); userTimeout(); return; }
     if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
     if (code === 'Escape') {
       if (S.menuOpen) { S.menuOpen = false; render(); return; }
@@ -600,15 +720,31 @@ export function onKey(e, down) {
       if (code === 'KeyZ') { e.preventDefault(); cycleForm(g.poss === userSide()); return; }
     }
   }
+  const two = twoPlayer();
   const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'Tab',
-    'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(code);
+    'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(code) || (two && !!P2_KEYS[code]);
   if (!game) return;
   if (isPaused()) { e.preventDefault(); return; }
   if (!L3.lp) { if (code === 'Space' && down && e.target === document.body) e.preventDefault(); return; }
   e.preventDefault();
-  if (down) { if (!L3.keys.has(code) || !e.repeat) L3.edges.add(code); L3.keys.add(code); }
+  // Two players: player two's keys go to their own input as player one's codes; the throw keys
+  // belong to whoever has the ball.
+  let src = L3, v = code;
+  if (two && P2_KEYS[code]) { src = L3.p2in; v = P2_KEYS[code]; }
+  else if (two && (/^Digit[1-5]$/.test(code) || code === 'KeyT')) src = inputFor(L3.lp.o);
+  if (down) { if (!src.keys.has(v) || !e.repeat) src.edges.add(v); src.keys.add(v); }
   // Shift held as a number goes down: a lob (remembered, in case Shift is let go first).
-  if (down && code.startsWith('Digit') && e.shiftKey) L3.lob = code;
+  if (down && v.startsWith('Digit') && e.shiftKey) src.lob = v;
+}
+// Player two's keys in a two-player game, as the player-one codes the input reader knows.
+const P2_KEYS = { ArrowUp: 'KeyW', ArrowDown: 'KeyS', ArrowLeft: 'KeyA', ArrowRight: 'KeyD', Enter: 'Space', NumpadEnter: 'Space', ShiftRight: 'ShiftLeft',
+  Period: 'KeyQ', KeyL: 'KeyE', KeyK: 'KeyR' };
+
+// A gamepad button or stick for one player, as the key code it stands for (see screens/pad.js).
+export function padKey(src, v, down) {
+  if (!down) { src.keys.delete(v); return; }
+  if (!L3.lp || isPaused()) return;
+  src.edges.add(v); src.keys.add(v);
 }
 
 function bindTouch(root) {

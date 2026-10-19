@@ -31,6 +31,16 @@ export function edgeRow(e) {
     <span class="eside"><span class="slot">${thSlot}</span>${sprite(thId, 'xs')}<span class="en">${esc(P(thId).name)}</span>${tag(thMult)}</span></li>`;
 }
 
+// A kicker or punter from kickingUnit(): sprite, name, rating and range.
+export function kickerHtml(k) {
+  return k ? `${sprite(k.id, 'xs')}<span>${esc(P(k.id).name)}</span> ${ovr(k.ovr)} <span class="small muted krange">${k.range}-yd range</span>` : '<span class="muted">None</span>';
+}
+export function punterHtml(p) {
+  return p ? `${sprite(p.id, 'xs')}<span>${esc(P(p.id).name)}</span> ${ovr(p.ovr)} <span class="small muted krange">about ${p.net} yds a punt</span>` : '<span class="muted">None</span>';
+}
+// Where a field goal range starts: the yard line of the snap, a 17-yard kick shorter.
+export const rangeLine = (range) => Math.max(1, range - 17);
+
 export function download(name, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const a = document.createElement('a');
