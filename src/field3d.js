@@ -111,6 +111,11 @@ export class Stage {
     this.selRing.rotation.x = -Math.PI / 2; this.selRing.renderOrder = 3; S.add(this.selRing);
     this.selArrow = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 3), new THREE.MeshBasicMaterial({ color: '#ffe14d', fog: false }));
     this.selArrow.rotation.x = Math.PI; S.add(this.selArrow);
+    // Player two's marker in a two-player game, in a second color.
+    this.selRing2 = new THREE.Mesh(this.selRing.geometry, new THREE.MeshBasicMaterial({ color: '#5fd4ff', transparent: true, opacity: 0.95, depthWrite: false, fog: false }));
+    this.selRing2.rotation.x = -Math.PI / 2; this.selRing2.renderOrder = 3; S.add(this.selRing2);
+    this.selArrow2 = new THREE.Mesh(this.selArrow.geometry, new THREE.MeshBasicMaterial({ color: '#5fd4ff', fog: false }));
+    this.selArrow2.rotation.x = Math.PI; S.add(this.selArrow2);
     this.carryRing = new THREE.Mesh(new THREE.RingGeometry(0.8, 1.25, 48), new THREE.MeshBasicMaterial({ map: haloTexture(), color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false, fog: false }));
     this.carryRing.rotation.x = -Math.PI / 2; this.carryRing.renderOrder = 3; S.add(this.carryRing);
     // Landing spot of a pass and its flight path.
@@ -212,7 +217,7 @@ export class Stage {
 
   // ---------- play ----------
   setPlay(lp) {
-    if (lp !== this.lp) { this.evSeen = 0; this.celebrate = 0; this.releasePos = null; this.airOff = null; }
+    if (lp !== this.lp) { this.evSeen = 0; this.celebrate = 0; this.releasePos = null; this.airOff = null; this.clearFlags(); }
     this.lp = lp;
     if (!lp) return;
     const g = lp.g;
@@ -386,7 +391,8 @@ export class Stage {
     const G = this.art;
     while (G.children.length) { const c = G.children.pop(); c.geometry.dispose(); c.material.dispose(); }
     const lp = this.lp;
-    if (!lp || lp.preview || lp.user == null) return;
+    // Two players share the screen: the offense's routes would give the play away.
+    if (!lp || lp.preview || lp.user == null || lp.p2) return;
     const W = (x, y) => this.world(x, y, 0.05);
     // Every mark is a bright stroke on a dark edge, so it reads on the green from any camera.
     const add = (pts, width, color, opacity, end) => {
@@ -489,6 +495,11 @@ export class Stage {
           this.rig.shake = Math.max(this.rig.shake, e.kind === 'sack' ? 0.22 : 0.1);
           if (e.kind === 'sack') { this.stadium.cheer(0.6); sfx('bighit'); }
           break;
+        case 'flag':
+          // An official's yellow flag lands by the foul and stays down until the next play.
+          sfx('whistle');
+          this.dropFlag(a?.pos ?? this.ball.position);
+          break;
         case 'incomplete': if (a) a.act = { kind: 'miss', t0: t, dur: 0.7 }; sfx('groan'); break;
         case 'typefx': this.typeFx(a, b, e.fx, e.type); break;
         case 'slip':
@@ -559,7 +570,7 @@ export class Stage {
       if (a.fig) a.anim.update(dt, s);
       if (a.fig?.model) this.modelClip(a, s, dt);
       // Sprinting (the player you control, or the ball carrier): turf kicked up behind.
-      if (s.sprint && a.anim.moving && (p === lp.control || p === lp.carrier) && lp.phase === 'live') {
+      if (s.sprint && a.anim.moving && (p === lp.control || p === lp.p2?.control || p === lp.carrier) && lp.phase === 'live') {
         a.dustT = (a.dustT ?? 0) - dt;
         if (a.dustT <= 0) { a.dustT = 0.07; this.dust(a.pos, p.vx * this.dir, p.vy * this.dir); }
       }
@@ -590,7 +601,7 @@ export class Stage {
         a.tag.scale.set(ts * 2.3, ts, 1);
       }
       // Team rings on the turf: before the snap, in the tactical view, or always if chosen.
-      a.base.visible = !!a.fig && (pre || tactical || this.showPips) && !(lp.phase === 'dead' && a.fallWant) && lp.control !== p;
+      a.base.visible = !!a.fig && (pre || tactical || this.showPips) && !(lp.phase === 'dead' && a.fallWant) && lp.control !== p && lp.p2?.control !== p;
       if (a.base.visible) { a.base.position.set(a.pos.x, 0.035, a.pos.z); a.base.scale.setScalar(a.body.r * 1.55); a.base.material.opacity = pre ? 0.6 : 0.4; }
       a.blob.position.set(a.pos.x, 0.02, a.pos.z);
       const sh = 1 / (1 + lift * 0.9);
@@ -834,6 +845,17 @@ export class Stage {
       this.selArrow.position.set(sel.pos.x, h + 0.75 + Math.sin(now / 180) * 0.1, sel.pos.z);
       this.selArrow.rotation.y += dt * 2.5;
     }
+    const c2 = lp.p2?.control;
+    const sel2 = c2 && lp.phase !== 'dead' && !lp.preview ? this.actorOf(c2) : null;
+    this.selRing2.visible = this.selArrow2.visible = !!sel2;
+    if (sel2) {
+      const k = 1 + Math.sin(now / 220 + 1.5) * 0.05;
+      this.selRing2.position.set(sel2.pos.x, 0.045, sel2.pos.z);
+      this.selRing2.scale.setScalar(sel2.body.r * 1.75 * k);
+      const h = (sel2.fig?.template.height ?? 2) + (sel2.fig ? sel2.anim.lift : 0);
+      this.selArrow2.position.set(sel2.pos.x, h + 0.75 + Math.sin(now / 180 + 1.5) * 0.1, sel2.pos.z);
+      this.selArrow2.rotation.y += dt * 2.5;
+    }
     const holder = lp.ball.state === 'held' && lp.phase === 'live' ? this.actorOf(lp.ball.holder) : null;
     const showCarry = holder && !(lp.kind === 'pass' && lp.ball.holder === lp.off.QB && !lp.thrown && lp.qbState !== 'run');
     this.carryRing.visible = !!showCarry;
@@ -841,7 +863,7 @@ export class Stage {
     // The quarterback before the snap; the football over the carrier once the play is on.
     const top = (a) => (a.fig?.template.height ?? a.body.height) + Math.max(0, a.fig ? a.anim.lift : 0);
     const qbA = lp.phase === 'pre' ? this.actorOf(lp.off.QB) : null;
-    this.qbMark.visible = !!qbA?.fig && sel !== qbA;
+    this.qbMark.visible = !!qbA?.fig && sel !== qbA && sel2 !== qbA;
     if (this.qbMark.visible) {
       this.qbMark.position.set(qbA.pos.x, top(qbA) + 0.3, qbA.pos.z);
       const s = clampN(this.camera.position.distanceTo(this.qbMark.position) * 0.022, 0.5, 1.1);
@@ -853,7 +875,7 @@ export class Stage {
       const s = clampN(this.camera.position.distanceTo(this.ballMark.position) * 0.024, 0.55, 1.2);
       this.ballMark.scale.set(s * 1.5, s, 1);
     }
-    const icons = !lp.preview && lp.user === lp.o && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run' && lp.phase !== 'dead';
+    const icons = !lp.preview && (lp.user === lp.o || lp.p2?.user === lp.o) && lp.kind === 'pass' && !lp.thrown && lp.qbState !== 'run' && lp.phase !== 'dead';
     for (const [k, sp] of Object.entries(this.icons)) {
       const p = lp.off[k];
       sp.visible = !!(icons && p && p.role === 'route');
@@ -928,7 +950,8 @@ export class Stage {
     };
     const near = (c, R, clampX = null) => { for (const p of lp.players) if (Math.hypot(p.x - c.x, p.y - c.y) < R) body(p, clampX); };
     // Who the player-focus view follows: your Pokémon, else the ball carrier, else the passer.
-    const ctl = lp.control ?? (lp.carrierSet ? lp.carrier : null) ?? lp.ball.holder ?? lp.off.QB;
+    // With two players on one screen it follows the ball instead.
+    const ctl = (lp.p2 ? null : lp.control) ?? (lp.carrierSet ? lp.carrier : null) ?? lp.ball.holder ?? lp.off.QB;
     const ca = this.actorOf(ctl);
     f.control = ca ? f.ctl.copy(ca.pos) : null;
     f.controlDir = ctl && ctl.side === 'def' ? -this.dir : this.dir;
@@ -983,7 +1006,7 @@ export class Stage {
       if (u < 0.3) near({ x: T.sx, y: T.sy }, 4);
       f.shot = 'pass';
       set('PASS_FLIGHT');
-    } else if (lp.kick && !lp.carrierSet && b.state === 'loose') {
+    } else if (lp.kick && !lp.carrierSet && (b.state === 'loose' || b.state === 'onside')) {
       this.world(b.x, b.y, 0, f.focus);
       pt(f.focus.x, 0, f.focus.z);
       near(b, 8);
@@ -1048,6 +1071,31 @@ export class Stage {
     this.scene.add(obj);
     this.fx.push({ obj, t0: performance.now() / 1000, dur, update, dispose });
     if (this.fx.length > 140) { const f = this.fx.shift(); this.scene.remove(f.obj); f.dispose?.(); }
+  }
+
+  // A penalty flag tossed onto the turf at pos: it flutters down, then lies there.
+  dropFlag(pos) {
+    if (!pos) return;
+    const m = new THREE.Mesh(FLAG_GEO, new THREE.MeshBasicMaterial({ color: '#ffd23f', side: THREE.DoubleSide }));
+    const x = pos.x + 0.8, z = pos.z + 0.6;
+    m.position.set(x, reduceMotion ? 0.05 : 3, z);
+    m.rotation.set(-Math.PI / 2, 0, Math.random() * Math.PI);
+    this.scene.add(m);
+    (this.flags ??= []).push(m);
+    if (reduceMotion) return;
+    const t0 = performance.now();
+    const fall = () => {
+      if (!m.parent) return;
+      const u = Math.min(1, (performance.now() - t0) / 700);
+      m.position.y = 0.05 + (1 - u) * (1 - u) * 3;
+      m.rotation.z += 0.12 * (1 - u);
+      if (u < 1) requestAnimationFrame(fall);
+    };
+    requestAnimationFrame(fall);
+  }
+  clearFlags() {
+    for (const m of this.flags ?? []) { this.scene.remove(m); m.material.dispose(); }
+    this.flags = [];
   }
 
   burst(pos, color, size) {
@@ -1220,6 +1268,7 @@ const BASE_DEF_GEO = (() => {
   return mergeGeometries(parts);
 })();
 const BURST_GEO = new THREE.RingGeometry(0.5, 0.7, 32);
+const FLAG_GEO = new THREE.PlaneGeometry(0.45, 0.45);
 const DUST_GEO = new THREE.SphereGeometry(0.22, 7, 5);
 const CONFETTI_GEO = new THREE.PlaneGeometry(0.22, 0.12);
 
