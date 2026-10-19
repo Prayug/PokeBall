@@ -503,8 +503,31 @@ export function step(lp, input = null) {
   if (lp.phase === 'live') boundaries(lp);
   looseBall(lp);
   syncBall(lp);
-  for (const p of lp.players) classify(lp, p);
+  for (const p of lp.players) { classify(lp, p); remember(lp, p); }
   if (lp.phase === 'live' && lp.t > MAX_TIME) whistle(lp, 'time');
+}
+
+// ---------- what the defense can see ----------
+// Nobody reads a cut the instant it happens. Each player keeps a short trail of where he was
+// and how he was moving; a defender acts on what a receiver or a ball carrier was doing a
+// moment ago (his reaction time), carried forward along that path. A receiver who breaks his
+// route is still "running the old route" to his man for that beat, so the separation at the
+// break is real, and then the defender drives on the new path through his own feet.
+const HIST = 0.8;
+function remember(lp, p) {
+  const h = (p.hist ??= []);
+  h.push({ t: lp.t, x: p.x, y: p.y, vx: p.vx, vy: p.vy });
+  while (h.length > 2 && h[0].t < lp.t - HIST) h.shift();
+}
+// Where `who` is to a defender who reacts `delay` seconds late: his state then, projected on.
+export function perceive(lp, who, delay) {
+  const h = who.hist;
+  if (!h?.length || delay <= 0) return who;
+  const want = lp.t - delay;
+  let k = h.length - 1;
+  while (k > 0 && h[k].t > want) k--;
+  const s = h[k], e = Math.max(0, lp.t - s.t);
+  return { x: s.x + s.vx * e, y: s.y + s.vy * e, vx: s.vx, vy: s.vy };
 }
 
 // ---------- the authoritative action state ----------

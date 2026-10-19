@@ -74,13 +74,16 @@ for (let i = 0; i < N; i++) {
         const h0 = st.h[0], h1 = st.h[st.h.length - 1];
         let d = h1.h - h0.h; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
         if (Math.abs(d) > 0.9 && (!st.cut || lp.t - st.cut.t > 0.8)) {
-          st.cut = { t: lp.t, dir: h1.h };
+          // The cut started where his heading first left the old line.
+          const dd = (q) => { let x = q.h - h0.h; while (x > Math.PI) x -= 2 * Math.PI; while (x < -Math.PI) x += 2 * Math.PI; return Math.abs(x); };
+          const start = st.h.find((q) => dd(q) > 0.15)?.t ?? lp.t;
+          st.cut = { t: start, dir: h1.h };
           C.cuts++;
           const minSp = Math.min(...st.h.map((q) => q.sp)), maxSp = Math.max(...st.h.map((q) => q.sp));
           C.cutKeep += minSp / Math.max(1, maxSp);
           // His man: how long until the defender's path swings toward the new direction.
           const m = lp.players.find((q) => q.side === 'def' && q.man === p && !q.eng);
-          if (m) S.get(m).watch = { t: lp.t, dir: h1.h, r: p };
+          if (m) S.get(m).watch = { t: st.cut.t, dir: h1.h, r: p };
         }
       }
       if (st.watch) {
