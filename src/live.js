@@ -1174,7 +1174,7 @@ function slide(p, ux, uy) {
   const vn = p.vx * ux + p.vy * uy;
   if (vn <= 0) return;
   const s = len(p.vx, p.vy) || 1;
-  const k = 1 - 0.35 * (vn / s);
+  const k = 1 - 0.7 * (vn / s);
   p.vx *= k; p.vy *= k;
 }
 
