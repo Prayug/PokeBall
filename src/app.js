@@ -6,7 +6,7 @@ import { worldSpots } from './live.js';
 import { initAudio, setSound } from './audio.js';
 import { cameraDefaults } from './camera3d.js';
 import * as LG from './league.js';
-import { S, clearTimers, loadPrefs, loadSaved, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
+import { S, clearTimers, deleteSlot, loadPrefs, loadSaved, migrateStorage, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
 import { download, user } from './ui.js';
 import { importSave, loadSnapshot, renderHome } from './screens/home.js';
 import { boardRowsHtml, detailHtml, draftTick, renderDraft, renderGrades, userDraft } from './screens/draft.js';
@@ -15,8 +15,12 @@ import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthe
 import { renderOffseason } from './screens/offseason.js';
 import { initPads } from './screens/pad.js';
 import { copyShare, loadShared, openSharedText, readShareFromUrl } from './screens/share.js';
-import { autoAdvance, doCall, renderGame, setMode, startGame, userSide } from './screens/game.js';
-import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, recall, setCamera, setDebug, stage, startReplay, syncOverlays } from './screens/live3d.js';
+import { renderFreeAgency } from './screens/freeagency.js';
+import { renderRecords } from './screens/records.js';
+import * as FA from './freeagency.js';
+import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, userSide, userTimeout } from './screens/game.js';
+import { applyDifficulty } from './difficulty.js';
+import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, setCamera, setDebug, stage, startReplay, syncOverlays } from './screens/live3d.js';
 
 const app = document.getElementById('app');
 
@@ -37,7 +41,9 @@ function renderTop() {
   if (L) {
     if (L.phase === 'draft') items.push(['draft', 'Draft room']);
     else if (L.phase === 'offseason') items.push(['offseason', 'Offseason'], ['season', 'Last season']);
+    else if (L.phase === 'freeagency') items.push(['freeagency', 'Free agency']);
     else items.push(['grades', 'Draft grades'], ['depth', 'Depth chart'], ['season', 'Season']);
+    items.push(['records', 'Records']);
   }
   if (S.game && !S.game.final) items.push(['game', 'Live game']);
   return `<header class="top">
@@ -57,12 +63,20 @@ function onClick(e) {
     case 'home': S.game = S.gameMeta?.quick ? null : S.game; setScreen('home'); break;
     case 'go': setScreen(el.dataset.to); break;
     case 'continue': {
-      const saved = loadSaved();
-      if (saved?.league) loadSnapshot(saved);
+      const n = Number(el.dataset.slot ?? S.slot);
+      const saved = loadSaved(n);
+      if (!saved?.league) break;
+      // Leaving the home screen saved the league in memory; drop any quick game and switch.
+      if (S.gameMeta?.quick) { S.game = null; S.gameMeta = null; }
+      S.slot = n; S.confirmDelete = null;
+      loadSnapshot(saved);
       break;
     }
+    case 'slotconfirm': S.confirmDelete = Number(el.dataset.slot); render(); break;
+    case 'slotkeep': S.confirmDelete = null; render(); break;
+    case 'slotdelete': deleteSlot(Number(el.dataset.slot)); S.confirmDelete = null; render(); break;
     case 'exportsave': {
-      const data = S.league ? snapshot() : loadSaved();
+      const data = el.dataset.slot ? loadSaved(Number(el.dataset.slot)) : S.league ? snapshot() : loadSaved();
       if (!data?.league) break;
       const name = data.league.teams.find((t) => t.user)?.abbr ?? 'league';
       download(`pokeball-${name.toLowerCase()}-season${data.league.season ?? 1}.json`, JSON.stringify(data), 'application/json');
@@ -72,7 +86,7 @@ function onClick(e) {
       const text = document.getElementById('import-text')?.value ?? '';
       // A league code or share link opens the shared league card; anything else is a save file.
       if (!text.trim().startsWith('{') && openSharedText(text)) break;
-      importSave(text);
+      importSave(text, importSlot());
       break;
     }
     case 'share': S.shareOpen = !S.shareOpen; S.shareMsg = ''; render(); break;
@@ -87,9 +101,19 @@ function onClick(e) {
     case 'suggestcuts': S.offCuts = new Set(L.offseason.cuts[user().id]); render(); break;
     case 'finishoffseason': {
       LG.finishOffseason(L, [...(S.offCuts ?? [])]);
-      S.offCuts = null;
+      S.offCuts = null; S.faSel = null; S.faRelease = null; S.faAmount = null;
+      setScreen(L.phase === 'freeagency' ? 'freeagency' : 'draft');
+      break;
+    }
+    case 'fasel': S.faSel = Number(el.dataset.id); S.faAmount = null; render(); break;
+    case 'fabid': case 'fapass': case 'faskip': {
+      if (L?.phase !== 'freeagency') break;
+      if (act === 'faskip') FA.skipFreeAgency(L);
+      else FA.runFaRound(L, act === 'fabid' ? { id: S.faSel, release: S.faRelease, amount: S.faAmount } : null);
+      S.faSel = null; S.faRelease = null; S.faAmount = null;
+      if (L.phase === 'freeagency') { save(); render(); break; }
       S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false };
-      setScreen('draft');
+      setScreen(L.phase === 'draft' ? 'draft' : 'grades');
       break;
     }
     case 'subslot': S.subSel = S.subSel === el.dataset.slot ? null : el.dataset.slot; render(); break;
@@ -147,12 +171,13 @@ function onClick(e) {
       }
       const game = LG.startLeagueGame(L, gm.home, gm.away, playoff);
       const meta = { playoff, userTeamId: me.id };
-      if (act === 'simweek') { S.game = game; S.gameMeta = meta; simUntil(game, 'game'); finishLeagueGame(); }
+      if (act === 'simweek') { applyDifficulty(game, S.difficulty, me.id); S.game = game; S.gameMeta = meta; simUntil(game, 'game'); finishLeagueGame(); }
       else startGame(game, meta);
       break;
     }
     case 'finishgame': finishLeagueGame(); break;
     case 'call': doCall(el.dataset.call); break;
+    case 'timeout': userTimeout(); break;
     case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; S.csAll = false; render(); break;
     case 'calshot': S.calShot = el.dataset.k; render(); break;
     case 'calreset': S.cal = cameraDefaults(); stage?.rig.setCalibration(S.cal); savePrefs(); render(); break;
@@ -165,6 +190,9 @@ function onClick(e) {
     case 'resume': L3.paused = false; syncOverlays(); break;
     case 'replay': startReplay(); break;
     case 'mode': setMode(el.dataset.mode); break;
+    case 'difficulty': setDifficulty(el.dataset.level); break;
+    case 'csscout': S.csScout = !S.csScout; render(); break;
+    case 'ps': presnapAct(el.dataset.ps, el.dataset.arg); break;
     case 'csfold': S.csFold = !S.csFold; render(); break;
     case 'csall': S.csAll = !S.csAll; S.csFold = false; render(); break;
     case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
@@ -186,6 +214,13 @@ function onClick(e) {
 
 function onInput(e) {
   const t = e.target;
+  if (t.id === 'fa-amount') {
+    S.faAmount = Math.round(Number(t.value));
+    const pos = t.selectionStart;
+    render();
+    const el = document.getElementById('fa-amount');
+    try { el?.setSelectionRange(pos, pos); } catch { /* number inputs have no selection */ }
+  }
   if (t.id === 'd-search') { S.draft.search = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id?.startsWith('cal-')) {
     const k = t.id.slice(4);
@@ -198,17 +233,20 @@ function onInput(e) {
 }
 function onChange(e) {
   const t = e.target;
+  if (t.id === 'fa-release') { S.faRelease = Number(t.value); render(); }
+  if (t.id === 'rec-team') { S.recTeam = t.value === 'league' ? 'league' : Number(t.value); render(); }
   if (t.id === 'd-type') { S.draft.type = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
+  if (t.id === 'cs-tempo') { S.tempo = t.value; t.blur(); render(); }
   if (t.id === 'cs-form') { const v = t.value || null; if (S.game?.poss === userSide()) S.formPick = v; else S.frontPick = v; t.blur(); render(); }
   if (t.id === 'g-sound') { S.sound = t.checked; setSound(S.sound); savePrefs(); }
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
   if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }
   if (t.id === 'g-pips') { S.pips = t.checked; if (stage) stage.showPips = S.pips; savePrefs(); }
   if (t.id === 'g-debug') setDebug(t.checked);
-  if (t.id === 'import-file' && t.files?.[0]) t.files[0].text().then(importSave);
+  if (t.id === 'import-file' && t.files?.[0]) { const n = importSlot(); t.files[0].text().then((text) => importSave(text, n)); }
   if (t.dataset?.cut) {
     const id = Number(t.dataset.cut);
     S.offCuts ??= new Set();
@@ -216,6 +254,8 @@ function onChange(e) {
     render();
   }
 }
+const importSlot = () => Number(document.getElementById('i-slot')?.value ?? S.slot);
+
 function onSubmit(e) {
   if (e.target.id !== 'setup-form') return;
   e.preventDefault();
@@ -227,9 +267,11 @@ function onSubmit(e) {
     typeCap: f.querySelector('#f-typecap').checked,
     legendaries: f.querySelector('#f-legend').checked,
     clock: f.querySelector('#f-clock').checked,
+    scheme: f.querySelector('input[name="scheme"]:checked')?.value ?? 'balanced',
   };
+  S.slot = Number(f.querySelector('#f-slot')?.value ?? S.slot); S.confirmDelete = null;
   S.league = LG.createLeague({ teamName: S.setup.name, abbr: S.setup.abbr, rounds: S.setup.rounds, legendaries: S.setup.legendaries,
-    typeCap: S.setup.typeCap, seed: Math.floor(Math.random() * 2 ** 31) });
+    typeCap: S.setup.typeCap, scheme: S.setup.scheme, seed: Math.floor(Math.random() * 2 ** 31) });
   S.game = null; S.gameMeta = null;
   S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false };
   setScreen('draft');
@@ -247,6 +289,8 @@ export function render() {
     case 'season': body = L && L.schedule.length ? renderSeason() : renderHome(); break;
     case 'result': body = L ? renderResult() : renderHome(); break;
     case 'offseason': body = L?.phase === 'offseason' ? renderOffseason() : renderHome(); break;
+    case 'freeagency': body = L?.phase === 'freeagency' ? renderFreeAgency() : renderHome(); break;
+    case 'records': body = L ? renderRecords() : renderHome(); break;
     case 'game': ensureStage(); body = renderGame(); break;
     default: body = renderHome();
   }
@@ -258,11 +302,18 @@ export function render() {
   if (S.screen === 'game') mountStage();
   if (S.screen === 'draft' && boardScroll != null) { const b = document.querySelector('.board .tablewrap'); if (b) b.scrollTop = boardScroll; }
   if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
+  // On a narrow screen the call sheet's tab row scrolls: keep the open tab in view.
+  const tab = document.querySelector('.cs-tab.on'), row = tab?.parentElement;
+  if (row && row.scrollWidth > row.clientWidth) {
+    const t = tab.getBoundingClientRect(), r = row.getBoundingClientRect();
+    if (t.left < r.left || t.right > r.right) row.scrollLeft += t.left - r.left - 8;
+  }
   window.scrollTo(0, y);
 }
 
 function start(data) {
   loadPrefs();
+  migrateStorage();
   initAudio();
   setSound(S.sound);
   try { if (/[?&#]debug\b/.test(location.search + location.hash)) S.debug = true; } catch { /* no location */ }

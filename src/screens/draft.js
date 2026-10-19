@@ -2,6 +2,7 @@
 import { ATTRS, BASELINE, DEF_SLOTS, OFF_SLOTS, PLAYERS, SLOT, SLOT_KEYS, ST_SLOTS } from '../ratings.js';
 import { TYPE_COLORS, TYPE_TRAITS } from '../types.js';
 import * as LG from '../league.js';
+import { SCHEMES, coachLabel } from '../coach.js';
 import { render, setScreen } from '../app.js';
 import { S, clearTimers, save, timers } from '../state.js';
 import { ATTR_SHORT, P, abilityText, bar, esc, ovr, sprite, teamBadge, typeChips, user } from '../ui.js';
@@ -57,6 +58,7 @@ export function renderDraft() {
       <div>
         <p class="eyebrow">${(L.season ?? 1) > 1 ? `Season ${L.season} rookie draft · ` : ''}Round ${pk?.round ?? '-'} of ${L.picks[L.picks.length - 1].round} · Pick ${L.pickIndex + 1} of ${L.picks.length}</p>
         <h1>${myTurn ? 'You are on the clock' : `${esc(onClock?.name ?? '')} are picking`}</h1>
+        ${me.coach !== 'balanced' && SCHEMES[me.coach] ? `<p class="small muted">${esc(SCHEMES[me.coach].name)}: auto-picks reach for ${schemeGroups(me.coach)}.</p>` : ''}
       </div>
       <div class="clockbox ${myTurn ? 'live' : ''}">
         ${myTurn && S.setup.clock && !d.autoAll ? `<span class="clocknum" id="pick-clock">${d.clock}</span><span>seconds, then auto-pick</span>` : myTurn ? '<span>Take your time</span>' : '<span class="dots">AI drafting</span>'}
@@ -180,7 +182,7 @@ export function renderGrades() {
     <p class="lede">Each unit is graded against the other seven teams. Starters only; your bench subs in as starters tire.</p>
     <div class="tablewrap card"><table class="gtable">
       <thead><tr><th>Team</th><th>Coach</th>${units.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead>
-      <tbody>${order.map(({ t, g }) => `<tr class="${t.user ? 'me' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="muted">${esc(t.coachName)}${t.favTypes ? ` (${t.favTypes.join(', ')})` : ''}</td>
+      <tbody>${order.map(({ t, g }) => `<tr class="${t.user ? 'me' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="muted">${esc(coachLabel(t))}${t.favTypes ? ` (${t.favTypes.join(', ')})` : ''}</td>
         ${units.map(([k]) => `<td><span class="grade g-${g[k].grade[0]}">${g[k].grade}</span><span class="muted small"> ${g[k].value}</span></td>`).join('')}</tr>`).join('')}</tbody>
     </table></div>
     ${tradeCardHtml(L)}
@@ -211,7 +213,18 @@ export function tradeCardHtml(L) {
   return `<div class="card trade"><h3>Trade offer <span class="muted">${teamBadge(from)} ${esc(from.coachName)}</span></h3>
     <div class="tswap">${card(T.youGet, 'You get')}<span class="at">for</span>${card(T.youSend, 'You send')}</div>
     <p class="small muted">${esc(from.name)} want ${esc(P(T.youSend).name)}. By overall, your best lineup improves by ${T.gain} points. The offer stands until your first game.</p>
+    ${tradeKickingHtml(L)}
     <div class="actions"><button class="btn primary" data-act="tradeyes">Accept</button><button class="btn" data-act="tradeno">Decline</button></div></div>`;
+}
+
+// When the trade moves your kicker or punter: who kicks for you afterwards, and his range.
+function tradeKickingHtml(L) {
+  const K = LG.tradeKicking(L);
+  if (!K) return '';
+  const who = (x, what) => `${esc(P(x.id).name)} (${x.ovr}, ${what(x)})`;
+  const line = (role, b, a, what) => `<p class="small">Your ${role} after the trade: ${a ? who(a, what) : 'nobody'}${b ? `, replacing ${who(b, what)}` : ''}.</p>`;
+  return (K.k ? line('kicker', K.before.k, K.after.k, (x) => `${x.range}-yd range`) : '')
+    + (K.p ? line('punter', K.before.p, K.after.p, (x) => `about ${x.net} yds a punt`) : '');
 }
 
 export function userDraft(id, slot) {
@@ -223,4 +236,10 @@ export function userDraft(id, slot) {
   clearTimers();
   LG.makePick(L, id, slot && slot !== 'BENCH' && me.slots[slot] == null ? slot : null);
   afterPick();
+}
+
+const GROUP_NAMES = { QB: 'quarterbacks', RB: 'running backs', WR: 'receivers', TE: 'tight ends', OL: 'linemen', DL: 'the defensive line', LB: 'linebackers', CB: 'corners', S: 'safeties' };
+function schemeGroups(coach) {
+  const g = Object.entries(SCHEMES[coach].draft).sort((a, b) => b[1] - a[1]).map(([k]) => GROUP_NAMES[k] ?? k);
+  return g.length > 1 ? `${g.slice(0, -1).join(', ')} and ${g[g.length - 1]}` : g[0];
 }

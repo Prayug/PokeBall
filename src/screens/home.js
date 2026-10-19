@@ -1,15 +1,16 @@
-// Home screen: new league setup, continue, quick game and save import.
+// Home screen: new league setup, the save slots (continue, export, delete), quick game and save import.
 import { PLAYERS } from '../ratings.js';
 import * as LG from '../league.js';
 import { render, setScreen } from '../app.js';
-import { S, loadSaved } from '../state.js';
-import { P, esc, sprite } from '../ui.js';
-import { autoAdvance } from './game.js';
+import { S, firstFreeSlot, savedSlots } from '../state.js';
+import { P, esc, sprite, teamBadge } from '../ui.js';
+import { autoAdvance, difficultyHtml } from './game.js';
+import { SCHEMES, SCHEME_KEYS } from '../coach.js';
 import { sharedInHtml } from './share.js';
 
 function resumeScreen(L, game) {
   if (game && !game.final) return 'game';
-  return { draft: 'draft', grades: 'grades', offseason: 'offseason' }[L.phase] ?? 'season';
+  return { draft: 'draft', grades: 'grades', offseason: 'offseason', freeagency: 'freeagency' }[L.phase] ?? 'season';
 }
 export function loadSnapshot(snap) {
   S.league = LG.migrateLeague(snap.league); S.game = snap.game ?? null; S.gameMeta = snap.gameMeta ?? null;
@@ -17,17 +18,19 @@ export function loadSnapshot(snap) {
   setScreen(resumeScreen(S.league, S.game));
   if (S.screen === 'game') autoAdvance();
 }
-export function importSave(text) {
+export function importSave(text, slot = S.slot) {
   let data;
   try { data = JSON.parse(text); } catch { S.importMsg = 'That is not valid JSON.'; render(); return; }
   if (!Array.isArray(data?.league?.teams) || !data.league.teams.some((t) => t.user)) { S.importMsg = 'No PokeBall league found in that file.'; render(); return; }
   S.importMsg = '';
+  S.slot = slot;
   loadSnapshot(data);
 }
 
 // ---------- home ----------
 export function renderHome() {
-  const saved = loadSaved();
+  const slots = savedSlots();
+  const target = firstFreeSlot() ?? S.slot;
   const st = S.setup;
   const showcase = [130, 248, 135, 65, 448, 445].filter((id) => PLAYERS[id]);
   return `<section class="home">
@@ -49,14 +52,22 @@ export function renderHome() {
           <label class="pill"><input type="radio" name="rounds" value="24" ${st.rounds === 24 ? 'checked' : ''}> 24 rounds, starters, kicker and punter</label>
           <label class="pill"><input type="radio" name="rounds" value="28" ${st.rounds === 28 ? 'checked' : ''}> 28 rounds, with 4 bench</label>
         </fieldset>
+        <fieldset class="schemes"><legend>Your scheme</legend>
+          ${SCHEME_KEYS.map((k) => `<label class="schemepick"><input type="radio" name="scheme" value="${k}" ${(st.scheme ?? 'balanced') === k ? 'checked' : ''}><b>${esc(SCHEMES[k].name)}</b><span class="small muted">${esc(SCHEMES[k].blurb)}</span></label>`).join('')}
+        </fieldset>
         <label class="check"><input type="checkbox" id="f-typecap" ${st.typeCap ? 'checked' : ''}> At most 4 Pokémon of one primary type</label>
         <label class="check"><input type="checkbox" id="f-legend" ${st.legendaries ? 'checked' : ''}> Include legendaries, Ultra Beasts and Paradox Pokémon</label>
         <label class="check"><input type="checkbox" id="f-clock" ${st.clock ? 'checked' : ''}> 60-second pick clock</label>
+        <label>Save to${slotSelect('f-slot', slots, target)}</label>
         <button class="btn primary" type="submit">Start the draft</button>
       </form>
-      <div class="card side">
-        ${saved?.league ? `<h2>Continue</h2><p>${esc(saved.league.teams[0].name)} · Season ${saved.league.season ?? 1} · ${phaseLabel(saved.league)}</p>
-          <div class="actions"><button class="btn" data-act="continue">Continue league</button><button class="btn" data-act="exportsave">Export save</button></div><hr>` : ''}
+      <div class="card side ${slots.some((x) => x.save) ? 'has-saves' : ''}">
+        <h2>Your leagues</h2>
+        <ul class="saveslots">${slots.map(slotRow).join('')}</ul>
+        <hr>
+        <h2>Difficulty</h2>
+        ${difficultyHtml()}
+        <hr>
         <h2>Quick game</h2>
         <p>Two AI-drafted rosters, kickoff right away. You coach the home side.</p>
         <div class="actions"><button class="btn" data-act="quick">Play a quick game</button>
@@ -64,7 +75,8 @@ export function renderHome() {
         <p class="small muted">Two players: one keyboard (WASD and the arrows) or gamepads. Player 1 has the home team, player 2 the away team, and each of you calls and plays your own side.</p>
         <hr>
         <details class="importbox" ${S.importMsg ? 'open' : ''}><summary>Import a save or a shared league</summary>
-          <p class="small muted">Load a league from an exported file, or paste its contents, a league code or a share link. A save replaces the league saved in this browser.</p>
+          <p class="small muted">Load a league from an exported file, or paste its contents, a league code or a share link, into the slot you pick.</p>
+          <label>Load into${slotSelect('i-slot', slots, target)}</label>
           <input type="file" id="import-file" accept="application/json,.json">
           <textarea id="import-text" rows="3" placeholder="Paste save JSON, a league code or a link"></textarea>
           <button class="btn" data-act="importpaste">Load what I pasted</button>
@@ -74,11 +86,28 @@ export function renderHome() {
     </div>
   </section>`;
 }
+function slotRow({ n, save }) {
+  if (!save) return `<li class="sslot empty"><span class="sn">${n}</span><span class="muted">Empty slot</span></li>`;
+  const L = save.league, me = L.teams.find((t) => t.user) ?? L.teams[0];
+  const actions = S.confirmDelete === n
+    ? `<span class="small">Delete this league for good?</span><button class="btn tiny danger" data-act="slotdelete" data-slot="${n}">Delete</button><button class="btn tiny" data-act="slotkeep">Keep</button>`
+    : `<button class="btn tiny primary" data-act="continue" data-slot="${n}">Continue</button><button class="btn tiny" data-act="exportsave" data-slot="${n}">Export</button><button class="btn tiny ghost" data-act="slotconfirm" data-slot="${n}" aria-label="Delete the league in slot ${n}">Delete</button>`;
+  return `<li class="sslot ${n === S.slot && S.league ? 'on' : ''}"><span class="sn">${n}</span>
+    <span class="si"><b>${teamBadge(me)} ${esc(me.name)}</b><span class="small muted">Season ${L.season ?? 1} · ${phaseLabel(L)}</span></span>
+    <span class="actions">${actions}</span></li>`;
+}
+function slotSelect(id, slots, target) {
+  return `<select id="${id}">${slots.map(({ n, save }) => {
+    const me = save?.league.teams.find((t) => t.user);
+    return `<option value="${n}" ${n === target ? 'selected' : ''}>Slot ${n} · ${me ? `replaces ${esc(me.name)}, season ${save.league.season ?? 1}` : 'empty'}</option>`;
+  }).join('')}</select>`;
+}
 function phaseLabel(L) {
   if (L.phase === 'draft') return `Draft, pick ${L.pickIndex + 1} of ${L.picks.length}`;
   if (L.phase === 'grades') return 'Draft complete';
   if (L.phase === 'season') return `Week ${L.week + 1} of ${L.schedule.length}`;
   if (L.phase === 'playoffs') return 'Playoffs';
   if (L.phase === 'offseason') return 'Offseason';
+  if (L.phase === 'freeagency') return `Free agency, round ${(L.fa?.round ?? 0) + 1}`;
   return 'Season over';
 }
