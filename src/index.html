@@ -318,6 +318,31 @@ textarea { background: var(--turf-deep); border: 1px solid var(--line); color: v
 .cond { font: 600 10px/1.1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 4px; border-radius: 3px; }
 .cond.out { background: var(--red); color: var(--red-ink); }
 .cond.sore { color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent); }
+.cond.hurt { background: color-mix(in srgb, var(--red) 22%, transparent); color: var(--chalk); border: 1px solid var(--red); }
+/* Scheme pick on the setup form, the call sheet's scheme tag */
+.schemes { display: grid; gap: 6px; }
+.schemepick { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: start; background: var(--turf-deep); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; color: var(--chalk); cursor: pointer; }
+.schemepick:has(input:checked) { border-color: var(--amber); }
+.schemepick input { grid-row: span 2; margin: 3px 0 0; }
+.schemepick b, .schemepick span { grid-column: 2; }
+.pc-scheme { font-style: normal; color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent); padding: 1px 4px; border-radius: 3px; white-space: nowrap; }
+/* Weekly hooks: the week in review, power ranking */
+.potw { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.potw > span { display: grid; gap: 2px; justify-items: start; }
+.potw em { font: 600 12px/1 var(--f-data); color: var(--amber); font-style: normal; text-transform: uppercase; letter-spacing: 0.06em; }
+.headlines, .power { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.headlines li { font-size: 14px; }
+.headlines li.mine { box-shadow: inset 3px 0 0 var(--red); padding-left: 6px; }
+.headlines .resline .hl { flex: 1 1 220px; color: var(--chalk); }
+.results .hl { flex-basis: 100%; }
+.power li { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.power li.me .pn { color: var(--amber); }
+.power .rk { font-family: var(--f-data); min-width: 18px; text-align: right; }
+.power .mv { font: 600 11px/1 var(--f-data); min-width: 26px; color: var(--chalk-dim); }
+.power .mv.up { color: #7fdc93; }
+.power .mv.down { color: var(--red); }
+.power .pn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.health li.me { box-shadow: inset 3px 0 0 var(--red); padding-left: 6px; }
 .scout .plan { font-size: 16px; }
 .opprow { display: flex; gap: 2px; flex-wrap: wrap; align-items: center; }
 table.kicking { border-collapse: collapse; width: 100%; }
@@ -403,6 +428,38 @@ table.kicking thead th { font: 600 12px/1 var(--f-data); color: var(--chalk-dim)
 .lock.auto { color: var(--chalk-dim); }
 .subpick { margin-top: 12px; }
 
+/* Free agency */
+.capbar { height: 8px; background: var(--turf-deep); border-radius: 4px; overflow: hidden; }
+.capbar span { display: block; height: 100%; background: var(--amber); }
+.capall, .faLog, .rivals, .ballot, .rv-facts { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.capall li, .ballot li, .rivals li { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.capall .cn, .ballot .cn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.capall li.me, .faLog li.me { box-shadow: inset 3px 0 0 var(--red); padding-left: 6px; }
+.faLog li { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.faLog .cn { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; }
+.faLog .note { flex-basis: 100%; padding-left: 28px; }
+.fa-note { border-radius: var(--r); padding: 10px 14px; margin: 12px 0; border: 1px solid var(--line); background: var(--turf-2); }
+.fa-note.good { border-color: var(--good); color: var(--chalk); box-shadow: inset 4px 0 0 var(--good); }
+.fa-note.bad { border-color: var(--bad); color: var(--chalk); box-shadow: inset 4px 0 0 var(--bad); }
+.fa .lede { margin-bottom: 12px; }
+.fa-bid input[type="number"] { font: 600 18px/1 var(--f-data); width: 120px; }
+
+/* Record book and rivalries */
+.records h3 label.inline { flex-direction: row; align-items: center; text-transform: none; letter-spacing: 0; }
+.records h3 select { padding: 5px 8px; font: 600 14px/1 var(--f-data); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.recs td { padding: 5px 6px; }
+.recs td:first-child { color: var(--chalk-dim); white-space: nowrap; }
+.recs td b { font: 700 17px/1 var(--f-data); color: var(--amber); }
+.recs td .spr { vertical-align: middle; }
+.ballot b { font: 600 13px/1 var(--f-data); color: var(--chalk-dim); }
+.rivals li b, .rv-head b { font: 700 18px/1 var(--f-data); }
+.rivalry { background: linear-gradient(100deg, color-mix(in srgb, var(--ta) 22%, var(--turf-2)), var(--turf-2) 45%, var(--turf-2) 55%, color-mix(in srgb, var(--tb) 22%, var(--turf-2))); }
+.rv-head { display: flex; gap: 10px; align-items: center; justify-content: center; }
+.rv-head b { font-size: 34px; color: var(--amber); }
+.rv-head .tbadge { font-size: 16px; padding: 5px 8px; }
+.rv-facts li { font-size: 14px; }
+
 @media (max-width: 900px) {
   .cards .side.has-saves { order: -1; }
   .cards, .draft-grid, .season-grid, .pgrid, .edges, .subgrid, .bracket { grid-template-columns: minmax(0, 1fr); }
@@ -418,6 +475,8 @@ table.kicking thead th { font: 600 12px/1 var(--f-data); color: var(--chalk-dim)
   .pbp li:not(:has(.sit)) .txt { grid-column: auto; }
   .dslot { width: 76px; }
   .dslot .spr.md { width: 36px; height: 36px; }
+  .fa-table .from, .fa-table .best, .fa-table .type { display: none; }
+  .fa-table .pk { min-width: 0; }
   .board-table .a-arm, .board-table .a-sta, .board-table .a-blk, .board-table .a-tkl, .board-table .a-acl, .board-table .a-agi, .board-table .a-awr, .board-table .a-kpw, .board-table .a-kac { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -529,6 +588,24 @@ body.g3d-on main { max-width: none; }
 .cs-formsel { flex-direction: row; align-items: center; gap: 6px; font: 600 12px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--chalk-dim); }
 .cs-formsel select { padding: 5px 8px; font: 700 13px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; border-radius: 6px; }
 .cs-head .cs-all { margin-left: auto; }
+/* The clock between plays: running or stopped, timeouts, the timeout button and the tempo. */
+.cs-clock { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 0 2px 8px; font: 600 12px/1.2 var(--f-data); color: #c9d3cc; }
+.cs-clock .clk { text-transform: uppercase; letter-spacing: 0.05em; }
+.cs-clock .clk.run { color: var(--amber); }
+.cs-clock .clk.run::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--amber); animation: clk-pulse 1s ease-in-out infinite; }
+@keyframes clk-pulse { 50% { opacity: 0.3; } }
+.cs-tempo { display: inline-flex; gap: 6px; align-items: center; }
+.cs-tempo select { font: inherit; }
+.tos { display: inline-flex; gap: 3px; align-items: center; }
+.tos i { width: 9px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.18); }
+.tos i.on { background: #ffe27a; }
+.bc-team .tos { margin-left: 2px; }
+.bc-clock.run { color: #fff3c4; }
+.sb-clock.run { color: var(--amber); }
+.pcard.k-xp, .pcard.k-kickoff { --fam: #a7bba9; } .pcard.k-penalty { --fam: #ffd23f; }
+.cs-flag .flagtxt { color: #ffe27a; font-weight: 600; } .cs-flag .flagtxt::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 7px; background: #ffd23f; transform: rotate(8deg); }
+.lower3.flag { border-color: #ffd23f; } .lower3.flag .l3-head b { color: #ffd23f; } .pcard.k-spike, .pcard.k-kneel { --fam: #c792ff; }
+@media (prefers-reduced-motion: reduce) { .cs-clock .clk.run::before { animation: none; } }
 .cs-cards { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
 .cs-book { display: grid; gap: 8px; }
 .cs-book h4 { margin: 0 0 4px; }
