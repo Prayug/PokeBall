@@ -15,13 +15,19 @@ import { tendencyLines, typeEdges } from '../scout.js';
 import { L3, afterLivePlay, replayReady, stage, startLive, stopReplay } from './live3d.js';
 
 // ---------- game ----------
+// A two-player quick game: player one has the home team, player two the away team, and each
+// calls and plays their own side. The side "the user" means at any moment is the side calling:
+// the offense first, then (once S.p2Call holds the offense's call) the defense.
+export function twoPlayer() { return !!S.gameMeta?.twoPlayer; }
 export function userSide() {
   if (!S.game) return 0;
+  if (twoPlayer()) return S.p2Call ? 1 - S.game.poss : S.game.poss;
   const uid = S.gameMeta?.userTeamId ?? 0;
   return S.game.teams[0].id === uid ? 0 : 1;
 }
 export function needsUser(g) {
   if (g.final) return false;
+  if (twoPlayer()) return true;
   // The try and the kickoff are yours when your side kicks (in Auto, only in the 4th quarter).
   // After a flag, the call is yours when the foul was against you (in Auto, only in the 4th quarter).
   if (g.phase === 'penalty') return g.pending?.offended != null && !!g.manual?.[g.pending.offended] && (!S.coach || g.quarter >= 4);
@@ -118,8 +124,9 @@ export function renderGame() {
   let controls, dock = 'call';
   if (g.final) {
     dock = 'final';
-    controls = `<div class="card final callcard"><h2>${g.winner == null ? 'Tie game' : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose'}, ${Math.max(...g.score)} to ${Math.min(...g.score)}</h2>
-      <div class="actions">${S.gameMeta?.quick ? '<button class="btn primary" data-act="quick">Play another quick game</button><button class="btn" data-act="home">Home</button>'
+    const verdict = g.winner == null ? 'Tie game' : twoPlayer() ? `Player ${g.winner + 1} wins: ${esc(g.teams[g.winner].name)}` : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose';
+    controls = `<div class="card final callcard"><h2>${verdict}, ${Math.max(...g.score)} to ${Math.min(...g.score)}</h2>
+      <div class="actions">${S.gameMeta?.quick ? `<button class="btn primary" data-act="${twoPlayer() ? 'quick2' : 'quick'}">Play another ${twoPlayer() ? 'two-player game' : 'quick game'}</button><button class="btn" data-act="home">Home</button>`
         : '<button class="btn primary" data-act="finishgame">Back to the season</button>'}</div></div>`;
   } else {
     let head;
@@ -145,10 +152,11 @@ export function renderGame() {
     else if (L3.lp) {
       const lp = L3.lp;
       const offTxt = `${FORMATIONS[lp.formation]?.name ?? ''}`, defTxt = `${DEF_FORMATIONS[lp.defFormation]?.name ?? ''}`;
-      const mine = lp.user === lp.o ? `${offTxt} · ${OFF_PLAYS[L3.off].name}` : `${defTxt} · ${DEF_PLAYS[L3.def].name}`;
-      const theirs = lp.user === lp.o ? `vs ${defTxt}` : `vs ${offTxt}`;
-      if (lp.phase === 'pre') overlay = `<div class="lined3">${S.coachDown ? '' : adjustHtml(lp)}<div class="pill lined"><span class="pl-play">${esc(mine)}<small>${esc(theirs)}</small></span>
-        <button class="btn primary" data-act="snap">${lp.user === lp.o ? 'Snap' : 'Start'} <kbd>Space</kbd></button>
+      // Two players: each sees only the other's formation, not the call.
+      const mine = lp.p2 ? `${g.teams[lp.o].abbr} ${offTxt}` : lp.user === lp.o ? `${offTxt} · ${OFF_PLAYS[L3.off].name}` : `${defTxt} · ${DEF_PLAYS[L3.def].name}`;
+      const theirs = lp.p2 ? `vs ${g.teams[lp.d].abbr} ${defTxt}` : lp.user === lp.o ? `vs ${defTxt}` : `vs ${offTxt}`;
+      if (lp.phase === 'pre') overlay = `<div class="lined3">${S.coachDown || lp.p2 ? '' : adjustHtml(lp)}<div class="pill lined"><span class="pl-play">${esc(mine)}<small>${esc(theirs)}</small></span>
+        <button class="btn primary" data-act="snap">${lp.p2 || lp.user === lp.o ? 'Snap' : 'Start'} <kbd>${lp.p2 && lp.o === 1 ? 'Enter' : 'Space'}</kbd></button>
         ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change <kbd>Esc</kbd></button>'}</div></div>`;
     } else if (decide) overlay = callSheetHtml(g);
     else if (L3.resultUntil > performance.now()) overlay = '';
@@ -206,6 +214,7 @@ function tickerHtml(g) {
 const MODES = [['play', 'Play', 'You call the plays and control your Pokémon'], ['coach', 'Coach', 'You call the plays, the AI plays them'], ['auto', 'Auto', 'The AI calls routine downs too; you call 3rd and 4th downs and the last two minutes']];
 const modeOf = () => (S.coach ? 'auto' : S.watch ? 'coach' : 'play');
 function modeHtml() {
+  if (twoPlayer()) return '<p class="small muted mode-note">Two players: each of you calls and plays your own side.</p>';
   const cur = modeOf();
   return `<div class="gm-row seg modes" role="radiogroup" aria-label="Mode">${MODES.map(([k, l, d]) => `<button class="btn tiny ${cur === k ? 'on' : ''}" data-act="mode" data-mode="${k}" role="radio" aria-checked="${cur === k}" title="${d}">${l}</button>`).join('')}</div>
     <p class="small muted mode-note">${MODES.find(([k]) => k === cur)[2]}.</p>`;
@@ -386,6 +395,10 @@ export function doCall(call) {
   if (!g || g.final || S.busy || L3.lp) return;
   if (stage && L3.flow !== 'PLAY_SELECTION' && L3.flow != null) return;
   const us = userSide();
+  if (twoPlayer()) {
+    if (!(g.poss === us ? OFF_PLAYS : DEF_PLAYS)[call]) return;
+    twoPlayerCall(g, call); return;
+  }
   // A call from the wrong side's sheet (a stale click, a script) is ignored. The try and the
   // kickoff are offense calls for the side that kicks.
   const mine = g.phase === 'penalty' ? (g.pending?.offended === us ? OFF_PLAYS : {}) : g.phase !== 'play' ? (g.poss === us ? OFF_PLAYS : {}) : g.poss === us ? OFF_PLAYS : DEF_PLAYS;
@@ -419,6 +432,28 @@ function playCall(off, def, tempo, opts) {
   const entry = runPlay(g, off, def);
   if (stage) { S.busy = false; afterLivePlay(entry); return; }
   animatePlay(entry, () => { S.busy = false; save(); render(); autoAdvance(); });
+}
+
+// Two players: the offense's call waits (unseen) for the defense's, then the play lines up
+// with player one on the home team and player two on the away team.
+function twoPlayerCall(g, call) {
+  S.csTab = null; S.csPage = 0;
+  if (!S.p2Call) {
+    S.p2Call = { off: call, formation: formFor(call) };
+    render();
+    return;
+  }
+  const { off, formation } = S.p2Call, def = call;
+  S.p2Call = null;
+  if (stage && (['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]))) {
+    startLive(off, def, { userSide: 0, user2: 1, formation, defFormation: frontFor(def) });
+    return;
+  }
+  S.busy = true;
+  if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
+  const entry = runPlay(g, off, def);
+  if (stage) { S.busy = false; afterLivePlay(entry); return; }
+  animatePlay(entry, () => { S.busy = false; save(); render(); });
 }
 
 // The play clock ran out on the call sheet. On offense that is a delay of game (the full play
@@ -455,7 +490,7 @@ export function autoAdvance() {
   clearTimeout(timers.auto);
   const g = S.game;
   const kicks = g && (g.phase === 'pat' || g.phase === 'kickoff');
-  if (!g || g.final || S.screen !== 'game' || !(S.coach || kicks) || needsUser(g) || L3.lp) return;
+  if (!g || g.final || S.screen !== 'game' || twoPlayer() || !(S.coach || kicks) || needsUser(g) || L3.lp) return;
   timers.auto = setTimeout(() => {
     if (!S.game || S.game.final || S.screen !== 'game' || L3.lp) return;
     if (stage && L3.flow !== 'PLAY_SELECTION') { autoAdvance(); return; }
@@ -474,11 +509,11 @@ export function startGame(game, meta) {
   // Your side's try and kickoff choices wait for your call, and every kickoff and try is played
   // out on the field rather than resolved on the spot.
   const us = game.teams[0].id === (meta?.userTeamId ?? 0) ? 0 : 1;
-  game.manual = [us === 0, us === 1]; game.liveKicks = true; S.gameTab = 'log'; S.busy = false; S.subSel = null;
+  game.manual = [us === 0, us === 1]; game.liveKicks = true; S.gameTab = 'log'; S.busy = false; S.subSel = null; S.p2Call = null;
   L3.lp = null; L3.preview = null; L3.spots = null; L3.pclock = 40; L3.rec = null; L3.paused = false;
   if (L3.replay) stopReplay();
-  // The first game shows the controls once.
-  if (!S.seenHelp) S.helpOpen = true;
+  // The first game shows the controls once, and so does the first two-player game.
+  if (!S.seenHelp || (meta.twoPlayer && !S.seen2p)) { S.helpOpen = true; if (meta.twoPlayer) S.seen2p = true; }
   setScreen('game');
   autoAdvance();
 }

@@ -13,12 +13,14 @@ import { boardRowsHtml, detailHtml, draftTick, renderDraft, renderGrades, userDr
 import { depthClick, renderDepth } from './screens/depth.js';
 import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthers } from './screens/season.js';
 import { renderOffseason } from './screens/offseason.js';
+import { initPads } from './screens/pad.js';
+import { copyShare, loadShared, openSharedText, readShareFromUrl } from './screens/share.js';
 import { renderFreeAgency } from './screens/freeagency.js';
 import { renderRecords } from './screens/records.js';
 import * as FA from './freeagency.js';
 import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, userSide, userTimeout } from './screens/game.js';
 import { applyDifficulty } from './difficulty.js';
-import { L3, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, setCamera, setDebug, stage, startReplay, syncOverlays } from './screens/live3d.js';
+import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, setCamera, setDebug, stage, startReplay, syncOverlays } from './screens/live3d.js';
 
 const app = document.getElementById('app');
 
@@ -80,7 +82,17 @@ function onClick(e) {
       download(`pokeball-${name.toLowerCase()}-season${data.league.season ?? 1}.json`, JSON.stringify(data), 'application/json');
       break;
     }
-    case 'importpaste': importSave(document.getElementById('import-text')?.value ?? '', importSlot()); break;
+    case 'importpaste': {
+      const text = document.getElementById('import-text')?.value ?? '';
+      // A league code or share link opens the shared league card; anything else is a save file.
+      if (!text.trim().startsWith('{') && openSharedText(text)) break;
+      importSave(text, importSlot());
+      break;
+    }
+    case 'share': S.shareOpen = !S.shareOpen; S.shareMsg = ''; render(); break;
+    case 'sharecopy': if (L) copyShare(L, el.dataset.what); break;
+    case 'shareload': loadShared(el.dataset.replay === '1'); break;
+    case 'sharedismiss': S.shareIn = null; S.shareErr = ''; render(); break;
     case 'recap': if (L) download(`pokeball-season${L.season ?? 1}-recap.txt`, recapText(L), 'text/plain'); break;
     case 'openresult': S.resultIdx = Number(el.dataset.i); setScreen('result'); break;
     case 'tradeyes': if (LG.acceptTrade(L)) { save(); render(); } break;
@@ -115,7 +127,7 @@ function onClick(e) {
       save(); render();
       break;
     }
-    case 'quick': {
+    case 'quick': case 'quick2': {
       applyGrowth({});
       // ?seed=N in the address replays the same quick game (rosters, weather, coin toss): the
       // screenshot tests compare builds on exactly the same game state.
@@ -125,7 +137,8 @@ function onClick(e) {
       const [a, b] = Q.teams;
       a.name = S.setup.name || 'Pallet Starters'; a.abbr = (S.setup.abbr || 'PAL').toUpperCase();
       const game = createGame({ home: LG.teamForGame(a), away: LG.teamForGame(b), seed });
-      startGame(game, { quick: true, userTeamId: a.id });
+      // Two players: player one takes the home team, player two the away team.
+      startGame(game, { quick: true, userTeamId: a.id, twoPlayer: act === 'quick2' });
       break;
     }
     case 'newleague': S.league = null; S.game = null; setScreen('home'); break;
@@ -188,7 +201,7 @@ function onClick(e) {
     case 'sim': {
       const g = S.game;
       if (!g || S.busy || (L3.lp && L3.lp.phase !== 'pre')) return;
-      L3.lp = null;
+      L3.lp = null; S.p2Call = null;
       clearTimeout(timers.auto);
       simUntil(g, el.dataset.stop);
       save(); render(); autoAdvance();
@@ -304,6 +317,7 @@ function start(data) {
   initAudio();
   setSound(S.sound);
   try { if (/[?&#]debug\b/.test(location.search + location.hash)) S.debug = true; } catch { /* no location */ }
+  readShareFromUrl();
   const snap = data?.state;
   if (snap?.league || snap?.game) {
     S.league = LG.migrateLeague(snap.league); S.game = snap.game; S.gameMeta = snap.gameMeta; S.screen = snap.screen ?? 'home';
@@ -316,7 +330,9 @@ function start(data) {
   document.addEventListener('submit', onSubmit);
   window.addEventListener('keydown', (e) => onKey(e, true));
   window.addEventListener('keyup', (e) => onKey(e, false));
-  window.addEventListener('blur', () => L3.keys.clear());
+  window.addEventListener('blur', () => clearInput(true));
+  initPads();
+  if (S.shareIn) S.screen = 'home';
   render();
   if (S.screen === 'draft') draftTick();
   if (S.screen === 'game') autoAdvance();

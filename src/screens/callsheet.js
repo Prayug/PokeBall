@@ -8,7 +8,7 @@ import { render } from '../app.js';
 import { S } from '../state.js';
 import { edgeRow, esc } from '../ui.js';
 import { SCHEMES, schemePlay } from '../coach.js';
-import { userSide } from './game.js';
+import { twoPlayer, userSide } from './game.js';
 import { tendencyFit, tendencyLines, typeEdges } from '../scout.js';
 import { HOT_ROUTES, SHADES, audibles, hotCandidates, motionCandidates } from '../live/presnap.js';
 import { RECEIVERS } from '../live.js';
@@ -154,7 +154,8 @@ export function callSheetHtml(g) {
       <span class="pc-top"><em class="pc-kind">${tag}</em>${schemePlay(coach, call) ? `<em class="pc-scheme" title="${esc(SCHEMES[coach].name)} plays get a small edge">${esc(SCHEMES[coach].name)}</em>` : ''}${form ? `<span class="pc-form">${esc(form)}</span>` : ''}</span>
       <span class="pblurb">${esc(extra)}</span></button>`;
   };
-  const who = g.phase === 'penalty' ? 'Your call' : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
+  const us = userSide();
+  const who = g.phase === 'penalty' ? 'Your call' : twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)} ${onOff ? 'offense' : 'defense'}${onOff ? '' : ' (the offense has called its play)'}` : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
   const head = `<div class="cs-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>
       <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur && !S.csAll ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
       ${edgesChip(g)}

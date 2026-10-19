@@ -58,6 +58,8 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
     spot, goalX: 100 - spot, ownGoalX: -spot,
     players: [], off: {}, def: {}, events: [], result: null,
     user: opts.userSide ?? null, autoQB: !!opts.autoQB, control: null, manual: false,
+    // Two-player games: the second human plays the other team through the same fields here.
+    p2: opts.user2 != null ? { user: opts.user2, control: null, manual: false, handoverLock: false, aggro: false } : null,
     blitz: [...(DEF_SCHEMES[defCall]?.blitz ?? [])],
     zone: !!DEF_SCHEMES[defCall]?.zones && !DEF_SCHEMES[defCall]?.manUnder,
     qbState: 'drop', pressure: false, thrown: null, caught: false, crossed: false, carrierTeam: 'off',
@@ -116,7 +118,24 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
   else if (lp.kick) lp.control = lp.user === d && lp.kick.returner ? lp.kick.returner : null;
   else if (lp.user === o) lp.control = lp.off.QB;
   else if (lp.user === d) lp.control = lp.def.MLB ?? lp.players.find((p) => p.side === 'def');
+  if (lp.p2 && !opts.watch) {
+    const P = lp.p2;
+    if (lp.kick) P.control = P.user === d && lp.kick.returner ? lp.kick.returner : null;
+    else if (P.user === o) P.control = lp.off.QB;
+    else if (P.user === d) P.control = lp.def.MLB ?? lp.players.find((p) => p.side === 'def');
+  }
   return lp;
+}
+
+// Is this player steered by a person right now (player one, or player two in a two-player game)?
+export function isManual(lp, p) { return (p === lp.control && lp.manual) || (!!lp.p2 && p === lp.p2.control && lp.p2.manual); }
+export function isControlled(lp, p) { return p === lp.control || (!!lp.p2 && p === lp.p2.control); }
+// Player two's input runs through the same code as player one's: their control fields trade
+// places for the call. Swapping twice restores both.
+const PAD_KEYS = ['user', 'control', 'manual', 'handoverLock', 'aggro'];
+export function swapPads(lp) {
+  const P = lp.p2;
+  for (const k of PAD_KEYS) [lp[k], P[k]] = [P[k], lp[k]];
 }
 
 function makePlayer(g, ti, side, slot, id, lp) {
@@ -434,6 +453,8 @@ export function step(lp, input = null) {
   }
   lp.t += DT;
   if (input) applyInput(lp, input);
+  // Player two's input rides along on player one's as input.p2.
+  if (input?.p2 && lp.p2) { swapPads(lp); try { applyInput(lp, input.p2); } finally { swapPads(lp); } }
 
   // Run play handoff: the exchange starts when the quarterback and the back actually meet.
   if (lp.kind === 'run' && !lp.carrierSet && lp.t >= lp.handAt && qbHas(lp)) {
@@ -549,6 +570,7 @@ export function setCarrier(lp, p) {
   p.runFrom = p.x;
   // The user takes over the ball carrier on their own team.
   if (lp.user != null && p.ti === lp.user && lp.control !== p) { lp.control = p; lp.manual = false; }
+  if (lp.p2 && p.ti === lp.p2.user && lp.p2.control !== p) { lp.p2.control = p; lp.p2.manual = false; }
   // Everyone switches to the ball once it is handed off, caught or picked.
   for (const q of lp.players) {
     if (q === p) continue;
@@ -622,7 +644,7 @@ function think(lp, p) {
   p.want = null;
   p.aim = null;
   if (p.stun > 0 || inTackle(lp, p)) return;
-  if (p === lp.control && lp.manual) { manualWant(lp, p); return; }
+  if (isManual(lp, p)) { manualWant(lp, p); return; }
   const c = lp.carrierSet ? lp.carrier : null;
   // A tackle is under way: everyone else closes on the pile and pulls up around it instead of
   // running into it.
@@ -893,7 +915,7 @@ function carrierWant(lp, p) {
   p.want = { vx: (best.dx / l) * p.top * sprint, vy: (best.dy / l) * p.top * sprint };
   // When a tackler closes in, the AI carrier puts a move on him: power backs lower the
   // shoulder against smaller tacklers, shifty ones juke or spin.
-  if ((p !== lp.control || !lp.manual) && p.juke <= -0.9 && p.spin <= -0.9 && p.truck <= -0.9) {
+  if (!isManual(lp, p) && p.juke <= -0.9 && p.spin <= -0.9 && p.truck <= -0.9) {
     for (const q of lp.players) {
       if (q.side === p.side || q.eng || q.stun > 0 || dist(q, p) > 1.9) continue;
       if (chance(g, 0.02 + p.a.spd / 3000)) {
@@ -947,14 +969,14 @@ function move(lp, p, dt) {
   // recover. The burst refills while jogging or standing.
   let boost = p.juke > 0 ? 2.2 : p.truck > 0 ? 1.6 : 1;
   p.sprinting = false;
-  if (p === lp.control && lp.manual) {
+  if (isManual(lp, p)) {
     const i = p.input ?? {};
     p.sprinting = !!i.sprint && p.burst > 0.02 && len(i.mx ?? 0, i.my ?? 0) > 0.1;
     if (p.sprinting) { top *= 1.1; boost = Math.max(boost, 1.4); p.burst = Math.max(0, p.burst - dt / (2.4 + (p.a.sta ?? 70) / 100)); }
     else { top *= 0.86; p.burst = Math.min(1, p.burst + dt / 5); }
   }
   p.slow = Math.max(0, p.slow - dt);
-  if (!(p === lp.control && lp.manual) && !p.carrier) [vx, vy] = steer(lp, p, vx, vy);
+  if (!isManual(lp, p) && !p.carrier) [vx, vy] = steer(lp, p, vx, vy);
   // Routes and pursuit bend along the sideline instead of running out over it.
   if (!p.carrier && Math.abs(p.y) > SIDE - 1.5 && vy * p.y > 0) vy *= clamp((SIDE + 0.5 - Math.abs(p.y)) / 2, 0, 1);
   kin(p, vx, vy, top, dt, boost);
@@ -1303,7 +1325,7 @@ function contacts(lp) {
     // Reach grows with body size so big Pokémon can still get their arms on a carrier they
     // are touching, but the base reach is the same for everyone.
     const near = Math.max(CONTACT, q.r + c.r + 0.3);
-    const aiDive = q !== lp.control && dd > near && dd < near + 1 && chance(g, 0.05);
+    const aiDive = !isControlled(lp, q) && dd > near && dd < near + 1 && chance(g, 0.05);
     const reach = near + (q.dive != null && q.dive > 0 ? 0.8 : 0);
     if (dd > reach && !aiDive) continue;
     q.cool = 0.5;
@@ -1316,7 +1338,7 @@ function contacts(lp) {
     // Everything below adjusts the odds the same way whatever the type matchup.
     let p = 0;
     if (lp.players.some((o) => o !== q && o.side === q.side && !o.eng && dist(o, c) < 2.6)) p += 0.08;
-    const user = c === lp.control && lp.manual;
+    const user = isManual(lp, c);
     // Is the tackler coming from in front (spins beat those) or from the side (jukes do)?
     const cs = len(c.vx, c.vy) || 1;
     const headOn = ((q.x - c.x) * c.vx + (q.y - c.y) * c.vy) / (cs * (dd || 1)) > 0.5;
