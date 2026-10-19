@@ -2,7 +2,7 @@
 // assignments at the line, and what each defender wants each step (rush, cover, pursue).
 import { clamp, rep } from '../engine.js';
 import { frontX } from '../formations.js';
-import { DT, RECEIVERS, dist, len, mustGain, seek, sgn, slowDown, sticks } from '../live.js';
+import { DT, RECEIVERS, dist, len, mustGain, seek, sgn, slowDown, sticks } from './core.js';
 
 // Defensive calls as data: who rushes (blitz), who drops from the line into coverage (drop),
 // zone spots { slot: [depth, across, radius] } (across is toward the defender's own side for

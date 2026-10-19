@@ -4,7 +4,7 @@ import { traitMod } from '../traits.js';
 import { RATES, liveFoul, sloppy } from '../penalties.js';
 import { PLAYERS } from '../ratings.js';
 import { chance, clamp, nm, rand, randn, rep, st } from '../engine.js';
-import { DT, GRAVITY, SIDE, dist, event, finish, isManual, kin, len, mustGain, note, passBlockWant, seek, setCarrier, sgn, sticks, traitNotes, unengage } from '../live.js';
+import { DT, GRAVITY, SIDE, dist, event, finish, isManual, kin, len, mustGain, note, passBlockWant, seek, setCarrier, sgn, sticks, traitNotes, unengage } from './core.js';
 
 // The quarterback's throwing motion, from the decision to the ball leaving his hand.
 const WINDUP_T = 0.24;
