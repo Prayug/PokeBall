@@ -5,7 +5,7 @@
 // return, a fair catch, a bounce downed by the coverage, a touchback, out of bounds) is decided
 // on the field, and engine.js turns the outcome into the next possession.
 import { chance, clamp, eff, fgOdds, onsideLean, onsideOdds, randn, specialist, xpOdds } from '../engine.js';
-import { GRAVITY, SIDE, dist, event, finish, len, seek, setCarrier, sgn, unengage } from '../live.js';
+import { GRAVITY, SIDE, dist, event, finish, isManual, len, seek, setCarrier, sgn, unengage } from '../live.js';
 import { buildRoute, flightAt } from './passing.js';
 
 // Every kick is played on the live field, fakes included.
@@ -173,10 +173,11 @@ function kickIt(lp) {
     if (p.side === 'def' && p.role === 'krush') p.role = K.punt ? 'kwall' : 'kidle';
   }
   // The user on the kicking team takes the cover man nearest where it comes down.
-  if (K.punt && lp.user === lp.o) {
+  const pad = K.punt ? lp.user === lp.o ? lp : lp.p2?.user === lp.o ? lp.p2 : null : null;
+  if (pad) {
     let best = null;
     for (const p of lp.players) if (p.side === 'off' && p.role === 'kcover' && (!best || dist(p, { x: tx, y: ty }) < dist(best, { x: tx, y: ty }))) best = p;
-    if (best) { lp.control = best; lp.manual = false; }
+    if (best) { pad.control = best; pad.manual = false; }
   }
 }
 
@@ -283,7 +284,7 @@ export function kickWant(lp, p) {
       if (K.stage === 'loose') return seek(p, lp.ball, 1, 0.1);
       const F = K.F, left = F.t0 + F.T - lp.t;
       // Coverage closing in as it comes down: wave for a fair catch.
-      if (!K.fair && !K.ko && left < 0.75 && !(lp.control === p && lp.manual) && lp.players.some((q) => q.side === 'off' && dist(q, land) < 5)) { K.fair = true; event(lp, 'fairsignal', '', p); }
+      if (!K.fair && !K.ko && left < 0.75 && !isManual(lp, p) && lp.players.some((q) => q.side === 'off' && dist(q, land) < 5)) { K.fair = true; event(lp, 'fairsignal', '', p); }
       // Let one going into the end zone go.
       if (F.tx > lp.goalX + 1) return seek(p, { x: lp.goalX - 2, y: p.y }, 0.6, 0.5);
       const dx = land.x - p.x, dy = land.y - p.y, d = len(dx, dy);

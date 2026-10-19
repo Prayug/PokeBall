@@ -6,6 +6,7 @@ import { SCHEMES, coachLabel } from '../coach.js';
 import { render, setScreen } from '../app.js';
 import { S, clearTimers, save, timers } from '../state.js';
 import { ATTR_SHORT, P, abilityText, bar, esc, ovr, sprite, teamBadge, typeChips, user } from '../ui.js';
+import { shareCardHtml } from './share.js';
 
 // ---------- draft ----------
 function boardIds() {
@@ -185,6 +186,7 @@ export function renderGrades() {
         ${units.map(([k]) => `<td><span class="grade g-${g[k].grade[0]}">${g[k].grade}</span><span class="muted small"> ${g[k].value}</span></td>`).join('')}</tr>`).join('')}</tbody>
     </table></div>
     ${tradeCardHtml(L)}
+    <div class="card share"><h3>Share this league</h3>${shareCardHtml(L)}</div>
     <div class="actions">
       <button class="btn" data-act="go" data-to="depth">Edit depth chart</button>
       ${L.phase === 'grades' ? '<button class="btn primary" data-act="startseason">Start the season</button>' : '<button class="btn primary" data-act="go" data-to="season">Go to season</button>'}

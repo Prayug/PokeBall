@@ -1,7 +1,7 @@
 // Game simulation: one play at a time, resolved as one-on-one matchups.
 // Deterministic for a given seed. No DOM access.
 import { PLAYERS, OFF_SLOTS, DEF_SLOTS, unitRatings } from './ratings.js';
-import { TYPE_TRAITS, ABILITIES, WEATHER, bestMultiplier, matchupModifier } from './types.js';
+import { TYPE_TRAITS, ABILITIES, WEATHER, bestMatchup, matchupModifier } from './types.js';
 import { PARITY, formFor } from './parity.js';
 import { diffOf, diffUser } from './difficulty.js';
 import { schemeBonus, schemeOf } from './coach.js';
@@ -180,6 +180,15 @@ function cond(g, ti, id, when) {
     case 'rain': case 'sun': case 'sand': case 'hail': return g.weather === when;
     case 'tired': return energyOf(g, ti, id) < 60;
     case 'q4trail': return g.quarter >= 4 && g.score[ti] < g.score[1 - ti];
+    case 'weather': return g.weather !== 'clear';
+    case 'q1': return g.quarter === 1;
+    case 'h2': return g.quarter >= 3;
+    case 'lead': return g.score[ti] > g.score[1 - ti];
+    case 'trail': return g.score[ti] < g.score[1 - ti];
+    case 'fresh': return energyOf(g, ti, id) >= 80;
+    case 'home': return ti === 0 && !g.neutral;
+    case 'playoff': return !!g.playoff;
+    case 'electricMate': return Object.values(g.teams[ti].lineup).some((o) => o !== id && PLAYERS[o]?.types.includes('Electric'));
     default: return true;
   }
 }
@@ -217,7 +226,7 @@ export function eff(g, ti, id, attr, ctx = {}) {
 function typeMod(attId, defId) {
   if (attId == null || defId == null) return { mult: 1, mod: 1 };
   const A = PLAYERS[attId], D = PLAYERS[defId];
-  let mult = bestMultiplier(A, D);
+  let { mult } = bestMatchup(A, D);
   const aa = ABILITIES[A.ability]?.special, da = ABILITIES[D.ability]?.special;
   if (aa === 'tinted' && mult < 1 && mult > 0) mult = 1;
   let mod = matchupModifier(mult);
@@ -328,8 +337,9 @@ function applyFatigue(g) {
         let drain = grp * (1.2 - p.attrs.sta / 200);
         for (const ty of p.types) drain *= TYPE_TRAITS[ty].fatigue ?? 1;
         if (has(id, 'rockHead')) drain *= 0.75;
+        if (has(id, 'tireless')) drain *= 0.5;
         const w = WEATHER[g.weather];
-        if (w.immune && !w.immune.some((ty) => p.types.includes(ty))) drain *= 1.3;
+        if (w.immune && !w.immune.some((ty) => p.types.includes(ty)) && !has(id, 'overcoat')) drain *= 1.3;
         t.energy[id] = Math.max(0, t.energy[id] - drain);
         const s = st(g, ti, id);
         s.sn = (s.sn ?? 0) + 1;
@@ -1153,6 +1163,7 @@ export function fumbleCheck(g, o, d, carrier, tackler) {
   if (g.weather === 'rain') p += 0.005;
   if (tackler != null && PLAYERS[tackler].types.includes('Poison')) p += 0.004;
   if (has(carrier, 'reckless')) p += 0.005;
+  if (has(carrier, 'armor')) p *= 0.5;
   return chance(g, clamp(p, 0.002, 0.04));
 }
 
@@ -1412,7 +1423,7 @@ function doPass(g, call, defCall) {
 
   // Incomplete or intercepted
   let pInt = 0.027 + 0.005 * Math.max(0, -best.sep) + (pressure ? 0.04 : 0) - 0.0015 * (acc - 82) + (deep ? 0.03 : 0);
-  const hawk = cov != null && PLAYERS[cov].types.includes('Dark');
+  const hawk = cov != null && (PLAYERS[cov].types.includes('Dark') || has(cov, 'hawk'));
   if (hawk) pInt += 0.03;
   if (depth === 'screen') pInt *= 0.3;
   const picker = cov ?? D('FS');

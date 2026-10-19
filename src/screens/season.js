@@ -14,6 +14,7 @@ import { powerRanking } from '../weekly.js';
 import { rivalryCardHtml } from './records.js';
 import { signingsHtml } from './freeagency.js';
 import { boxHtml } from './game.js';
+import { shareCardHtml } from './share.js';
 
 // ---------- season ----------
 export function renderSeason() {
@@ -64,7 +65,8 @@ export function renderSeason() {
         ${injuryHtml(L)}
         <div class="card"><h3>League leaders</h3><div class="leaders">${Object.entries(lead).map(([k, rows]) => `<div><h4>${k}</h4><ol>${rows.slice(0, 3).map((r) => `<li>${sprite(r.id, 'xs')}<span>${esc(P(r.id).name)}</span><em>${L.teams[r.team].abbr}</em><b>${statFor(k, r)}</b></li>`).join('') || '<li class="muted">None yet</li>'}</ol></div>`).join('')}</div></div>
         <div class="card"><h3>Your save</h3><p class="small muted">Download the league to keep it safe or move it to another browser. Import it from the home screen.</p>
-          <div class="actions"><button class="btn" data-act="exportsave">Export save</button><button class="btn" data-act="recap">Download recap</button></div></div>
+          <div class="actions"><button class="btn" data-act="exportsave">Export save</button><button class="btn" data-act="recap">Download recap</button></div>
+          ${shareCardHtml(L)}</div>
       </div>
     </div>
   </section>`;

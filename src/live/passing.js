@@ -4,7 +4,7 @@ import { traitMod } from '../traits.js';
 import { RATES, liveFoul, sloppy } from '../penalties.js';
 import { PLAYERS } from '../ratings.js';
 import { chance, clamp, nm, rand, randn, rep, st } from '../engine.js';
-import { DT, GRAVITY, SIDE, dist, event, finish, kin, len, mustGain, note, passBlockWant, seek, setCarrier, sgn, sticks, traitNotes, unengage } from '../live.js';
+import { DT, GRAVITY, SIDE, dist, event, finish, isManual, kin, len, mustGain, note, passBlockWant, seek, setCarrier, sgn, sticks, traitNotes, unengage } from '../live.js';
 
 // The quarterback's throwing motion, from the decision to the ball leaving his hand.
 const WINDUP_T = 0.24;
@@ -122,7 +122,7 @@ export function qbBrain(lp) {
     if (lp.t - lp.readSince > beat && lp.readIdx < lp.reads.length - 1) { lp.readIdx++; lp.readSince = lp.t; }
     lp.qbLook = read() ?? lp.qbLook;
   } else lp.qbLook = lp.off[lp.reads[0]] ?? null;
-  if (lp.user === lp.o && !lp.autoQB) return; // the user throws; his eyes still go through the reads
+  if ((lp.user === lp.o || lp.p2?.user === lp.o) && !lp.autoQB) return; // the user throws; his eyes still go through the reads
   if (lp.qbState !== 'read') return;
   lp.readTick -= DT;
   if (lp.readTick > 0) return;
@@ -295,22 +295,22 @@ function release(lp, r, away, kind = 'touch', place = null) {
     px = fut.x; py = fut.y;
     T = Math.hypot(px - rp.x, py - rp.y) / v;
   }
-  let near = 99;
-  for (const q of lp.players) if (q.side === 'def' && !q.eng) near = Math.min(near, dist(q, qb));
+  let near = 99, rusher = null;
+  for (const q of lp.players) if (q.side === 'def' && !q.eng && dist(q, qb) < near) { near = dist(q, qb); rusher = q; }
   const pressured = near < 2.4;
   const D = lp.def;
   const tAcc = traitMod('throwAccuracy', { qb, def: Object.values(D) });
   traitNotes(lp, tAcc, { qb }, qb);
   const acc = qb.a.acc + tAcc.v - (lp.g.weather === 'rain' ? 4 : 0);
   const air = Math.hypot(px - rp.x, py - rp.y);
-  const tPr = pressured ? traitMod('pressure', { qb }) : null;
-  if (tPr) traitNotes(lp, tPr, { qb }, qb);
+  const tPr = pressured ? traitMod('pressure', { qb, rusher }) : null;
+  if (tPr) traitNotes(lp, tPr, { qb, rusher }, qb);
   let sd = (0.25 + air * 0.042) * (1.9 - acc / 90) * (pressured ? 1 + 0.5 * tPr.v : 1) * K.sd;
   // A bullet thrown a long way sprays more; a lob thrown short is hard to drop in.
   if (kind === 'bullet' && air > 18) sd *= 1.15;
   if (kind === 'lob' && air < 10) sd *= 1.2;
   const moving = len(qb.vx, qb.vy) > 2;
-  if (moving && ((lp.manual && lp.control === qb) || lp.play.boot)) sd *= lp.play.boot ? 1.12 : 1.25; // throwing on the run
+  if (moving && (isManual(lp, qb) || lp.play.boot)) sd *= lp.play.boot ? 1.12 : 1.25; // throwing on the run
   // Placement: lead him downfield (high), bring it back (low, he works back to it) or put it to
   // one side. The receiver adjusts to it in the air.
   let zc = catchHeight(r);
@@ -327,7 +327,7 @@ function release(lp, r, away, kind = 'touch', place = null) {
   const loft = kind !== 'touch' ? 1 : air > 18 ? 0.86 : air > 10 ? 0.94 : 1;
   launch(lp, { target: r, sx: rp.x, sy: rp.y, z0: rp.z, tx: px, ty: py, zc, v: v * loft, pressured, air: px, kind, catchMod: K.catch, placed: !!place });
   // The user takes over the receiver while the ball is in the air (and can attack it).
-  if (lp.user === lp.o && lp.control === qb && !lp.autoQB) { lp.control = r; lp.manual = false; lp.handoverLock = true; }
+  for (const pad of [lp, lp.p2]) if (pad && pad.user === lp.o && pad.control === qb && !lp.autoQB) { pad.control = r; pad.manual = false; pad.handoverLock = true; }
   lp.stats.target = r;
   lp.stats.cov = nearestDef(lp, r);
   // A defender hanging on a receiver downfield the ball is not going to: defensive holding.
@@ -480,7 +480,7 @@ export function airJumps(lp) {
   const F = lp.thrown;
   if (!F || F.away || !F.target || lp.ball.state !== 'air') return;
   const left = F.t0 + F.T - lp.t, spot = { x: F.tx, y: F.ty }, r = F.target;
-  const userR = lp.control === r && lp.manual;
+  const userR = isManual(lp, r);
   let dfd = null, dd = 99;
   for (const q of lp.players) if (q.side === 'def' && !q.eng) { const d = dist(q, spot); if (d < dd) { dd = d; dfd = q; } }
   if (!userR && F.rJump == null && left <= jumpTime(r) * 0.5 && dist(r, spot) < 2) {
@@ -488,7 +488,7 @@ export function airJumps(lp) {
     F.rJump = (high || (dfd && dd < 1.8)) && chance(lp.g, high ? 0.9 : clamp(0.45 + ((r.a.hndC ?? 60) - 60) * 0.006, 0.3, 0.8));
     if (F.rJump) startJump(lp, r);
   }
-  const userD = lp.control === dfd && lp.manual;
+  const userD = !!dfd && isManual(lp, dfd);
   if (dfd && !userD && F.dJump == null && left <= jumpTime(dfd) * 0.5 && dd < 2) {
     F.dJump = chance(lp.g, clamp(0.5 + ((dfd.a.cov ?? 60) - 60) * 0.008, 0.3, 0.85));
     if (F.dJump) startJump(lp, dfd);
@@ -501,17 +501,20 @@ function arrival(lp) {
   const r = T.target;
   const dr = dist(r, spot);
   // Up in the air at the catch point, a player gets his hands on balls a little farther away.
-  // The difficulty widens (Rookie) or tightens (Legend) the user's receivers' reach.
-  const reachOf = (p) => 1.45 + traitMod('catchReach', { p }).v + (upNow(p) ? 0.3 : 0) + (p.side === 'off' && lp.user === lp.o ? lp.userReach ?? 0 : 0);
+  // Glare (harsh sun) costs anyone the weather does not spare a little reach. Difficulty widens
+  // (Rookie) or tightens (Legend) the user's receivers' reach.
+  const reachOf = (p) => 1.45 + traitMod('catchReach', { p }).v + (upNow(p) ? 0.3 : 0) + (p.wx?.glare ?? 0) + (p.side === 'off' && lp.user === lp.o ? lp.userReach ?? 0 : 0);
   let dfd = null, dd = 99;
   for (const q of lp.players) if (q.side === 'def' && !q.eng) { const d = dist(q, spot); if (d < dd) { dd = d; dfd = q; } }
   lp.sepAtArrival = dd; lp.drAtArrival = dr;
-  const userDef = lp.user === lp.d && lp.control && lp.control.side === 'def' ? lp.control : null;
+  const pad = lp.user === lp.d ? lp : lp.p2?.user === lp.d ? lp.p2 : null;
+  const userDef = pad?.control && pad.control.side === 'def' ? pad.control : null;
   const userPlay = userDef && dist(userDef, spot) < 1.8 && (userDef.dive != null || upNow(userDef));
   lp.stats.cov = dfd && dd < 3 ? dfd : lp.stats.cov;
   const inBounds = Math.abs(spot.y) < SIDE && spot.x < lp.goalX + 10;
   const rReach = reachOf(r);
   if (dr <= rReach && dr > 1.45) traitNotes(lp, traitMod('catchReach', { p: r }), { p: r }, r, true);
+  if (r.wx?.glare && dr > rReach && dr <= rReach - r.wx.glare) note(lp, 'weather', `${nm(r.id)} loses the ball in the sun`, r);
   // Defender plays the ball first if he is closer.
   const dUp = dfd && upNow(dfd), rUp = upNow(r);
   if (dfd && dd < (dUp ? 1.75 : 1.5) && (dd < dr + (dUp ? 0.5 : 0.25) || dr > rReach - 0.05)) {
@@ -542,7 +545,7 @@ function arrival(lp) {
   const thrown = Math.hypot(T.tx - T.sx, T.ty - T.sy);
   // Attacking the ball at its high point (Space while it is in the air to your receiver):
   // better in traffic, and he stops to make the catch.
-  const aggro = !!lp.aggro && lp.control === r;
+  const aggro = (!!lp.aggro && lp.control === r) || (!!lp.p2?.aggro && lp.p2.control === r);
   // Going up for it high-points the ball over a defender; a defender in the air with him makes it harder.
   const air = (rUp && contested ? 0.06 : 0) - (dUp && contested ? 0.06 : 0);
   const base = 0.89 + (hands - 70) * 0.004 - Math.max(0, dr - 0.5) * 0.12 - Math.max(0, thrown - 18) * 0.006 + (T.catchMod ?? 0) + (aggro ? (contested ? 0.1 : -0.02) : 0) + air;
