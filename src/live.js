@@ -1379,7 +1379,18 @@ function blocks(lp) {
       ux = 0.75; uy = away * 0.66;
       push = -push;
     }
-    const vx = ux * push, vy = uy * push * 0.6;
+    let vx = ux * push, vy = uy * push * 0.6;
+    // Hand fighting: the defender works to one shoulder of the blocker (toward the passer, or
+    // the side of the ball on a run) and counters back to the other when it stalls; the blocker
+    // mirrors him, so the pair shuffles along the line instead of standing frozen. Quicker feet
+    // win the shuffle, and the bigger the blocker's edge the less ground it gives.
+    if (b.engT > 0.15) {
+      d.rs ??= sgn((target.y - b.y) * 0.5 + (d.y - b.y)) || 1;
+      if (b.engT > (d.rsT ??= 0.5 + (b.id % 5) * 0.08)) { d.rs = -d.rs; d.rsT = b.engT + 0.55 + clamp((b.a.blk - (passPro ? d.a.rush : d.a.str)) * 0.01, -0.2, 0.4); }
+      const quick = clamp(1 + ((d.a.agi ?? 60) - (b.a.agi ?? 60)) * 0.015, 0.5, 1.6) * (passPro ? 1 : 0.6);
+      const lat = d.rs * quick * clamp(1.1 - Math.abs(push) * 0.3, 0.3, 1.1);
+      vx += -uy * lat; vy += ux * lat;
+    }
     b.contact = d.contact = Math.abs(push) > 0.5 && b.engT > 0.3 ? 'PUSHING' : 'ENGAGED';
     for (const q of [b, d]) { q.vx = vx; q.vy = vy; q.x += vx * DT; q.y += vy * DT; }
     // Keep the blocker in front, squaring up over a few frames (never a jump on contact).

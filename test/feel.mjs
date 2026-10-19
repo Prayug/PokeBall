@@ -142,7 +142,7 @@ const rows = [
   ['bodies pressed together, no block (pair-steps/play)', C.crowd / C.plays, 3, ''],
   ['5+ body pile in the first 1.5 s (s/play)', C.pile / C.plays, 0.4, ''],
   ['biggest pile (bodies)', C.pileMax, 8, ''],
-  ['blocks standing still (% of block time)', pct(C.engStill, C.engT), 35, '%'],
+  ['blocks standing still (% of block time)', pct(C.engStill, C.engT), 10, '%'],
   ['man defender reacts to a cut (median s)', med(C.manReact), null, 's', [0.12, 0.6]],
   ['man defender never reacts (% of cuts)', pct(C.manNever, C.manCuts), 15, '%'],
   ['tackled carrier slides from the hit (median yd)', med(C.slide), 1.6, ' yd'],
