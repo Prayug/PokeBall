@@ -3,6 +3,8 @@
 import { PLAYERS, OFF_SLOTS, DEF_SLOTS, unitRatings } from './ratings.js';
 import { TYPE_TRAITS, ABILITIES, WEATHER, bestMultiplier, matchupModifier } from './types.js';
 import { PARITY, formFor } from './parity.js';
+import { schemeBonus, schemeOf } from './coach.js';
+import { coverSlot, injuryOdds, injuryWeeks } from './injuries.js';
 import { PENALTIES, announce, enforce, foul, preSnapFoul, simFouls, stateValue } from './penalties.js';
 
 // The playbook. Each run or pass has its kind, the fast simulator's numbers (depth, air yards,
@@ -122,19 +124,20 @@ const emptyStats = () => ({ pa: 0, pc: 0, py: 0, ptd: 0, pint: 0, sk: 0, ra: 0, 
 const emptyTeamStats = () => ({ plays: 0, yds: 0, passYds: 0, rushYds: 0, fd: 0, to: 0, top: 0, third: [0, 0], sacks: 0, pen: 0, penYds: 0 });
 
 function makeSide(t) {
-  const roster = [...Object.values(t.lineup), ...(t.bench ?? [])];
+  // (A two-way player covering for an injured starter is in the lineup twice: count him once.)
+  const roster = [...new Set([...Object.values(t.lineup), ...(t.bench ?? [])])];
   return {
     id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach ?? 'balanced',
     starters: { ...t.lineup }, lineup: { ...t.lineup }, bench: [...(t.bench ?? [])], roster,
     energy: Object.fromEntries(roster.map((id) => [id, t.energy?.[id] ?? 100])),
-    locks: {},
+    locks: {}, out: {},
     stats: Object.fromEntries(roster.map((id) => [id, emptyStats()])),
     team: emptyTeamStats(),
     units: unitRatings(t.lineup),
   };
 }
 
-export function createGame({ home, away, seed = Date.now(), playoff = false, weather = null, neutral = false }) {
+export function createGame({ home, away, seed = Date.now(), playoff = false, weather = null, neutral = false, injuries = false }) {
   const g = {
     seed, rng: seed >>> 0 || 1, playoff, neutral, form: formFor(seed),
     teams: [makeSide(home), makeSide(away)],
@@ -142,6 +145,8 @@ export function createGame({ home, away, seed = Date.now(), playoff = false, wea
     poss: 0, spot: 25, down: 1, toGo: 10, phase: 'play', final: false, winner: null,
     playNo: 0, ghostUsed: {}, log: [], drives: [], drive: null, lastPlay: null,
     weather: weather ?? 'clear', firstReceiver: 0,
+    // League games keep a list of the Pokémon hurt in them (see injuries below); others never roll.
+    injuries: injuries ? [] : null, call: null,
     // Clock rules: timeouts left per side this half, whether the clock is running into the
     // next snap, the two-minute warnings given, and the sides whose try and kickoff choices
     // wait for a call (the user's team; every other side's are made by the AI on the spot).
@@ -191,6 +196,7 @@ export function eff(g, ti, id, attr, ctx = {}) {
   if (p.types.includes('Dragon') && g.quarter >= 4) v += 3;
   if (attr === 'blk' && ctx.runBlock && p.types.includes('Ground')) v += TYPE_TRAITS.Ground.runBlock;
   if (attr === 'hnd' && ctx.contested && p.types.includes('Flying')) v += TYPE_TRAITS.Flying.contested;
+  v += schemeBonus(g, ti, attr);
   let m = 1;
   const w = WEATHER[g.weather];
   if (g.weather === 'sand') { if (w.immune.some((t) => p.types.includes(t))) m *= 1 + PARITY.sandImmune; }
@@ -273,7 +279,7 @@ function checkSubs(g, ti, slots) {
     if (t.locks?.[slot] != null) continue;
     const cur = t.lineup[slot];
     const value = (id) => PLAYERS[id].ovr[slot] * (0.85 + 0.15 * energyOf(g, ti, id) / 100);
-    const cands = [t.starters[slot], ...t.bench].filter((id) => id !== cur && !onField.has(id) && energyOf(g, ti, id) >= 75);
+    const cands = [t.starters[slot], ...t.bench].filter((id) => id !== cur && !onField.has(id) && !t.out[id] && energyOf(g, ti, id) >= 75);
     let best = cur, bestV = value(cur) + 2;
     for (const id of cands) if (value(id) > bestV) { best = id; bestV = value(id); }
     if (best !== cur) {
@@ -293,12 +299,12 @@ export function manualSub(g, ti, slot, id) {
   if (id == null) {
     delete t.locks[slot];
     const s = t.starters[slot];
-    if (s === cur || onField.has(s) || !t.roster.includes(s)) return false;
+    if (s === cur || onField.has(s) || !t.roster.includes(s) || t.out?.[s]) return false;
     t.lineup[slot] = s;
     addLog(g, { kind: 'sub', text: `${t.abbr} sub: ${nm(s)} back in for ${nm(cur)} at ${slot}.` });
     return true;
   }
-  if (onField.has(id) || !t.roster.includes(id)) return false;
+  if (onField.has(id) || !t.roster.includes(id) || t.out?.[id]) return false;
   t.lineup[slot] = id;
   t.locks[slot] = id;
   addLog(g, { kind: 'sub', text: `${t.abbr} sub: ${nm(id)} in for ${nm(cur)} at ${slot}, coach's call.` });
@@ -699,6 +705,7 @@ export function runPlay(g, offCall, defCall) {
   if (g.clockRunning && !snapClock(g, null, offCall)) return null;
   const play = OFF_PLAYS[offCall];
   g.playNo++;
+  setCall(g, offCall, defCall);
   // Runs and passes can draw a flag: before the snap (no play), or during it.
   if (play.kind === 'run' || play.kind === 'pass') {
     const pre = preSnapFoul(g);
@@ -732,6 +739,10 @@ function clockPlay(g, kind) {
   s.ra++; s.ry += yards;
   return { kind: 'run', yards, carrier: qb, text: `${nm(qb)} takes a knee.`, head: 'Kneel' };
 }
+
+// The play being run, for the schemes' attribute edges (see coach.js). The live field sets it
+// before it builds the players; the fast simulator when it resolves the play.
+export function setCall(g, off, def) { g.call = { off, def, o: g.poss }; }
 
 // A run or pass played out on the live field: live.js decides what happened and keeps the
 // player stats; this applies it to the down, distance, score and clock like any other play.
@@ -776,6 +787,7 @@ function finishPlay(g, r, base, offCall, defCall, playSecs) {
   if (r.fouls?.length && !r.special) return flagged(g, r, before, ctx);
   const entry = resolve(g, r, before, offCall, defCall);
   if (entry && r.oob && !r.special) entry.oob = true;
+  if (g.injuries && r.hit && !g.final) injuryCheck(g, o, r.hit);
   return afterPlay(g, entry, ctx);
 }
 
@@ -784,6 +796,7 @@ function finishPlay(g, r, base, offCall, defCall, playSecs) {
 function afterPlay(g, entry, ctx, untimed = false) {
   const { o, q, clockBefore } = ctx;
   g.lastPlay = entry;
+  g.call = null;
   g.clockRunning = !ctx.stopped && g.poss === o && g.phase === 'play' && g.quarter === q && !g.final;
   if (lateHalf(g) && q <= 4 && g.quarter === q && !g.warned[q] && clockBefore > 120 && g.clock <= 120 && g.clock > 0) {
     g.warned[q] = true; g.clockRunning = false;
@@ -1195,7 +1208,7 @@ function doRun(g, call, defCall, qbRun = false) {
       if (chance(g, 0.55)) {
         const spotAt = clamp(g.spot + yards, 1, 99);
         return { kind: 'run', yards, carrier, text: text + ` FUMBLE! ${g.teams[d].name} recover.`, turnover: 'fumble',
-          returnSpot: 100 - spotAt, highlight: 'turnover', clockStop: true, se };
+          returnSpot: 100 - spotAt, highlight: 'turnover', clockStop: true, se, hit: { carrier, tackler } };
       }
       text += ' Fumble, but the offense recovers.';
     }
@@ -1204,7 +1217,8 @@ function doRun(g, call, defCall, qbRun = false) {
   // An outside run ends out of bounds now and then; more often when the runner is trying to save clock.
   const out = !td && dir === 'outside' && chance(g, aiTempo(g) === 'hurry' ? 0.4 : 0.2);
   if (out) text = text.replace(/ Tackled by [^.]*\./, ' Pushed out of bounds.');
-  return { kind: 'run', yards, carrier, scorer: carrier, text, oob: out, clockStop: out, highlight: bigPlay, se };
+  return { kind: 'run', yards, carrier, scorer: carrier, text, oob: out, clockStop: out, highlight: bigPlay, se,
+    hit: td ? null : { carrier, tackler } };
 }
 
 function doPass(g, call, defCall) {
@@ -1256,11 +1270,11 @@ function doPass(g, call, defCall) {
         if (chance(g, 0.6)) {
           const spotAt = clamp(g.spot - loss, 1, 99);
           return { kind: 'sack', yards: -loss, carrier: qb, text: text + ` Strip sack! ${g.teams[d].name} recover.`,
-            turnover: 'fumble', returnSpot: 100 - spotAt, highlight: 'turnover', clockStop: true, se: sackSE };
+            turnover: 'fumble', returnSpot: 100 - spotAt, highlight: 'turnover', clockStop: true, se: sackSE, hit: { carrier: qb, tackler: sacker } };
         }
         text += ' The ball comes loose, but the offense falls on it.';
       }
-      return { kind: 'sack', yards: -loss, carrier: qb, text, highlight: 'sack', se: sackSE };
+      return { kind: 'sack', yards: -loss, carrier: qb, text, highlight: 'sack', se: sackSE, hit: { carrier: qb, tackler: sacker } };
     }
     if (chance(g, clamp((qbSpd - 55) / 220, 0, 0.25))) {
       const yards = Math.max(-2, Math.round(4 + (qbSpd - 65) * 0.06 + 3.5 * randn(g)));
@@ -1365,13 +1379,14 @@ function doPass(g, call, defCall) {
         rs.fum++; st(g, d, finalTackler).ff++;
         const spotAt = clamp(g.spot + yards, 1, 99);
         return { kind: 'pass', yards, carrier: tgt, qb, text: text + ` FUMBLE! ${g.teams[d].name} recover.`, turnover: 'fumble',
-          returnSpot: 100 - spotAt, highlight: 'turnover', clockStop: true, se: best.se };
+          returnSpot: 100 - spotAt, highlight: 'turnover', clockStop: true, se: best.se, hit: { carrier: tgt, tackler: finalTackler } };
       }
     }
     // Sideline routes often end out of bounds; in the two-minute drill receivers get there on purpose.
     const out = !td && chance(g, (play.sideline ? 0.5 : 0.04) + (aiTempo(g) === 'hurry' ? 0.25 : 0));
     if (out) text = text.replace(/ Tackled by [^.]*\./, ' Out of bounds.');
-    return { kind: 'pass', yards, carrier: tgt, scorer: tgt, qb, text, oob: out, clockStop: out, air, highlight: yards >= 20 ? 'big' : null, se: best.se };
+    return { kind: 'pass', yards, carrier: tgt, scorer: tgt, qb, text, oob: out, clockStop: out, air, highlight: yards >= 20 ? 'big' : null, se: best.se,
+      hit: td ? null : { carrier: tgt, tackler: finalTackler } };
   }
 
   // Incomplete or intercepted
@@ -1395,6 +1410,40 @@ function doPass(g, call, defCall) {
   let text = `${nm(qb)}'s pass for ${nm(tgt)} ${route} falls incomplete`;
   if (cov != null && chance(g, 0.45)) { st(g, d, cov).pd++; text += `, broken up by ${nm(cov)}`; }
   return { kind: 'pass', yards: 0, carrier: qb, qb, text: text + '.', clockStop: true, incomplete: true, cov, air };
+}
+
+// ---------- injuries ----------
+// League games only. On every tackle both bodies roll a small chance of a multi-week injury,
+// larger for the one that took a hit from a much heavier Pokémon and (on the live field) when
+// they met at speed. An injured Pokémon leaves the game: the best healthy backup takes the slot,
+// or with no bench a starter from the other side of the ball plays both ways.
+function injuryCheck(g, o, hit) {
+  const pairs = [[o, hit.carrier, hit.tackler], [1 - o, hit.tackler, hit.carrier]];
+  for (const [ti, id, by] of pairs) {
+    if (id == null || by == null || g.teams[ti].out[id] || !g.teams[ti].roster.includes(id)) continue;
+    const odds = injuryOdds(id, by, hit.speed, eff(g, ti, id, 'sta'));
+    if (!chance(g, odds)) continue;
+    injure(g, ti, id, injuryWeeks(id, by, rand(g)), by);
+  }
+}
+
+function injure(g, ti, id, weeks, by) {
+  const t = g.teams[ti];
+  t.out[id] = weeks;
+  t.energy[id] = 0;
+  g.injuries.push({ team: t.id, id, weeks, by, q: g.quarter, clock: g.clock });
+  const subs = [];
+  for (const slot of Object.keys(t.lineup)) {
+    if (t.lineup[slot] !== id) continue;
+    const bench = t.bench.filter((b) => !t.out[b] && !Object.values(t.lineup).includes(b));
+    const sub = coverSlot(t.lineup, bench, slot, (x) => !!t.out[x]);
+    if (sub == null) continue;
+    t.lineup[slot] = sub;
+    if (t.locks[slot] != null) delete t.locks[slot];
+    subs.push(`${nm(sub)} takes over at ${slot}${bench.includes(sub) ? '' : ', playing both ways'}`);
+  }
+  addLog(g, { kind: 'injury', team: ti, who: id,
+    text: `Injury: ${nm(id)} is hurt on the hit from ${nm(by)} and won't return. Expected to miss ${weeks} weeks.${subs.length ? ` ${subs.join('; ')}.` : ''}` });
 }
 
 // ---------- AI coach ----------
@@ -1430,6 +1479,7 @@ export function offenseLean(g) {
   pPass += (t.units.passOff - t.units.runOff) / 50;
   if (t.coach === 'speed') pPass += 0.05;
   if (t.coach === 'trench') pPass -= 0.07;
+  pPass += schemeOf(t.coach)?.pass ?? 0;
   return clamp(pPass, 0.1, 0.95);
 }
 
@@ -1478,6 +1528,8 @@ export function passWeights(g) {
     pa_deep: red ? 0.1 : (g.down === 1 ? 0.55 : 0.2) + Math.max(0, speedEdge) / 40,
   };
   if (t.coach === 'speed') { w.post *= 1.4; w.pa_deep *= 1.4; }
+  if (t.coach === 'airraid') { w.slant *= 1.2; w.curl *= 1.2; w.post *= 1.3; }
+  if (t.coach === 'ground') w.pa_deep *= 1.8;
   // The two-minute drill works the sidelines.
   if (aiTempo(g) === 'hurry') { w.out *= 2; w.screen *= 0.5; }
   if (g.toGo > 15) { w.screen *= 0.5; w.slant *= 0.4; }
@@ -1504,7 +1556,7 @@ export function runWeights(g) {
   const A = (ti, id, a) => eff(g, ti, id, a);
   const w = { inside_run: 1.2, outside_run: 1 + (A(o, L.RB, 'spd') - 70) / 30, draw: g.toGo >= 7 ? 0.8 : 0.25 };
   if (g.toGo <= 1) w.qb_sneak = 0.6 + Math.max(0, A(o, L.QB, 'str') - 65) / 30;
-  if (t.coach === 'trench') w.inside_run *= 1.5;
+  if (t.coach === 'trench' || t.coach === 'ground') w.inside_run *= 1.5;
   spread(w, 'run');
   // Designed quarterback runs, more for a quarterback who can run.
   const legs = (A(o, L.QB, 'spd') - 60) / 40;
@@ -1533,11 +1585,13 @@ export function defenseWeights(g) {
   if (g.quarter >= 4 && lead > 0 && lead <= 8 && g.clock < 120) w.prevent = (w.prevent ?? 0) + 4;
   if (coach === 'trench') { w.pass_blitz = (w.pass_blitz ?? 0) * 1.5 + 0.5; w.run_blitz = (w.run_blitz ?? 0) * 1.3; }
   if (coach === 'speed') w.man_press = (w.man_press ?? 0) * 1.6 + 0.5;
+  if (coach === 'd46') { w.pass_blitz = (w.pass_blitz ?? 0) * 1.7 + 0.8; w.run_blitz = (w.run_blitz ?? 0) * 1.6 + 0.5; }
   spread(w, 'def');
   // A few calls the down asks for by name: quarters and Tampa 2 on long yardage, an all-out
   // blitz when the offense needs only a yard or two.
   if (g.down >= 3 && g.toGo >= 7) { w.cover4 = (w.cover4 ?? 0) + 1; w.tampa2 = (w.tampa2 ?? 0) + 0.8; }
   if (g.toGo <= 2) w.cover0 = (w.cover0 ?? 0) + 0.5;
+  if (coach === 'd46') { w.fire_zone = (w.fire_zone ?? 0) * 1.5; w.cover0 = (w.cover0 ?? 0) + 0.3; }
   return w;
 }
 

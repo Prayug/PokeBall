@@ -111,7 +111,9 @@ Ball carriers have three moves, each better in a different spot: a juke beats a 
 
 ## League mode
 
-A league is eight teams: yours and seven AI teams, each with a coach style (Speed Kills, Trench Builder, Type Stacker or Best Available) that shapes how it drafts, calls plays and trades. The home screen sets the team name, the draft length (24 rounds fills the 22 starters plus a kicker and punter; 28 adds four bench Pokémon), a cap of four Pokémon of one primary type, whether legendaries are in the pool and an optional 60-second pick clock.
+A league is eight teams: yours and seven AI teams, each with a coach style (Speed Kills, Trench Builder, Type Stacker or Best Available) that shapes how it drafts, calls plays and trades. The home screen sets the team name, the draft length (24 rounds fills the 22 starters plus a kicker and punter; 28 adds four bench Pokémon), a cap of four Pokémon of one primary type, whether legendaries are in the pool, an optional 60-second pick clock, and your scheme.
+
+**Your scheme.** Pick a coaching identity at league start: Balanced, Air Raid, Ground and Pound or 46 Defense. A scheme gives its players a small ratings edge on the plays it is built around (Air Raid passes, Ground and Pound runs, 46 Defense blitzes) at a small cost on the others, leans the AI's play calling when it calls for you, and changes what your auto-picks reach for (Air Raid takes quarterbacks and receivers early, Ground and Pound linemen and backs, 46 Defense the front seven). The call sheet tags your scheme's plays.
 
 **Draft.** A snake draft in a random order. The board sorts and filters by type and rating and shows where each Pokémon fits your open slots; "Auto-draft the rest" hands your remaining picks to the AI. After the last pick, the grades screen scores every team's pass offense, run offense, pass rush, coverage and run defense against the league, from A+ to F.
 
@@ -128,6 +130,10 @@ A league is eight teams: yours and seven AI teams, each with a coach style (Spee
 **Subs.** Tired starters come out at the start of a drive for a fresher bench Pokémon who would play better at that slot. The "Lineup and subs" tab shows each slot's energy and lets you make your own subs; a coach's sub stays in, and the auto-sub leaves that slot alone, until you send the starter back.
 
 **Soreness.** Energy carries over between games. A Pokémon who finished a game worn out starts the next one sore, below full energy; the most exhausted (at most two a team) are out for a week when the bench can cover them, and a team with no bench plays them hurt. The depth chart and the scouting report tag who is sore and who is out.
+
+**Injuries.** Separate from soreness and much rarer (a few a season across the league): any tackle in a league game, simulated or live, can hurt either Pokémon, more often the smaller one in a big size mismatch and, on the live field, when they met at speed. An injured Pokémon leaves the game and misses two to five more; the best healthy backup covers, or with no bench a starter from the other side of the ball plays both ways. The season screen's injury report, the scouting report (yours and theirs), the depth chart and the box score show who is hurt and for how long. Injuries heal over the offseason.
+
+**Week in review.** After each week the season screen names a Player of the Week, gives every game a one-line headline (routs, comebacks, upsets by the power ranking, overtime, the star's line), and ranks every team by record, point margin, recent form and, early on, roster strength, with each team's move since the week before. Headlines and Players of the Week also go into the downloaded recap.
 
 **Playoffs and awards.** The top four seeds play semifinals (1 against 4 and 2 against 3, the higher seed at home), then a championship game; you can watch the rounds you are not in. When the season ends the champion screen shows your record and team star, the bracket and the awards: most valuable player, offensive and defensive player of the year, and from the second season on, rookie of the year. "Download recap" saves the season as text.
 
@@ -166,6 +172,9 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/audio.js` | Synthesized crowd and game sounds |
 | `src/playbook.js` | Play art for the call sheet |
 | `src/league.js` | Snake draft, AI drafters, schedule, standings, playoffs, league leaders |
+| `src/coach.js` | Coaching schemes: their draft lean, play-calling lean and ratings edges |
+| `src/injuries.js` | Injury odds, who covers an injured starter, the league's injury list and healing |
+| `src/weekly.js` | Game headlines, Player of the Week and the power ranking |
 | `src/freeagency.js` | Free agency: salaries from overall rating, the league cap, AI bidding and sealed-bid rounds |
 | `src/records.js` | Career stats, the Hall of Fame, franchise record books and the all-time head-to-head behind rivalries |
 | `src/ratings.js` | Base stats to football attributes, the 22 slots, position overalls, auto depth chart |
@@ -193,7 +202,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `test/formations.mjs` | Lines up every offensive formation against every front for eight teams at five spots on the field and runs the formation check on each (`--print` lists the positions) |
 | `src/traits.js` | Abilities and types that act during a live snap |
 | `test/top.mjs` | Lists the top Pokémon at each position |
-| `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness and subs, the playoffs and awards, the offseason, cuts, free agency and the rookie draft, then the next season, with career records, the Hall of Fame, record books and rivalries) and checks every step, plus that an exported save plays on to the same results (exits 1 on failure) |
+| `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness, injuries, subs and the weekly reviews, scheme edges and draft lean, the playoffs and awards, the offseason, cuts, free agency and the rookie draft, then the next season, with career records, the Hall of Fame, record books and rivalries) and checks every step, plus that an exported save plays on to the same results (exits 1 on failure) |
 | `test/clock.mjs` | Checks the clock rules (runoff by tempo, what stops the clock, the two-minute warning, timeouts, spike and kneel, the try and onside kicks) in set situations, then plays seeded games with the rules checked after every snap (exits 1 on failure) |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
 

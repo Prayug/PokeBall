@@ -7,6 +7,7 @@ import { diagram, formationName } from '../playbook.js';
 import { render } from '../app.js';
 import { S } from '../state.js';
 import { esc } from '../ui.js';
+import { SCHEMES, schemePlay } from '../coach.js';
 import { userSide } from './game.js';
 
 // Play families for the call sheet: a short label and a colored edge per group.
@@ -128,6 +129,8 @@ export function callSheetHtml(g) {
   const fg = fgDistance(g);
   const side = onOff ? 'off' : 'def';
   const curCalls = new Set(tabs.find(([k]) => k === cur)[2].map((c) => c.call));
+  // Plays the user's scheme is built around get a tag (see coach.js).
+  const coach = g.teams[userSide()].coach;
   const card = ({ call, label: key, fam }) => {
     const label = curCalls.has(call) || KICK_KEYS[call] ? key : null;
     const p = onOff ? OFF_PLAYS[call] : DEF_PLAYS[call];
@@ -140,7 +143,7 @@ export function callSheetHtml(g) {
     return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" title="${esc(extra)}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
       <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call))}${label ? `<kbd>${label}</kbd>` : ''}${call === fit ? '<em class="fittag">Fits</em>' : ''}</span>
       <span class="pname">${p.name}</span>
-      <span class="pc-top"><em class="pc-kind">${tag}</em>${form ? `<span class="pc-form">${esc(form)}</span>` : ''}</span>
+      <span class="pc-top"><em class="pc-kind">${tag}</em>${schemePlay(coach, call) ? `<em class="pc-scheme" title="${esc(SCHEMES[coach].name)} plays get a small edge">${esc(SCHEMES[coach].name)}</em>` : ''}${form ? `<span class="pc-form">${esc(form)}</span>` : ''}</span>
       <span class="pblurb">${esc(extra)}</span></button>`;
   };
   const who = g.phase === 'penalty' ? 'Your call' : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;

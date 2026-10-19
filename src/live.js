@@ -5,7 +5,7 @@
 // y runs across the field (sidelines at ±SIDE). No DOM access, so tests can run it headless.
 import { traitMod } from './traits.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
-import { OFF_PLAYS, aiTempo, chance, clamp, eff, fumbleCheck, nm, oobStops, rand, rep, sigmoid, snapStats, st } from './engine.js';
+import { OFF_PLAYS, aiTempo, chance, clamp, eff, fumbleCheck, nm, oobStops, rand, rep, setCall, sigmoid, snapStats, st } from './engine.js';
 import { bodyOf } from './body.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
 import { DEF_SCHEMES, coverWant, pursueWant, rushWant, setupDefense } from './live/defense.js';
@@ -45,6 +45,7 @@ export const mustGain = (lp) => (lp.g.down ?? 1) >= 3 && sticks(lp) > 1;
 
 // ---------- setup ----------
 export function createLivePlay(g, offCall, defCall, opts = {}) {
+  setCall(g, offCall, defCall);
   const o = g.poss, d = 1 - o;
   const play = OFF_PLAYS[offCall];
   // The extra point lines up at the 15, not at the 2 where a two-point try is run.
@@ -1362,7 +1363,8 @@ function startTackle(lp, c, q, sack, dove) {
   const mark = c.side === 'off' ? (lp.spot + sticks(lp) >= 100 ? lp.goalX : sticks(lp)) : null;
   const reach = mark != null && mark - c.x > 0 && mark - c.x < 1.5 ? 0.35 : 0;
   const lean = sack ? 0 : clamp(0.3 + reach + (c.a.strBT - q.a.tkl) * 0.012 + Math.max(0, c.vx * fwd) * 0.07 + Math.log(mc / mq) * 0.35 - (headOn ? 0.35 : 0), 0, 1.4 + reach);
-  lp.tackle = { c, q, sack, t0: lp.t, T: TACKLE_T * (1 + drag), vx, vy, fp: c.x, fwd, dove, lean, contact: { x: c.x, y: c.y } };
+  lp.tackle = { c, q, sack, t0: lp.t, T: TACKLE_T * (1 + drag), vx, vy, fp: c.x, fwd, dove, lean, contact: { x: c.x, y: c.y },
+    impact: len(c.vx - q.vx, c.vy - q.vy) };
   if (lp.windup) lp.windup = null;
   c.slow = 0; q.dive = dove ? 0.3 : q.dive;
   event(lp, 'contact', `${nm(q.id)} wraps up ${nm(c.id)}`, q, c);
@@ -1481,6 +1483,9 @@ export function finish(lp, end) {
   lp.deadAt = lp.t;
   lp.end = end;
   lp.result = lp.kick ? kickResult(lp, end) : buildResult(lp, end);
+  // The hit, for the league's injury roll (engine.js): who wrapped up whom, and how fast they met.
+  const T = lp.tackle;
+  if (!lp.kick && T && end.tackler && !lp.intercepted && lp.result) lp.result.hit = { carrier: T.c.id, tackler: T.q.id, speed: T.impact };
   if (lp.fake && lp.result.text) lp.result.text = `${lp.fake === 'punt' ? 'Fake punt!' : 'Fake field goal!'} ${lp.result.text}`;
   if (lp.fouls?.length) { lp.result.fouls = lp.fouls; lp.result.statSnap = lp.statSnap; }
 }

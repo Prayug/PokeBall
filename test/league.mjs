@@ -7,10 +7,12 @@
 // Exits non-zero on any failure.
 // Usage: node test/league.mjs [seasons, default 2] [seed, default 11]
 import * as LG from '../src/league.js';
+import { PLAYERS, SLOT, SLOT_KEYS, applyGrowth } from '../src/ratings.js';
+import { createGame, simUntil } from '../src/engine.js';
+import { SCHEMES, schemeBonus } from '../src/coach.js';
+import { injuryOdds } from '../src/injuries.js';
 import * as FA from '../src/freeagency.js';
 import * as RC from '../src/records.js';
-import { PLAYERS, SLOT_KEYS, applyGrowth } from '../src/ratings.js';
-import { simUntil } from '../src/engine.js';
 
 const SEASONS = Number(process.argv[2] ?? 2);
 const SEED = Number(process.argv[3] ?? 11);
@@ -98,18 +100,45 @@ function checkTrade(L) {
   check(!LG.acceptTrade(L), `season ${L.season} trade: cannot be accepted twice`);
 }
 
-// Who is out this week sits, when the bench can cover; sore players start below full energy.
+// Injured Pokémon never play; who is out sore sits when the bench can cover (what is left of it
+// after the injuries are covered); sore players start below full energy.
 function checkCondition(L) {
   for (const t of L.teams) {
     const side = LG.teamForGame(t, L);
     const outStarters = Object.values(side.lineup).filter((id) => L.condition[id]?.out);
-    const benchOk = t.bench.filter((id) => !L.condition[id]?.out).length;
-    check(!outStarters.length || benchOk === 0, `week ${L.week + 1}: ${t.abbr} starts ${outStarters.length} Pokémon who are out`);
+    check(!outStarters.length || side.bench.length === 0, `week ${L.week + 1}: ${t.abbr} starts ${outStarters.length} Pokémon who are out with healthy bench left`);
+    const hurt = [...Object.values(side.lineup), ...side.bench].filter((id) => L.injuries[id]);
+    check(!hurt.length, `week ${L.week + 1}: ${t.abbr} dresses ${hurt.length} injured Pokémon`);
+    check(Object.values(side.lineup).every((id) => t.roster.includes(id)), `week ${L.week + 1}: ${t.abbr} covers injuries from its own roster`);
     check(SLOT_KEYS.every((k) => side.lineup[k] != null), `week ${L.week + 1}: ${t.abbr} fields a full lineup`);
     for (const [id, e] of Object.entries(side.energy ?? {})) check(e >= 0 && e <= 100, `week ${L.week + 1}: ${PLAYERS[id].name} starts at ${e} energy`);
   }
   const outByTeam = L.teams.map((t) => t.roster.filter((id) => L.condition[id]?.out).length);
   check(outByTeam.every((k) => k <= LG.MAX_OUT), `week ${L.week + 1}: at most ${LG.MAX_OUT} out per team (${outByTeam.join(' ')})`);
+}
+
+// The week in review: a Player of the Week from one of the week's games, a power ranking of
+// every team, and a headline on every game.
+function checkWeekly(L, label) {
+  const W = L.weekly[L.weekly.length - 1];
+  check(W?.label === label, `${label}: week in review written (${W?.label})`);
+  if (!W) return;
+  const games = W.games.map((i) => L.results[i]);
+  check(games.length > 0 && games.every((r) => typeof r.headline === 'string' && r.headline.length > 10), `${label}: every game has a headline`);
+  check(games.every((r) => r.headline.includes(`${Math.max(...r.score)}-${Math.min(...r.score)}`)), `${label}: headlines carry the score`);
+  const teamsIn = new Set(games.flatMap((r) => [r.home, r.away]));
+  check(W.potw && PLAYERS[W.potw.id] && teamsIn.has(W.potw.team) && L.teams[W.potw.team].roster.includes(W.potw.id), `${label}: Player of the Week plays for a team that played`);
+  if (!W.playoff) check(W.power && same(W.power.slice().sort(), L.teams.map((t) => t.id).sort()), `${label}: power ranking lists every team once`);
+}
+
+// Injuries: rare, two to five games, and healing one game per week.
+function checkInjuries(L, before) {
+  for (const [id, inj] of Object.entries(L.injuries)) {
+    check(inj.weeks >= 1 && inj.weeks <= 5, `week ${L.week}: ${PLAYERS[id].name} out ${inj.weeks} games`);
+    check(L.teams[inj.team].roster.includes(Number(id)), `week ${L.week}: ${PLAYERS[id].name} is on the team that lost him`);
+    const prev = before[id];
+    if (prev && !inj.fresh) check(inj.weeks === prev.weeks - (prev.fresh ? 0 : 1), `week ${L.week}: ${PLAYERS[id].name} heals a game a week`);
+  }
 }
 
 function checkSeason(L) {
@@ -262,8 +291,10 @@ function checkRecords(L, seasonStats) {
 
 // ---------- the dynasty ----------
 
+let totalInjuries = 0, totalGames = 0;
 function runDynasty(seed, seasons, { exportAt = null } = {}) {
-  const L = LG.createLeague({ seed, rounds: 26 });
+  const L = LG.createLeague({ seed, rounds: 26, scheme: 'airraid' });
+  check(L.teams[0].coach === 'airraid', 'league: your scheme is set');
   const rosterSize = L.settings.rounds;
   let exported = null;
   check(L.phase === 'draft' && L.picks.length === L.teams.length * rosterSize, 'league: snake draft laid out');
@@ -277,10 +308,18 @@ function runDynasty(seed, seasons, { exportAt = null } = {}) {
     while (L.phase === 'season') {
       if (exportAt && L.season === exportAt.season && L.week === exportAt.week) exported = JSON.stringify({ league: L, game: null, gameMeta: null, screen: 'season' });
       checkCondition(L);
+      const label = `season ${L.season} week ${L.week + 1}`, wk = `Week ${L.week + 1}`;
+      const before = JSON.parse(JSON.stringify(L.injuries));
       playWeek(L);
+      check(L.weekly[L.weekly.length - 1]?.label === wk, `${label}: review labelled ${wk}`);
+      checkWeekly(L, wk);
+      checkInjuries(L, before);
     }
+    const hurt = L.results.flatMap((r) => r.injuries ?? []);
+    totalInjuries += hurt.length; totalGames += L.results.length;
+    check(hurt.every((x) => x.weeks >= 2 && x.weeks <= 5), `season ${L.season}: injuries last 2 to 5 games`);
     checkSeason(L);
-    while (L.phase === 'playoffs') playPlayoffRound(L);
+    while (L.phase === 'playoffs') { const lab = L.playoffs.round === 0 ? 'Semifinals' : 'Championship'; playPlayoffRound(L); checkWeekly(L, lab); }
     checkPlayoffs(L);
     const champ = L.teams[L.champion];
     console.log(`ok   season ${L.season}: ${LG.standings(L).map((r) => `${L.teams[r.id].abbr} ${r.w}-${r.l}${r.t ? `-${r.t}` : ''}`).join(', ')}; champion ${champ.abbr}`);
@@ -302,6 +341,7 @@ function runDynasty(seed, seasons, { exportAt = null } = {}) {
     const ovr = (id) => PLAYERS[id].ovr[PLAYERS[id].best[0]];
     const mine = me.roster.slice().sort((a, b) => ovr(a) - ovr(b)).slice(0, LG.CUTS);
     LG.finishOffseason(L, mine);
+    check(!Object.keys(L.injuries).length && !L.weekly.length, `season ${L.season}: injuries heal and the weekly reviews reset over the offseason`);
     check(mine.every((id) => !me.roster.includes(id)), `season ${L.season} cuts: your hand-picked cuts are gone`);
     check(L.teams.every((t) => t.roster.length === rosterSize - LG.CUTS), `season ${L.season} cuts: every team is down ${LG.CUTS}`);
     runFreeAgency(L, rosterSize);
@@ -337,6 +377,42 @@ check(firstSeason(L) === again.champion, 'dynasty: the same seed crowns the same
   delete v1.version;
   LG.migrateLeague(v1);
   check(v1.version === 2 && v1.season === 1 && Array.isArray(v1.history) && v1.growth && v1.condition && Array.isArray(v1.rookies), 'save: a version 1 save migrates');
+}
+
+// Injuries stay rare: a few per season league-wide, not one a game.
+const rate = totalInjuries / Math.max(1, totalGames);
+check(totalInjuries > 0 && rate < 0.6, `injuries: ${totalInjuries} in ${totalGames} games (${rate.toFixed(2)} a game)`);
+console.log(`ok   injuries: ${totalInjuries} in ${totalGames} games`);
+// Size mismatch drives the odds: a Rotom hit by a Snorlax is far likelier hurt than the reverse.
+check(injuryOdds(479, 143) > 3 * injuryOdds(143, 479), 'injuries: the small body takes the risk in a size mismatch');
+
+// Schemes: the edge on the plays they are built around, the cost on the others, and the draft lean.
+{
+  const L = LG.createLeague({ seed: 5, numTeams: 2, rounds: 26, scheme: 'airraid' });
+  while (L.phase === 'draft') { const c = LG.aiChoosePick(L); LG.makePick(L, c.id, c.slot); }
+  const g = createGame({ home: LG.teamForGame(L.teams[0], L), away: LG.teamForGame(L.teams[1], L), seed: 1 });
+  g.poss = 0;
+  g.call = { off: 'slant', def: 'cover3', o: 0 };
+  check(schemeBonus(g, 0, 'acc') === SCHEMES.airraid.off.pass.acc && schemeBonus(g, 1, 'acc') === 0, 'schemes: Air Raid passers play up on pass plays, the other side does not');
+  g.call = { off: 'inside_run', def: 'base', o: 0 };
+  check(schemeBonus(g, 0, 'blk') < 0, 'schemes: Air Raid gives up some push on runs');
+  g.teams[1].coach = 'd46';
+  g.call = { off: 'slant', def: 'nickel_blitz', o: 0 };
+  check(schemeBonus(g, 1, 'rush') > 0, 'schemes: a 46 defense rushes harder on a blitz');
+  g.call = { off: 'slant', def: 'cover3', o: 0 };
+  check(schemeBonus(g, 1, 'cov') < 0, 'schemes: and covers a step slower otherwise');
+  const groups = (scheme) => {
+    let n = 0;
+    for (const seed of [1, 2, 3, 4]) {
+      const X = LG.createLeague({ seed, rounds: 24, scheme });
+      while (X.phase === 'draft') { const c = LG.aiChoosePick(X); LG.makePick(X, c.id, c.slot); }
+      const mine = X.picks.filter((p) => p.team === 0).slice(0, 8);
+      n += mine.filter((p) => ['QB', 'WR'].includes(SLOT[p.slot]?.group)).length;
+    }
+    return n;
+  };
+  const air = groups('airraid'), ground = groups('ground');
+  check(air > ground, `schemes: Air Raid auto-drafts more passers and receivers early (${air} vs ${ground} in the first 8 picks)`);
 }
 
 applyGrowth({});

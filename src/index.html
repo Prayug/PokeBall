@@ -295,6 +295,31 @@ textarea { background: var(--turf-deep); border: 1px solid var(--line); color: v
 .cond { font: 600 10px/1.1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 4px; border-radius: 3px; }
 .cond.out { background: var(--red); color: var(--red-ink); }
 .cond.sore { color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent); }
+.cond.hurt { background: color-mix(in srgb, var(--red) 22%, transparent); color: var(--chalk); border: 1px solid var(--red); }
+/* Scheme pick on the setup form, the call sheet's scheme tag */
+.schemes { display: grid; gap: 6px; }
+.schemepick { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: start; background: var(--turf-deep); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; color: var(--chalk); cursor: pointer; }
+.schemepick:has(input:checked) { border-color: var(--amber); }
+.schemepick input { grid-row: span 2; margin: 3px 0 0; }
+.schemepick b, .schemepick span { grid-column: 2; }
+.pc-scheme { font-style: normal; color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent); padding: 1px 4px; border-radius: 3px; white-space: nowrap; }
+/* Weekly hooks: the week in review, power ranking */
+.potw { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.potw > span { display: grid; gap: 2px; justify-items: start; }
+.potw em { font: 600 12px/1 var(--f-data); color: var(--amber); font-style: normal; text-transform: uppercase; letter-spacing: 0.06em; }
+.headlines, .power { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.headlines li { font-size: 14px; }
+.headlines li.mine { box-shadow: inset 3px 0 0 var(--red); padding-left: 6px; }
+.headlines .resline .hl { flex: 1 1 220px; color: var(--chalk); }
+.results .hl { flex-basis: 100%; }
+.power li { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.power li.me .pn { color: var(--amber); }
+.power .rk { font-family: var(--f-data); min-width: 18px; text-align: right; }
+.power .mv { font: 600 11px/1 var(--f-data); min-width: 26px; color: var(--chalk-dim); }
+.power .mv.up { color: #7fdc93; }
+.power .mv.down { color: var(--red); }
+.power .pn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.health li.me { box-shadow: inset 3px 0 0 var(--red); padding-left: 6px; }
 .scout .plan { font-size: 16px; }
 .opprow { display: flex; gap: 2px; flex-wrap: wrap; align-items: center; }
 .opprow > .muted { min-width: 92px; }
