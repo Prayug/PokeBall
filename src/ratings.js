@@ -134,7 +134,12 @@ function buildPlayers() {
     const shown = { ...attrs };
     for (const t of p.types) for (const [k, v] of Object.entries(TYPE_TRAITS[t].attr ?? {})) shown[k] += v;
     const ab = ABILITIES[ability];
-    if (ab?.attr && !ab.when) for (const [k, v] of Object.entries(ab.attr)) if (k !== 'all') shown[k] += v;
+    if (ab?.attr && !ab.when) {
+      for (const [k, v] of Object.entries(ab.attr)) {
+        if (k === 'all') for (const a of Object.keys(shown)) shown[a] += v;
+        else shown[k] += v;
+      }
+    }
     if (ab?.special === 'download') {
       const best = Object.keys(shown).reduce((a, b) => (shown[a] >= shown[b] ? a : b));
       shown[best] += 4;
