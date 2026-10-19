@@ -1515,6 +1515,11 @@ function contacts(lp) {
     if (c.spin > 0) p -= (user ? 0.3 : 0.17) * (0.3 + (c.a.spd + c.a.strBT) / 320 - q.a.tkl / 400) * (headOn ? 1.25 : 0.8);
     if (c.truck > 0) p -= 0.08 + (c.a.strBT - q.a.tkl) * 0.012 + clamp(Math.log(PLAYERS[c.id].weight / Math.max(1, PLAYERS[q.id].weight)) * 0.06, -0.12, 0.15);
     if (q.dive != null && q.dive > 0) p += 0.1;
+    // How he arrives: square and closing fast wraps up; chasing from behind is an arm tackle.
+    const ux = (c.x - q.x) / (dd || 1), uy = (c.y - q.y) / (dd || 1);
+    const closing = (q.vx - c.vx) * ux + (q.vy - c.vy) * uy;
+    const behind = (c.vx * ux + c.vy * uy) > 0.6 * cs && cs > 3;
+    p += clamp((closing - 3) * 0.02, -0.08, 0.08) - (behind ? 0.07 : 0);
     const tTk = traitMod('tackleOdds', { c, q });
     p += tTk.v;
     if (tTk.used.length) traitNotes(lp, tTk, { c, q }, c);
@@ -1567,11 +1572,17 @@ function startTackle(lp, c, q, sack, dove) {
   const mark = c.side === 'off' ? (lp.spot + sticks(lp) >= 100 ? lp.goalX : sticks(lp)) : null;
   const reach = mark != null && mark - c.x > 0 && mark - c.x < 1.5 ? 0.35 : 0;
   const lean = sack ? 0 : clamp(0.3 + reach + (c.a.strBT - q.a.tkl) * 0.012 + Math.max(0, c.vx * fwd) * 0.07 + Math.log(mc / mq) * 0.35 - (headOn ? 0.35 : 0), 0, 1.4 + reach);
-  lp.tackle = { c, q, sack, t0: lp.t, T: TACKLE_T * (1 + drag), vx, vy, fp: c.x, fwd, dove, lean, contact: { x: c.x, y: c.y },
+  // A big hit: the tackler arrives with much more momentum along the hit than the carrier has
+  // coming the other way. The carrier is stood up and put down about where he is.
+  const hl = dist(c, q) || 1, ux = (c.x - q.x) / hl, uy = (c.y - q.y) / hl;
+  const pq = mq * Math.max(0, q.vx * ux + q.vy * uy), pc = mc * Math.max(0, -(c.vx * ux + c.vy * uy));
+  const big = !dove && !sack && pq > 450 && pq > pc * 1.6 + 150;
+  lp.tackle = { c, q, sack, t0: lp.t, T: TACKLE_T * (1 + drag), vx, vy, fp: c.x, fwd, dove, lean: big ? Math.min(lean, 0.15) : lean, big, contact: { x: c.x, y: c.y },
     impact: len(c.vx - q.vx, c.vy - q.vy) };
   if (lp.windup) lp.windup = null;
   c.slow = 0; q.dive = dove ? 0.3 : q.dive;
   event(lp, 'contact', `${nm(q.id)} wraps up ${nm(c.id)}`, q, c);
+  if (big) event(lp, 'bighit', '', q, c);
 }
 
 function tackleStep(lp) {
@@ -1583,7 +1594,9 @@ function tackleStep(lp) {
   // Teammates arriving add their weight and the pile stops sooner.
   let help = 0;
   for (const o of lp.players) if (o !== q && o.side === q.side && !o.eng && dist(o, c) < o.r + c.r + 0.25) help++;
-  const f = Math.exp(-DT * (3.2 + help * 2.5));
+  // Friction on the pile: the pair is brought to a stop over the sequence (faster on a big
+  // hit and with help arriving), not left to skate across the turf.
+  const f = Math.exp(-DT * ((T.big ? 7 : 4.6) + help * 2.5));
   T.vx *= f; T.vy *= f;
   c.vx = T.vx; c.vy = T.vy; c.x += c.vx * DT; c.y += c.vy * DT;
   if (T.lean && e < T.T) { const k = (T.lean * DT) / T.T; c.x += T.fwd * k; q.x += T.fwd * k; }

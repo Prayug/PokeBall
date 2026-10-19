@@ -145,7 +145,7 @@ const rows = [
   ['blocks standing still (% of block time)', pct(C.engStill, C.engT), 10, '%'],
   ['man defender reacts to a cut (median s)', med(C.manReact), null, 's', [0.12, 0.6]],
   ['man defender never reacts (% of cuts)', pct(C.manNever, C.manCuts), 15, '%'],
-  ['tackled carrier slides from the hit (median yd)', med(C.slide), 1.6, ' yd'],
+  ['tackled carrier slides from the hit (median yd)', med(C.slide), 1.2, ' yd'],
   ['possession state machine breaks', C.possBad, 0, ''],
   ['downed players still moving after the whistle', C.deadMoves, 0, ''],
 ];
