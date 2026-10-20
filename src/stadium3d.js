@@ -1,10 +1,14 @@
 // The stadium: a 3D football field in yards (x runs from the left end line at -10 to the
 // right end line at 110, z across the field with the sidelines at ±26.65, y up), a sideline
 // apron, a wall with team banners, a seating bowl with an instanced crowd, light towers,
-// goalposts, pylons, team benches, a sky, lighting and weather. Everything the game draws on
-// top (players, ball, lines) shares this coordinate system.
+// goalposts, pylons, team benches, a video board, a sky, lighting and weather, and around it
+// the home team's venue (venue3d.js) at the time of day the game kicks off. Everything the
+// game draws on top (players, ball, lines) shares this coordinate system.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { buildVenue } from './venue3d.js';
+import { inkOn, kitOf } from './kits.js';
+import { fitText, paintEndZone } from './kitdraw.js';
 
 export const FIELD_W = 53.3;
 export const HALF_W = FIELD_W / 2;
@@ -29,6 +33,11 @@ export class Stadium {
     this.buildBowl();
     this.buildPosts();
     this.buildTowers();
+    this.buildNight();
+    this.buildBoard();
+    this.venueInfo = { stadium: 'classic', time: 'day', roof: false };
+    this.venueKey = '';
+    this.night = 0;
   }
 
   // ---------- sky and light ----------
@@ -42,6 +51,7 @@ export class Stadium {
     sky.position.set(50, 0, 0);
     sky.renderOrder = -10;
     this.root.add(sky);
+    this.sky = sky;
     this.scene.fog = new THREE.Fog('#cfe5f5', 120, 420);
   }
 
@@ -79,6 +89,7 @@ export class Stadium {
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshLambertMaterial({ color: '#557a45' }));
     ground.rotation.x = -Math.PI / 2; ground.position.set(50, -0.6, 0);
     this.root.add(ground);
+    this.ground = ground;
     // Sideline apron out to the wall: slightly darker turf.
     const apronTex = noiseTexture('#2f6f3c', 5, 256);
     apronTex.repeat.set(30, 16);
@@ -86,6 +97,7 @@ export class Stadium {
     apron.rotation.x = -Math.PI / 2; apron.position.set((WALL_X0 + WALL_X1) / 2, -0.01, 0);
     apron.receiveShadow = true;
     this.root.add(apron);
+    this.apron = apron;
     // The white border around the field of play (six feet wide).
     const white = new THREE.MeshStandardMaterial({ color: '#f4f6f2', roughness: 0.9 });
     const strip = (w, d, x, z) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), white); m.rotation.x = -Math.PI / 2; m.position.set(x, 0.002, z); m.receiveShadow = true; this.root.add(m); };
@@ -143,7 +155,7 @@ export class Stadium {
   // Paint the field for this matchup: grass with mowing stripes, lines, numbers, hashes,
   // the midfield logo and each team's end zone (the one it defends).
   paint(teams) {
-    const key = teams.map((t) => t.abbr + t.color + t.name).join('|');
+    const key = teams.map((t) => t.abbr + t.color + t.name + JSON.stringify(kitOf(t))).join('|');
     if (key === this.teamsKey) return;
     this.teamsKey = key;
     const c = this.fieldCanvas, x = c.getContext('2d');
@@ -170,24 +182,8 @@ export class Stadium {
       x.fillStyle = g; x.fillRect(px - rad, py - rad, rad * 2, rad * 2);
     }
     grain(x, W, H, 4, false);
-    // End zones
-    const ez = (left, team) => {
-      const x0 = left ? 0 : X(100);
-      x.save();
-      x.beginPath(); x.rect(x0, 0, 10 * PX, H); x.clip();
-      x.fillStyle = team.color; x.globalAlpha = 0.9; x.fillRect(x0, 0, 10 * PX, H);
-      x.globalAlpha = 0.12; x.strokeStyle = '#000'; x.lineWidth = PX * 0.9;
-      for (let k = -40; k < 60; k++) { x.beginPath(); x.moveTo(x0 + k * PX * 2.2, 0); x.lineTo(x0 + k * PX * 2.2 + H, H); x.stroke(); }
-      x.globalAlpha = 1;
-      x.translate(x0 + 5 * PX, H / 2); x.rotate(left ? -Math.PI / 2 : Math.PI / 2);
-      x.fillStyle = 'rgba(255,255,255,0.95)'; x.strokeStyle = 'rgba(0,0,0,0.35)'; x.lineWidth = PX * 0.25;
-      x.textAlign = 'center'; x.textBaseline = 'middle';
-      x.font = `800 ${PX * 6.2}px "Barlow Condensed", "Arial Narrow", Arial, sans-serif`;
-      const name = String(team.name || team.abbr).toUpperCase();
-      fitText(x, name, PX * 44);
-      x.strokeText(name, 0, 0); x.fillText(name, 0, 0);
-      x.restore();
-    };
+    // End zones, in each team's kit (kitdraw.js).
+    const ez = (left, team) => paintEndZone(x, left ? 0 : X(100), H, PX, team, left);
     ez(true, teams[0]); ez(false, teams[1]);
     // Lines
     x.fillStyle = 'rgba(252,253,250,0.97)';
@@ -304,6 +300,7 @@ export class Stadium {
     deck(-WALL_Z, WALL_Z, WALL_X1 + 0.3, 1, false);
     const bowl = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshLambertMaterial({ vertexColors: true }));
     this.root.add(bowl);
+    this.bowl = bowl;
     parts.forEach((g) => g.dispose());
     // Back wall and an LED ribbon at the top of the bowl.
     const topY = DECK_Y + ROWS * ROW_H, back = ROWS * ROW_D + 0.9 + CLUB_GAP;
@@ -394,7 +391,7 @@ export class Stadium {
     bodies.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(spots.length * 3), 3);
     heads.instanceColor.needsUpdate = true;
     bodies.frustumCulled = false; heads.frustumCulled = false;
-    this.crowd = bodies;
+    this.crowd = bodies; this.crowdHeads = heads;
     this.crowdSpots = spots;
     this.crowdSeed = spots.map(() => rnd());
     this.root.add(bodies, heads);
@@ -476,14 +473,215 @@ export class Stadium {
     const lampMat = new THREE.MeshBasicMaterial({ map: lamp, color: '#ffffff', fog: false });
     const glowTex = glowTexture();
     const back = ROWS * ROW_D + 3;
+    this.towers = new THREE.Group();
+    this.glows = [];
     for (const [x, z] of [[WALL_X0 - back + 4, -WALL_Z - back + 4], [WALL_X1 + back - 4, -WALL_Z - back + 4], [WALL_X0 - back + 4, WALL_Z + back - 4], [WALL_X1 + back - 4, WALL_Z + back - 4]]) {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.9, 46, 8), poleMat);
-      pole.position.set(x, 23, z); this.root.add(pole);
+      pole.position.set(x, 23, z); this.towers.add(pole);
       const head = new THREE.Mesh(new THREE.PlaneGeometry(12, 6), lampMat);
-      head.position.set(x, 47, z); head.lookAt(50, 10, 0); this.root.add(head);
+      head.position.set(x, 47, z); head.lookAt(50, 10, 0); this.towers.add(head);
       const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: '#fff3d0', transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, opacity: 0.55 }));
-      glow.scale.set(26, 18, 1); glow.position.set(x, 47, z); this.root.add(glow);
+      glow.scale.set(26, 18, 1); glow.position.set(x, 47, z); this.towers.add(glow);
+      this.glows.push(glow);
     }
+    this.root.add(this.towers);
+  }
+
+  // ---------- night: stars, the moon and the flashes in the crowd ----------
+  buildNight() {
+    let seed = 31;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const N = 1400, pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const a = rnd() * Math.PI * 2, y = 0.12 + rnd() * 0.88, r = Math.sqrt(1 - y * y);
+      pos.set([50 + Math.cos(a) * r * 560, y * 560, Math.sin(a) * r * 560], i * 3);
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.stars = new THREE.Points(g, new THREE.PointsMaterial({ color: '#ffffff', size: 1.6, sizeAttenuation: false, transparent: true, opacity: 0, depthWrite: false, fog: false }));
+    this.stars.visible = false; this.stars.renderOrder = -9;
+    this.root.add(this.stars);
+    const mc = document.createElement('canvas'); mc.width = mc.height = 128;
+    const mx = mc.getContext('2d'), mg = mx.createRadialGradient(64, 64, 20, 64, 64, 64);
+    mg.addColorStop(0, 'rgba(255,255,255,1)'); mg.addColorStop(0.5, 'rgba(255,255,255,1)'); mg.addColorStop(0.56, 'rgba(255,255,255,0.25)'); mg.addColorStop(1, 'rgba(255,255,255,0)');
+    mx.fillStyle = mg; mx.fillRect(0, 0, 128, 128);
+    mx.fillStyle = 'rgba(160,165,180,0.35)';
+    for (const [cx, cy, r] of [[50, 52, 9], [76, 70, 7], [60, 82, 5], [80, 48, 4]]) { mx.beginPath(); mx.arc(cx, cy, r, 0, Math.PI * 2); mx.fill(); }
+    this.moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(mc), color: '#f3f1e6', transparent: true, depthWrite: false, fog: false }));
+    this.moon.position.set(-260, 250, -330); this.moon.scale.setScalar(60); this.moon.visible = false;
+    this.root.add(this.moon);
+    // Phone lights and camera flashes: a point of light on one fan in eight, each blinking on its
+    // own beat, more of them as the crowd gets loud.
+    const spots = this.crowdSpots.filter((_, i) => i % 8 === 3);
+    const fp = new Float32Array(spots.length * 3), ph = new Float32Array(spots.length);
+    spots.forEach(([x, y, z], i) => { fp.set([x, y + 1.0, z], i * 3); ph[i] = rnd(); });
+    const fg = new THREE.BufferGeometry();
+    fg.setAttribute('position', new THREE.BufferAttribute(fp, 3)); fg.setAttribute('ph', new THREE.BufferAttribute(ph, 1));
+    this.flashUni = { time: { value: 0 }, excite: { value: 0 }, night: { value: 0 } };
+    this.flashes = new THREE.Points(fg, new THREE.ShaderMaterial({
+      uniforms: this.flashUni, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexShader: `attribute float ph; uniform float time; uniform float excite; varying float vA;
+        void main() {
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float rate = 0.35 + ph * 0.6 + excite * 2.5;
+          float k = fract(time * rate + ph * 17.0);
+          float flash = smoothstep(0.985 - excite * 0.05, 1.0, k);
+          float phone = step(0.82, ph) * (0.35 + 0.15 * sin(time * 1.3 + ph * 40.0));
+          vA = max(flash, phone);
+          gl_PointSize = (2.0 + flash * 5.0) * (240.0 / max(10.0, -mv.z));
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `uniform float night; varying float vA;
+        void main() { vec2 d = gl_PointCoord - 0.5; float r = dot(d, d); if (r > 0.25) discard; gl_FragColor = vec4(vec3(1.0, 0.97, 0.9), vA * night * (1.0 - r * 4.0)); }`,
+    }));
+    this.flashes.frustumCulled = false; this.flashes.visible = false;
+    this.root.add(this.flashes);
+  }
+
+  // ---------- the video board ----------
+  // Above the stands at one end (a center-hung cube under a dome): the score, the quarter and
+  // clock, and full-board graphics for the big moments.
+  buildBoard() {
+    const c = document.createElement('canvas'); c.width = 512; c.height = 192;
+    this.boardCanvas = c;
+    this.boardTex = new THREE.CanvasTexture(c); this.boardTex.colorSpace = THREE.SRGBColorSpace;
+    const face = new THREE.MeshBasicMaterial({ map: this.boardTex, fog: false, toneMapped: false });
+    const frame = new THREE.MeshLambertMaterial({ color: '#1b2028' });
+    const back = ROWS * ROW_D + 0.9 + CLUB_GAP, topY = DECK_Y + ROWS * ROW_H;
+    // The end board, facing down the field from over the left end's stands.
+    const end = new THREE.Group();
+    const scr = new THREE.Mesh(new THREE.PlaneGeometry(32, 12), face); scr.position.set(0, 0, 0.32);
+    const box = new THREE.Mesh(new THREE.BoxGeometry(34, 14, 0.6), frame);
+    end.add(box, scr);
+    for (const s of [-1, 1]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.8, 14, 0.8), frame); leg.position.set(s * 12, -13, -0.4); end.add(leg); }
+    end.position.set(WALL_X0 - back + 1, topY + 15, 0); end.rotation.y = Math.PI / 2;
+    this.root.add(end);
+    // The center-hung cube for the dome.
+    const hung = new THREE.Group();
+    for (let i = 0; i < 4; i++) {
+      const w = i % 2 ? 18 : 26, d = i % 2 ? 13.85 : 9.85;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, 7.5), face);
+      const a = (i * Math.PI) / 2;
+      m.position.set(Math.sin(a) * d, 0, Math.cos(a) * d); m.rotation.y = a;
+      hung.add(m);
+    }
+    hung.add(new THREE.Mesh(new THREE.BoxGeometry(27.6, 8, 19.6), frame));
+    hung.position.set(50, 31, 0); hung.visible = false;
+    this.root.add(hung);
+    this.boards = { end, hung };
+    this.boardKey = '';
+  }
+  // The board's picture: the score, or a graphic (TOUCHDOWN) in a team's colors for a while.
+  setBoard(g, now = 0) {
+    if (!g) return;
+    const fl = this.boardFlash && this.boardFlash.until > now ? this.boardFlash : null;
+    const q = g.final ? 'FINAL' : g.quarter <= 4 ? `Q${g.quarter}` : 'OT';
+    const key = fl ? `F${fl.text}${fl.color}` : `${g.teams.map((t) => t.abbr + t.color).join()}|${g.score}|${q}|${Math.floor(g.clock / 60)}|${g.down}|${g.toGo}`;
+    if (key === this.boardKey) return;
+    this.boardKey = key;
+    const c = this.boardCanvas, x = c.getContext('2d'), W = c.width, H = c.height;
+    x.fillStyle = '#05080c'; x.fillRect(0, 0, W, H);
+    const font = (w, px) => `${w} ${px}px "Barlow Condensed", "Arial Narrow", Arial, sans-serif`;
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    if (fl) {
+      const kit = fl.kit ?? { color2: '#111' };
+      x.fillStyle = fl.color; x.fillRect(0, 0, W, H);
+      x.fillStyle = kit.color2; for (let i = -4; i < 12; i++) { x.beginPath(); x.moveTo(i * 64, H); x.lineTo(i * 64 + 28, H); x.lineTo(i * 64 + 28 + 60, 0); x.lineTo(i * 64 + 60, 0); x.fill(); }
+      x.fillStyle = 'rgba(0,0,0,0.25)'; x.fillRect(0, H * 0.3, W, H * 0.4);
+      x.font = font(800, 84); fitText(x, fl.text, W - 30);
+      x.fillStyle = '#fff'; x.fillText(fl.text, W / 2, H / 2 + 4);
+    } else {
+      const [Hm, A] = g.teams;
+      for (const [i, t, sc] of [[0, A, g.score[1]], [1, Hm, g.score[0]]]) {
+        const x0 = i * W / 2;
+        x.fillStyle = t.color; x.fillRect(x0 + 6, 6, W / 2 - 12, 118);
+        x.fillStyle = inkOn(t.color); x.font = font(700, 40); x.fillText(t.abbr, x0 + W / 4 - 60, 65);
+        x.font = font(800, 92); x.fillText(String(sc), x0 + W / 4 + 50, 68);
+      }
+      x.fillStyle = '#ffd23f'; x.font = font(700, 44);
+      const clock = `${Math.floor(g.clock / 60)}:${String(Math.floor(g.clock % 60)).padStart(2, '0')}`;
+      x.fillText(g.final ? 'FINAL' : `${q}  ${clock}`, W / 2, 158);
+    }
+    // LED pixels: a fine dark grid over everything.
+    x.fillStyle = 'rgba(0,0,0,0.28)';
+    for (let i = 0; i < W; i += 4) x.fillRect(i, 0, 1, H);
+    for (let j = 0; j < H; j += 4) x.fillRect(0, j, W, 1);
+    this.boardTex.needsUpdate = true;
+  }
+  flashBoard(text, team, now, secs = 3.5) {
+    this.boardFlash = { text: String(text).toUpperCase(), color: team?.color ?? '#e5402b', kit: team ? kitOf(team) : null, until: now + secs * 1000 };
+    this.boardKey = '';
+  }
+
+  // ---------- the venue and the time of day ----------
+  setVenue(v) {
+    const info = { stadium: v?.stadium ?? 'classic', time: v?.time ?? 'day', roof: !!v?.roof };
+    const key = `${info.stadium}|${info.time}`;
+    if (key === this.venueKey) return;
+    if (!this.venue || this.venueInfo.stadium !== info.stadium) {
+      if (this.venue) { this.root.remove(this.venue.group); this.venue.group.traverse((o) => { o.geometry?.dispose(); if (o.material) [].concat(o.material).forEach((m) => { m.map?.dispose(); m.normalMap?.dispose(); m.dispose(); }); }); }
+      this.venue = buildVenue(info.stadium);
+      this.root.add(this.venue.group);
+    }
+    this.venueInfo = info;
+    this.venueKey = key;
+    this.applyLook();
+  }
+
+  // Sky, fog and light from the weather, then the time of day and the venue on top.
+  applyLook() {
+    const want = this.weather?.kind ?? 'clear';
+    const [top, hor, hemi0, sun0, sunCol0, f0, f1] = LOOKS[want] ?? LOOKS.clear;
+    const v = this.venueInfo ?? { stadium: 'classic', time: 'day', roof: false };
+    const cTop = new THREE.Color(top), cHor = new THREE.Color(hor), sunCol = new THREE.Color(sunCol0);
+    let hemi = hemi0, sun = sun0, near = f0, far = f1, night = 0;
+    if (v.roof) {
+      cTop.set('#1c2027'); cHor.set('#2a2f38'); hemi = 1.35; sun = 2.5; sunCol.set('#fffaf0'); near = 170; far = 520;
+    } else if (v.time === 'dusk') {
+      cTop.lerp(new THREE.Color('#2b2f6e'), 0.75); cHor.lerp(new THREE.Color('#f39a5f'), 0.7);
+      hemi *= 0.8; sun *= 0.85; sunCol.lerp(new THREE.Color('#ffc796'), 0.7); night = 0.45;
+    } else if (v.time === 'night') {
+      cTop.lerp(new THREE.Color('#03050d'), 0.94); cHor.lerp(new THREE.Color('#141b2e'), 0.9);
+      hemi = 0.7; sun = 2.7; sunCol.set('#f3f6ff'); near = 150; far = 600; night = 1;
+    }
+    if (v.stadium === 'haunted') { cTop.lerp(new THREE.Color('#1a0d30'), 0.6); cHor.lerp(new THREE.Color('#5b2e70'), 0.55); near *= 0.7; far *= 0.75; }
+    if (v.stadium === 'mountain' && !night) cHor.lerp(new THREE.Color('#dde9f6'), 0.35);
+    if (v.stadium === 'seaside' && !night) cHor.lerp(new THREE.Color('#bfe3f2'), 0.3);
+    this.skyUni.top.value.copy(cTop); this.skyUni.horizon.value.copy(cHor);
+    this.scene.fog.color.copy(cHor); this.scene.fog.near = near; this.scene.fog.far = far;
+    this.hemi.intensity = hemi; this.sun.intensity = sun; this.sun.color.copy(sunCol);
+    this.hemi.groundColor.set(night > 0.9 ? '#2c3a2e' : '#55714a');
+    this.fill.intensity = v.roof ? 0.9 : 0.75 * (1 - night * 0.4);
+    // At night the light comes from the banks overhead, not a low sun.
+    this.sunOffset.set(night > 0.9 || v.roof ? -12 : -26, night > 0.9 || v.roof ? 72 : 58, night > 0.9 || v.roof ? 20 : 34);
+    this.night = v.roof ? 0 : night;
+    this.sky.visible = !v.roof;
+    this.towers.visible = !v.roof;
+    this.boards.end.visible = !v.roof; this.boards.hung.visible = v.roof;
+    for (const gl of this.glows) { gl.material.opacity = 0.55 + night * 0.45; gl.scale.set(26 + night * 14, 18 + night * 10, 1); }
+    // Under the lights the field is the brightest thing in the building: the stands, the crowd and
+    // the sideline fall back into the dark.
+    const dim = v.roof ? 0.85 : 1 - night * 0.5;
+    this.bowl.material.color.setScalar(dim);
+    this.crowd.material.color.setScalar(Math.min(1, dim + 0.2)); this.crowdHeads.material.color.setScalar(Math.min(1, dim + 0.2));
+    this.apron.material.color.setScalar(v.roof ? 0.9 : 1 - night * 0.35);
+    if (v.stadium === 'haunted') { this.bowl.material.color.multiply(new THREE.Color('#c9b8e8')); this.apron.material.color.multiply(new THREE.Color('#b9a8cf')); }
+    this.stars.visible = this.moon.visible = !v.roof && night > 0.3;
+    this.stars.material.opacity = night > 0.9 ? 0.85 : 0.25;
+    this.moon.material.color.set(v.stadium === 'haunted' ? '#d9c8ff' : '#f3f1e6');
+    this.moon.scale.setScalar(v.stadium === 'haunted' ? 90 : 60);
+    this.flashes.visible = night > 0.3;
+    this.flashUni.night.value = night;
+    // Outside the bowl the lights do not reach: the land, the trees and the hills go dark.
+    const out = v.roof ? 1 : 1 - night * 0.72;
+    this.ground.material.color.set(this.venue?.ground ?? '#557a45').multiplyScalar(out);
+    this.venue?.group.traverse((o) => {
+      const m = o.isMesh && o.material;
+      if (!m || m.isMeshBasicMaterial || !m.color) return;
+      m.userData.base ??= m.color.clone();
+      m.color.copy(m.userData.base).multiplyScalar(out);
+    });
+    this.venue?.setNight?.(night);
+    this.ground.visible = !(v.stadium === 'seaside');
   }
 
   // ---------- weather ----------
@@ -492,17 +690,7 @@ export class Stadium {
     if (this.weather?.kind === want) return;
     if (this.weather?.obj) { this.scene.remove(this.weather.obj); this.weather.obj.geometry.dispose(); this.weather.obj.material.dispose(); }
     this.weather = { kind: want };
-    const look = {
-      clear: ['#3f7fc8', '#cfe5f5', 1.12, 2.5, '#fff3e0', 120, 420],
-      sun: ['#2f78d0', '#ffe9c2', 1.15, 2.8, '#ffe2b0', 140, 460],
-      rain: ['#5b6675', '#9aa6b3', 1.15, 1.2, '#dfe6f0', 70, 260],
-      hail: ['#7e8fa3', '#d6e0ea', 1.25, 1.4, '#eef4ff', 80, 300],
-      sand: ['#b39468', '#e3c99a', 1.2, 1.6, '#ffe0b0', 70, 260],
-    }[want] ?? null;
-    const [top, hor, hemi, sun, sunCol, f0, f1] = look ?? ['#3f7fc8', '#cfe5f5', 1.12, 2.5, '#fff3e0', 120, 420];
-    this.skyUni.top.value.set(top); this.skyUni.horizon.value.set(hor);
-    this.scene.fog.color.set(hor); this.scene.fog.near = f0; this.scene.fog.far = f1;
-    this.hemi.intensity = hemi; this.sun.intensity = sun; this.sun.color.set(sunCol);
+    this.applyLook();
     if (want === 'rain' || want === 'hail' || want === 'sand') {
       // Only weather draws particles, and they are soft round flecks, not squares: thin rain
       // streaks, small hailstones, a light drift of sand low over the turf.
@@ -526,7 +714,10 @@ export class Stadium {
   update(t, dt, center) {
     this.crowdUni.time.value = t;
     this.excite = Math.max(0, this.excite - dt * 0.18);
-    this.crowdUni.excite.value = this.excite;
+    // A night crowd never quite sits down.
+    this.crowdUni.excite.value = Math.max(this.excite, this.night * 0.14);
+    this.flashUni.time.value = t; this.flashUni.excite.value = this.excite;
+    this.venue?.update(t, this.night);
     for (const r of this.ribbons) r.offset.x = (t * 0.02) % 1;
     const W = this.weather;
     if (W?.obj) {
@@ -552,6 +743,15 @@ export class Stadium {
 
   cheer(k) { this.excite = Math.min(1, Math.max(this.excite, k)); }
 }
+
+// Sky top, horizon, ambient, sun, sun color, fog near and far, by the weather.
+const LOOKS = {
+  clear: ['#3f7fc8', '#cfe5f5', 1.12, 2.5, '#fff3e0', 120, 420],
+  sun: ['#2f78d0', '#ffe9c2', 1.15, 2.8, '#ffe2b0', 140, 460],
+  rain: ['#5b6675', '#9aa6b3', 1.15, 1.2, '#dfe6f0', 70, 260],
+  hail: ['#7e8fa3', '#d6e0ea', 1.25, 1.4, '#eef4ff', 80, 300],
+  sand: ['#b39468', '#e3c99a', 1.2, 1.6, '#ffe0b0', 70, 260],
+};
 
 // ---------- textures ----------
 function grain(x, W, H, amt, blades = true) {
@@ -579,11 +779,6 @@ function dotTexture() {
   x.fillStyle = g; x.fillRect(0, 0, 32, 32);
   dotTex = new THREE.CanvasTexture(c);
   return dotTex;
-}
-
-function fitText(x, text, maxW) {
-  const m = x.measureText(text).width;
-  if (m > maxW) { const size = parseFloat(/(\d+(\.\d+)?)px/.exec(x.font)[1]); x.font = x.font.replace(/\d+(\.\d+)?px/, `${(size * maxW) / m}px`); }
 }
 
 function noiseTexture(base, amt, size) {

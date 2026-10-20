@@ -14,6 +14,7 @@ import { PLAYERS } from './ratings.js';
 import { TYPE_COLORS } from './types.js';
 import { absSpot } from './engine.js';
 import { Stadium, HALF_W } from './stadium3d.js';
+import { venueOf } from './kits.js';
 import { template, upgradeTemplate, makeFigure, disposeFigure, placeholder, flies } from './figure3d.js';
 import { updateBlink } from './blink.js';
 import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs, poseLimbs, hangArms, foldWings } from './model3d.js';
@@ -223,6 +224,7 @@ export class Stage {
     if (!lp) return;
     const g = lp.g;
     this.stadium.paint(g.teams);
+    this.stadium.setVenue(venueOf(g));
     this.stadium.setWeather(g.weather, this.weatherFx);
     for (const t of g.teams) for (const id of t.roster ?? []) { const e = SPRITE_INDEX[id]; if (e) loadChunk(e[0]); template(id); }
     this.dir = lp.o === 0 ? 1 : -1;
@@ -569,7 +571,8 @@ export class Stage {
     const lp = this.lp;
     this.updateFx(t, dt);
     tickAudio(dt);
-    if (!lp) { this.stadium.update(t, dt, this.rig.look); this.renderer.render(this.scene, this.camera); return; }
+    if (lp) this.stadium.setBoard(lp.g, now);
+    if (!lp) { this.stadium.update(t, dt, this.rig.look); if (this.blimp) this.blimpShot(now); this.renderer.render(this.scene, this.camera); return; }
     const pre = lp.phase === 'pre';
     this.art.visible = pre;
     this.readEvents(lp, t);
@@ -662,10 +665,34 @@ export class Stage {
     this.rig.update(dt, fr, this.camera.aspect, obstacles, this.snapNext || reduceMotion);
     this.snapNext = false;
     this.applyInset(reduceMotion ? 1 : 1 - Math.exp(-dt * 6));
+    if (this.blimp) this.blimpShot(now);
     this.stadium.follow(this.rig.look.x, this.rig.look.z * 0.5);
     this.stadium.update(t, dt, this.rig.look);
     this.prevPhase = lp.phase;
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // The establishing shot a broadcast opens and comes back from a break on: a slow arc high
+  // over the stadium and whatever is around it, then a cut back to the game camera.
+  establish(secs = 5) {
+    if (!this.blimp) this.blimpFog = [this.scene.fog.near, this.scene.fog.far];
+    this.blimp = { t0: performance.now(), secs };
+    // From up there the haze is thinner: the far hills and the water show.
+    this.scene.fog.near = this.blimpFog[0] * 2.2; this.scene.fog.far = this.blimpFog[1] * 2.2;
+  }
+  endEstablish() {
+    if (!this.blimp) return;
+    this.blimp = null; this.snapNext = true;
+    [this.scene.fog.near, this.scene.fog.far] = this.blimpFog;
+  }
+  blimpShot(now) {
+    const k = reduceMotion ? 0.5 : (now - this.blimp.t0) / 1000 / this.blimp.secs;
+    if (k >= 1 || (reduceMotion && now - this.blimp.t0 > this.blimp.secs * 1000)) { this.endEstablish(); return; }
+    // Under a dome the shot stays inside, under the roof.
+    const roof = this.stadium.venueInfo?.roof;
+    const a = -2.35 + k * 0.7, h = roof ? 38 - k * 8 : 92 - k * 22, r = roof ? 0.42 : 1;
+    this.camera.position.set(50 + Math.cos(a) * 205 * r, h, Math.sin(a) * 160 * r);
+    this.camera.lookAt(50, 0, 0);
   }
 
   // What the animation layer needs to know about a player this frame. Everything here is read

@@ -37,6 +37,8 @@ jobs:
         run: node test/league.mjs
       - name: Abilities, type theater and weather
         run: node test/abilities.mjs
+      - name: Franchise kits and the broadcast package
+        run: node test/broadcast.mjs
       - name: Powers
         run: node test/powers.mjs
       - name: Two players in one play
