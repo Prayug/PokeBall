@@ -13,7 +13,8 @@ import { adjustHtml, aiFormation, aiFront, callSheet, callSheetHtml, clockRow, f
 import { DIFFICULTY, DIFFICULTY_LEVELS, applyDifficulty } from '../difficulty.js';
 import { tendencyLines, typeEdges } from '../scout.js';
 import { powerColor, powerLine } from '../powers.js';
-import { L3, afterLivePlay, markBefore, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
+import { L3, afterLivePlay, challengeReady, fieldBusy, markBefore, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
+import { filmReady } from './film.js';
 import { driveChartSvg, scorebugHtml } from './broadcast.js';
 
 // ---------- game ----------
@@ -273,8 +274,15 @@ function menuHtml(g, simBtns, coachBox) {
     <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}> Team markers under every player</label>
     <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}> Debug view: position labels, formation check, camera calibration <kbd>\`</kbd></label>
     <div class="gm-row"><button class="btn tiny" data-act="help">Controls <kbd>?</kbd></button><button class="btn tiny" data-act="replay" ${replayReady() ? '' : 'disabled'}>Replay last play <kbd>Y</kbd></button></div>
+    <div class="gm-row"><button class="btn tiny" data-act="film" ${filmReady() ? '' : 'disabled'}>Film room <kbd>J</kbd></button><button class="btn tiny" data-act="challenge" ${challengeReady() ? '' : 'disabled'}>${challengeText(g)}</button></div>
     <button class="btn tiny" data-act="details">Box score and play-by-play</button>
   </div>`;
+}
+
+// The challenge button: how many you have left this half.
+function challengeText(g) {
+  const n = g.challenges?.[userSide()] ?? 1;
+  return `Challenge the last call <kbd>G</kbd> <span class="muted">${n ? '1 left this half' : 'used this half'}</span>`;
 }
 
 // Type matchups for the down about to be played, from the lineups on the field now.
@@ -416,7 +424,7 @@ function animatePlay(entry, done) {
 export function doCall(call) {
   const g = S.game;
   if (!g || g.final || S.busy || L3.lp) return;
-  if (stage && L3.flow !== 'PLAY_SELECTION' && L3.flow != null) return;
+  if (stage && ((L3.flow !== 'PLAY_SELECTION' && L3.flow != null) || fieldBusy())) return;
   const us = userSide();
   if (twoPlayer()) {
     if (!(g.poss === us ? OFF_PLAYS : DEF_PLAYS)[call]) return;
@@ -524,7 +532,7 @@ export function autoAdvance() {
   if (!g || g.final || S.screen !== 'game' || twoPlayer() || !(aiCalls() || kicks) || needsUser(g) || L3.lp) return;
   timers.auto = setTimeout(() => {
     if (!S.game || S.game.final || S.screen !== 'game' || L3.lp) return;
-    if (stage && L3.flow !== 'PLAY_SELECTION') { autoAdvance(); return; }
+    if (stage && (L3.flow !== 'PLAY_SELECTION' || fieldBusy())) { autoAdvance(); return; }
     aiTimeouts(g);
     const off = aiOffenseCall(g), def = aiDefenseCall(g);
     const ours = ['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]);
