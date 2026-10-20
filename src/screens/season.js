@@ -14,7 +14,7 @@ import { powerRanking } from '../weekly.js';
 import { rivalryCardHtml } from './records.js';
 import { signingsHtml } from './freeagency.js';
 import { boxHtml } from './game.js';
-import { shareCardHtml } from './share.js';
+import { challengeCardHtml, shareCardHtml } from './share.js';
 import { isFinalRound, playoffField, playoffSeeds, roundLabel } from '../geometry.js';
 import { tradeDeadline, tradeWindow } from '../trades.js';
 
@@ -54,6 +54,7 @@ export function renderSeason() {
     <h1>${esc(me.name)} · ${record(st.find((r) => r.id === me.id))}</h1>
     <div class="season-grid">
       <div class="col">${main}
+        ${challengeCardHtml(L)}
         ${L.phase === 'season' ? '' : reviewHtml(L)}
         <div class="card"><h3>Results ${results.length ? '<span class="muted small">Open a game for its box score</span>' : ''}</h3>${results.length ? `<ul class="results scroll">${results.map(({ r, i }) => resultLine(r, i)).join('')}</ul>` : '<p class="muted">No games played yet.</p>'}</div>
         ${historyHtml(L)}

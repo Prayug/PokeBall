@@ -5,8 +5,11 @@
 // return, a fair catch, a bounce downed by the coverage, a touchback, out of bounds) is decided
 // on the field, and engine.js turns the outcome into the next possession.
 import { chance, clamp, eff, fgOdds, onsideLean, onsideOdds, randn, specialist, xpOdds } from '../engine.js';
-import { GRAVITY, SIDE, dist, event, finish, isManual, len, seek, setCarrier, sgn, unengage } from '../live.js';
+import { GRAVITY, SIDE, dist, event, finish, isManual, len, seek, setCarrier, setKickResult, sgn, unengage } from './core.js';
 import { buildRoute, flightAt } from './passing.js';
+
+// A kick ends through the shared finish (core.js), which reads its result here.
+setKickResult(kickResult);
 
 // Every kick is played on the live field, fakes included.
 export const liveKick = (play) => !!play && ['punt', 'fg', 'xp', 'kickoff'].includes(play.kind);

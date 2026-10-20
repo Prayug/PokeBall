@@ -431,6 +431,25 @@ export function standings(L) {
   return rows.sort((x, y) => (y.w + y.t / 2) - (x.w + x.t / 2) || (y.pf - y.pa) - (x.pf - x.pa) || y.pf - x.pf);
 }
 
+// A team's season so far: its regular-season record and points, and how far it went (finish 0
+// while that is still open, 1 missed the playoffs, 2 lost a semifinal, 3 lost the championship,
+// 4 champions). With upTo, only its first upTo regular-season games count.
+export function teamSeason(L, id, upTo = Infinity) {
+  const s = { gp: 0, w: 0, l: 0, t: 0, pf: 0, pa: 0, finish: 0 };
+  for (const r of L.results) {
+    if (r.playoff || (r.home !== id && r.away !== id) || s.gp >= upTo) continue;
+    const i = r.home === id ? 0 : 1;
+    s.gp++; s.pf += r.score[i]; s.pa += r.score[1 - i];
+    if (r.winner == null) s.t++; else if (r.winner === id) s.w++; else s.l++;
+  }
+  if (upTo < Infinity) return s;
+  const lost = L.results.find((r) => r.playoff && (r.home === id || r.away === id) && r.winner !== id);
+  if (L.champion === id) s.finish = 4;
+  else if (lost) s.finish = lost.round ? 3 : 2;
+  else if (L.playoffs && !L.playoffs.seeds.includes(id)) s.finish = 1;
+  return s;
+}
+
 export function advanceWeek(L) {
   weekInReview(L, { week: L.week });
   healWeek(L);
@@ -653,6 +672,8 @@ export function startOffseason(L) {
   const st = standings(L);
   const aw = awards(L);
   const hof = archiveSeason(L, { awards: aw, standings: st, champion: L.champion });
+  // The user's first season is kept whole: a challenge code carries it (see share.js).
+  if ((L.season ?? 1) === 1) { const me = L.teams.find((t) => t.user); if (me) L.firstSeason = teamSeason(L, me.id); }
   L.history.push({ season: L.season, champion: L.champion, awards: aw, records: st.map((r) => ({ id: r.id, w: r.w, l: r.l, t: r.t })), hof: hof.map((h) => h.id) });
   const growth = { ...L.growth };
   const camp = [];

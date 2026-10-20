@@ -12,6 +12,10 @@
 //   tackleOdds     { c, q }              added to the chance a tackle attempt brings him down
 //   stripChance    { c, q }              added to the chance a tackle strips the ball
 //   shedRate       { d, b }              scales how fast a defender gets off a block (1 = as is)
+//
+// Powers (powers.js) act here too: a player whose power is active at the snap carries it as
+// p.power, and its `live` edges are read by the power entries below. `who`
+// names the player the note (and the power's flash on the field) belongs to.
 import { PLAYERS } from './ratings.js';
 import { ABILITIES } from './types.js';
 
@@ -53,6 +57,37 @@ export const LIVE_TRAITS = [
   { id: 'armor', hook: 'stripChance', kind: 'ability',
     applies: ({ c }) => special(c.id) === 'armor',
     value: -0.035, note: ({ c }) => `${name(c.id)}'s ${PLAYERS[c.id].ability} keeps the ball in` },
+  // ---------- powers ----------
+  { id: 'pwCalm', hook: 'pressure', kind: 'power',
+    applies: ({ qb }) => !!qb.power?.live?.calm, value: ({ qb }) => qb.power.live.calm,
+    note: ({ qb }) => `${name(qb.id)} shrugs off the rush (${qb.power.name})`, who: ({ qb }) => qb },
+  { id: 'pwParalyze', hook: 'pressure', kind: 'power',
+    applies: ({ rusher }) => !!rusher?.power?.live?.paralyze, value: ({ rusher }) => rusher.power.live.paralyze,
+    note: ({ qb, rusher }) => `${name(rusher.id)}'s ${rusher.power.name} rattles ${name(qb.id)}`, who: ({ rusher }) => rusher },
+  { id: 'pwReach', hook: 'catchReach', kind: 'power', quiet: true,
+    applies: ({ p }) => !!p.power?.live?.reach, value: ({ p }) => p.power.live.reach,
+    note: ({ p }) => `${name(p.id)} snags it with ${p.power.name}`, who: ({ p }) => p },
+  { id: 'pwHawk', hook: 'intChance', kind: 'power',
+    applies: ({ d }) => !!d.power?.live?.hawk, value: ({ d }) => d.power.live.hawk,
+    note: ({ d }) => `${name(d.id)} sits on the route (${d.power.name})`, who: ({ d }) => d },
+  { id: 'pwSafeThrow', hook: 'intChance', kind: 'power',
+    applies: ({ qb }) => !!qb?.power?.live?.safeThrow, value: ({ qb }) => qb.power.live.safeThrow,
+    note: ({ qb }) => `${name(qb.id)}'s ${qb.power.name} beats the defender to the spot`, who: ({ qb }) => qb },
+  { id: 'pwElusive', hook: 'tackleOdds', kind: 'power',
+    applies: ({ c }) => !!c.power?.live?.elusive, value: ({ c }) => c.power.live.elusive,
+    note: ({ c }) => `${name(c.id)}'s ${c.power.name} shakes the tackler`, who: ({ c }) => c },
+  { id: 'pwTackle', hook: 'tackleOdds', kind: 'power',
+    applies: ({ q }) => !!q.power?.live?.tackle, value: ({ q }) => q.power.live.tackle,
+    note: ({ q }) => `${name(q.id)} wraps up with ${q.power.name}`, who: ({ q }) => q },
+  { id: 'pwStrip', hook: 'stripChance', kind: 'power',
+    applies: ({ q }) => !!q.power?.live?.strip, value: ({ q }) => q.power.live.strip,
+    note: ({ q }) => `${name(q.id)}'s ${q.power.name} goes for the ball`, who: ({ q }) => q },
+  { id: 'pwShed', hook: 'shedRate', kind: 'power', quiet: true,
+    applies: ({ d }) => !!d.power?.live?.shed, value: ({ d }) => d.power.live.shed,
+    note: ({ d }) => `${name(d.id)} tears through the block (${d.power.name})`, who: ({ d }) => d },
+  { id: 'pwAnchor', hook: 'shedRate', kind: 'power', quiet: true,
+    applies: ({ b }) => !!b.power?.live?.anchor, value: ({ b }) => b.power.live.anchor,
+    note: ({ b }) => `${name(b.id)} holds the wall (${b.power.name})`, who: ({ b }) => b },
   { id: 'barbs', hook: 'shedRate', kind: 'ability', quiet: true,
     applies: ({ b, d }) => special(b.id) === 'barbs' && special(d.id) !== 'moldBreaker',
     value: 0.75, note: ({ b }) => `${name(b.id)}'s ${PLAYERS[b.id].ability} keeps the rusher off` },
@@ -67,7 +102,8 @@ export function traitMod(hook, ctx) {
   const used = [];
   for (const t of LIVE_TRAITS) {
     if (t.hook !== hook || !t.applies(ctx)) continue;
-    v = MULTIPLY.has(hook) ? v * t.value : v + t.value;
+    const val = typeof t.value === 'function' ? t.value(ctx) : t.value;
+    v = MULTIPLY.has(hook) ? v * val : v + val;
     used.push(t);
   }
   return { v, used };
