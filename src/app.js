@@ -20,7 +20,8 @@ import { renderRecords } from './screens/records.js';
 import * as FA from './freeagency.js';
 import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, userSide, userTimeout } from './screens/game.js';
 import { applyDifficulty } from './difficulty.js';
-import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, setCamera, setDebug, stage, startReplay, syncOverlays } from './screens/live3d.js';
+import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, setCamera, setDebug, stage, startReplay, syncOverlays, userChallenge } from './screens/live3d.js';
+import { openFilm } from './screens/film.js';
 
 const app = document.getElementById('app');
 
@@ -189,6 +190,8 @@ function onClick(e) {
     case 'helpok': closeHelp(); break;
     case 'resume': L3.paused = false; syncOverlays(); break;
     case 'replay': startReplay(); break;
+    case 'film': S.menuOpen = false; openFilm(); break;
+    case 'challenge': S.menuOpen = false; userChallenge(); break;
     case 'mode': setMode(el.dataset.mode); break;
     case 'difficulty': setDifficulty(el.dataset.level); break;
     case 'csscout': S.csScout = !S.csScout; render(); break;

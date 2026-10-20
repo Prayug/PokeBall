@@ -163,6 +163,8 @@ export function createGame({ home, away, seed = Date.now(), playoff = false, wea
     // next snap, the two-minute warnings given, and the sides whose try and kickoff choices
     // wait for a call (the user's team; every other side's are made by the AI on the spot).
     timeouts: [3, 3], clockRunning: false, warned: {}, manual: [false, false],
+    // A coach's challenge per side per half (see review.js).
+    challenges: [1, 1],
   };
   if (!weather) g.weather = pickWeather(g);
   const receiver = chance(g, 0.5) ? 0 : 1;
@@ -257,7 +259,7 @@ export const has = (id, special) => id != null && ABILITIES[PLAYERS[id].ability]
 export const nm = (id) => (id == null ? 'nobody' : PLAYERS[id].name);
 
 // ---------- helpers on game state ----------
-function addLog(g, e) {
+export function addLog(g, e) {
   const entry = { n: g.log.length, q: g.quarter, clock: g.clock, poss: g.poss, score: [...g.score], ...e };
   g.log.push(entry);
   return entry;
@@ -633,7 +635,7 @@ export const TEMPOS = [['auto', 'Auto'], ['hurry', 'No huddle'], ['normal', 'Hud
 
 // Fill in the clock fields on a game saved before they existed.
 function clockFields(g) {
-  g.timeouts ??= [3, 3]; g.warned ??= {}; g.clockRunning ??= false; g.manual ??= [false, false]; g.phase ??= 'play';
+  g.timeouts ??= [3, 3]; g.challenges ??= [1, 1]; g.warned ??= {}; g.clockRunning ??= false; g.manual ??= [false, false]; g.phase ??= 'play';
 }
 const lateHalf = (g) => g.quarter === 2 || g.quarter >= 4;
 // Out of bounds stops the clock until the snap only in the last two minutes of the first half
@@ -1026,7 +1028,7 @@ function endQuarter(g) {
   addLog(g, { kind: 'quarter', head, text: `End of ${q <= 4 ? `quarter ${q}` : 'overtime'}. ${scoreLine(g)}` });
   if (q === 2) {
     endDrive(g, 'Half');
-    g.quarter = 3; g.clock = 900; g.timeouts = [3, 3]; g.clockRunning = false;
+    g.quarter = 3; g.clock = 900; g.timeouts = [3, 3]; g.challenges = [1, 1]; g.clockRunning = false;
     for (const t of g.teams) for (const id of t.roster) t.energy[id] = Math.min(100, t.energy[id] + 30);
     addLog(g, { kind: 'info', text: 'Halftime. Everyone gets a breather.' });
     kickoff(g, g.firstReceiver);

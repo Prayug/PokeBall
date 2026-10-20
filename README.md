@@ -33,6 +33,8 @@ Games are played on a 3D field, Madden style: pick a play from the playbook, sna
 | `Esc` | Before the snap, take the call back and pick another; during a play, pause; closes the menu |
 | `P` | Pause or resume the play (opening the menu during a play pauses it too) |
 | `Y` | Between plays, replay the last play at half speed from the broadcast camera |
+| `G` | Between plays, challenge the last call (one challenge a half; it needs a timeout, and a lost one costs it) |
+| `O` | Open the film room: every play of this game, to scrub, step, watch from any camera, star, save as a clip or record as a video |
 | `?` | Show the controls (they also show once at the start of your first game) |
 | `C` | Cycle the camera: Gameplay, Tactical, Broadcast, Player focus |
 | `M` | Open the game menu (Play / Coach / Auto mode, sim controls, camera, graphics, sound, weather, controls, replay, box score) |
@@ -121,6 +123,26 @@ Officials call false starts, offside, delay of game, holding (offensive and defe
 - **Before the snap.** A false start, offside or delay of game (the play clock running out on the call sheet) kills the play and is walked off on the spot; offside that reaches the line to gain is a first down.
 - **During the play.** A yellow flag lands by the foul and the play runs to the whistle. Holding by the offense is 10 yards and offensive interference 10, both repeating the down; defensive holding is 5 yards and an automatic first down; defensive pass interference is a spot foul and an automatic first down (at the 1 if it happens in the end zone). Distance penalties stop at half the distance to the goal, and flags on both teams offset.
 - **Accept or decline.** The referee announces the foul, the side, the player and what accepting means. When the foul was against your team, the call sheet shows Accept and Decline with what each leaves (for example "PAL 2nd & 16 at PAL 30" against "PAL 3rd & 1 at PAL 45"), with a Fits tag on the better one. The AI takes whichever leaves it better off. An accepted penalty wipes the play's stats; the box score counts penalties and yards per team. In Auto mode the choice is yours in the 4th quarter.
+
+### Replay review
+
+The live field knows exactly where every play ended; the officials don't (`src/review.js`, checked by `test/review.mjs`). On a bang-bang play they rule as they see it, and now and then they miss: a ball spotted within a foot of the line to gain (first down or short), a runner stopped inches from the goal line or carried over it by the pile, a ball that comes out as he goes down (fumble or down by contact). The closer the play, the likelier the miss; nothing else is ever ruled wrong. About one live play in a hundred is missed, roughly one a game.
+
+- **Your challenge.** Between plays the Challenge button (or `G`) throws the flag on the last play, until the next snap. You get one a half, and you need a timeout to throw it: if the ruling stands you lose the timeout, if it is reversed you keep it.
+- **Their challenge.** The AI coach watches the replay on the big screen and challenges a missed call that went against it most of the time, and a close one that was right now and then.
+- **The booth.** In the last two minutes of each half and in overtime the booth reviews every close call itself, and it reviews close scoring plays and turnovers at any time. Coaches can't challenge those.
+- **The review.** The play runs again from the recording at half speed from the broadcast camera, under an Under review card, then the referee announces the verdict. A reversed call goes on the books as it really happened: the down, distance, spot, score, possession, clock and stats are exactly as if it had been ruled right the first time.
+
+### Film room
+
+`O` (or Film room in the menu, or the button between plays) opens every live play of this game on a reel, from the same recordings as the replay (`src/film.js`, `src/screens/film.js`):
+
+- **Play it back** at ¼, ½ or full speed, drag the scrubber anywhere in the play, or step a frame at a time with `←` `→` (`Shift` for 15 frames). `[` and `]` go to the previous and next play, `Space` plays and pauses.
+- **Any camera**: Gameplay, Tactical, Broadcast and Player focus, switched as the tape runs (`C` cycles them).
+- **Bookmarks**: star a play (`S`) and filter the reel to starred plays; mark a moment in it (`K`) and click the dot on the scrubber to jump back to it.
+- **Clips**: Save clip downloads the play as a small JSON file (the play at the snap and every input after it) that Load clip plays back exactly, in any game. Record video plays the tape from the snap at the chosen speed and camera and downloads it as a WebM video.
+
+The reel holds the last 80 plays of the game in memory (starred ones are kept) and is cleared when the game ends; save a clip to keep one.
 
 Three modes are in the menu: **Play** (you control the quarterback and then the ball carrier, or a defender), **Coach** (you call every play and watch the AI run it) and **Auto** (the AI calls and plays routine downs, and hands you 3rd and 4th downs and the last two minutes to call).
 
@@ -218,6 +240,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | --- | --- |
 | `src/engine.js` | Play-by-play simulation: line battles, coverage, completions, tackles, clock, scoring, AI play calling |
 | `src/live.js` | Live plays: 22 Pokémon moving in real time with blocking, routes, man and zone coverage, throws, catches and tackles |
+| `src/review.js`, `src/film.js` | Replay review (the officials' ruling on close plays, challenges and the booth) and the film room's tape (seeking a recorded play, clip files) |
 | `src/live/defense.js`, `src/live/passing.js` | The defensive calls (`DEF_SCHEMES`) with rush, coverage and pursuit; routes, the quarterback's reads, throws, the ball's flight and catches |
 | `src/live/kicks.js` | Punts and field goals on the live field: the kicking units, the long snap, the kick from the specialist's ratings, coverage, fair catches, bounces, returns and the posts |
 | `src/field3d.js` | The 3D stage: players, ball, play art, markers and effects, driven by the live play |
@@ -245,7 +268,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/live/presnap.js` | Pre-snap adjustments: audibles, hot routes, motion, shading the coverage, show blitz and back out |
 | `src/app.js`, `src/index.html` | The entry point (rendering and the click, key and form handlers) and the styles |
 | `src/state.js`, `src/ui.js` | The shared UI state with save and preference storage; small view helpers such as `esc`, `sprite` and `teamBadge` |
-| `src/screens/` | One module per screen: `home`, `draft` (and grades), `depth`, `season` (and box scores), `offseason`, `freeagency`, `records`, `game`, the play-call sheet (`callsheet`), the live 3D game loop and input (`live3d`), gamepads (`pad`) and the share link and shared-league card (`share`) |
+| `src/screens/` | One module per screen: `home`, `draft` (and grades), `depth`, `season` (and box scores), `offseason`, `freeagency`, `records`, `game`, the play-call sheet (`callsheet`), the live 3D game loop and input (`live3d`), the film room (`film`), gamepads (`pad`) and the share link and shared-league card (`share`) |
 | `src/share.js` | The league share code: encoding the draft seed, settings and picks, reading it back and rebuilding the league |
 | `src/data.js`, `src/sprites.js`, `src/sprites3d.js` | Generated Pokémon data, menu sprites and the index of the animated sprite strips (do not edit by hand) |
 | `dist/models3d/` | The 3D models, two Pokémon per file, loaded on demand (not in git: `npm run models` downloads them) |
@@ -269,6 +292,8 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `test/top.mjs` | Lists the top Pokémon at each position |
 | `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness, injuries, subs and the weekly reviews, scheme edges and draft lean, the playoffs and awards, the offseason, cuts, free agency and the rookie draft, then the next season, with career records, the Hall of Fame, record books and rivalries) and checks every step, plus that an exported save plays on to the same results, that a share code rebuilds the draft, that box scores older than two seasons are trimmed, and that the scouting report and trades rate kickers and punters (exits 1 on failure) |
 | `test/calls.mjs` | Fast-sim yards for each run and pass against each defensive call, so plays that resolve as themselves show their own numbers |
+| `test/review.mjs` | Plays live snaps and checks the officials miss only close spots, goal-line calls and fumbles, at believable rates; that a reversed call leaves the game exactly as if it had been ruled right; the challenge and timeout bookkeeping and what the booth takes; and that the film room's tape plays a recording to the same end, seeks to the same step as playing through and round-trips through a clip file (exits 1 on failure) |
+| `test/film.mjs` | In Chromium: makes the officials miss, plays snaps until a review (yours, theirs or the booth's) and checks the verdict, then opens the film room, scrubs, steps, changes camera, stars and marks, saves a clip and loads it back, and records a video |
 | `test/controls.mjs` | Two players in one live play: each starts on their own side, both steer at once, throws and handoffs hand over the receiver or carrier, punts give the returner and a cover man, and recorded inputs replay the play exactly (exits 1 on failure) |
 | `test/twoplayer.mjs` | In Chromium: shares a league and loads it in a second browser, plays two downs of the two-player game from the keyboard, and drives a quick game with a fake gamepad |
 | `test/presnap.mjs` | Audibles, hot routes, motion (and the man defender following), shading, show blitz and back out on live plays; Pro matching the game without a difficulty and the win rate falling from Rookie to Legend; the "Fits" hint following tendencies (exits 1 on failure) |

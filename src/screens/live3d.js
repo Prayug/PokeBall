@@ -12,6 +12,8 @@ import { esc } from '../ui.js';
 import { autoAdvance, doCall, needsUser, playClockOut, setMode, twoPlayer, userSide, userTimeout } from './game.js';
 import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions } from './callsheet.js';
 import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
+import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
+import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
 
 function keysHelp() {
   return `<div class="keygrid">
@@ -32,6 +34,7 @@ function keysHelp() {
     <span><kbd>I</kbd> on the play sheet: type edges and their tendencies</span>
     <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
     <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
+    <span><kbd>G</kbd> between plays: challenge the last call (one a half; a lost challenge costs a timeout) · <kbd>O</kbd> the film room</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
   </div>
   <h4>Gamepad</h4>
@@ -92,9 +95,10 @@ function setFlow(st) {
 const setState = setFlow;
 export let stage = null;
 let stageWrap = null;
-// Hooks for the browser tests (test/browser.mjs): read-only views of the game's state, and the
-// foul rates so a test can force a flag.
-if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug, RATES };
+// Hooks for the browser tests (test/browser.mjs, test/film.mjs): read-only views of the game's
+// state, the foul rates so a test can force a flag, and the officials' miss rates and the film
+// room so one can force a missed call and open the tape.
+if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug, RATES, REVIEW, FILM, openFilm };
 
 export function ensureStage() {
   if (stage || !webglAvailable()) return;
@@ -111,7 +115,9 @@ export function ensureStage() {
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
     <div class="lower3" id="lower3" aria-live="polite"></div>
     <div class="ov-badge" id="replay-badge" hidden>Replay</div>
-    <button class="hud-replay" id="replay-btn" data-act="replay" hidden>Replay <kbd>Y</kbd></button>
+    <div class="hud-acts"><button class="hud-replay" id="chal-btn" data-act="challenge" hidden>Challenge <kbd>G</kbd></button>
+      <button class="hud-replay" id="film-btn" data-act="film" hidden>Film room <kbd>O</kbd></button>
+      <button class="hud-replay" id="replay-btn" data-act="replay" hidden>Replay <kbd>Y</kbd></button></div>
     <div class="ov-pause" id="pause-ov" hidden><div><b>Paused</b><span>Press <kbd>P</kbd> or <kbd>Esc</kbd> to resume</span><button class="btn" data-act="resume">Resume</button></div></div>
     <div class="ov-help" id="help-ov" hidden><div class="card"><h3>Controls</h3>${keysHelp()}<button class="btn primary" data-act="helpok">Got it</button></div></div>
     <div class="dbg-hud" id="dbg-hud"></div>
@@ -132,8 +138,9 @@ export function mountStage() {
   slot.prepend(stageWrap);
   fitStage();
   stage.resize();
-  // A re-render during the replay keeps showing the replay, not the next play lining up.
-  if (L3.replay) stage.setPlay(L3.replay.lp);
+  // A re-render during the replay (or in the film room) keeps showing it, not the next play lining up.
+  if (FILM.open && FILM.lp) stage.setPlay(FILM.lp);
+  else if (L3.replay) stage.setPlay(L3.replay.lp);
   else if (!L3.lp) showPreview();
 }
 
@@ -146,7 +153,7 @@ export function fitStage() {
 
 // Keep the line of scrimmage clear of the call sheet: the view shifts up by part of it.
 function fitDock() {
-  const sheet = document.querySelector('.game.g3d .callsheet:not(.folded)');
+  const sheet = FILM.open ? FILM.el : document.querySelector('.game.g3d .callsheet:not(.folded)');
   stage?.setInset(sheet ? sheet.offsetHeight + 10 : 0);
 }
 
@@ -173,6 +180,7 @@ export function startLive(off, def, opts) {
   // Line up from wherever the players are standing in the preview.
   const from = L3.preview?.lp ? worldSpots(L3.preview.lp) : L3.spots ?? undefined;
   L3.before = { poss: g.poss, down: g.down, toGo: g.toGo, spot: g.spot, score: [...g.score] };
+  if (FILM.open) closeFilm();
   if (L3.replay) stopReplay();
   // The replay recording: the game as it was before the play (its random seed included) and
   // every simulation step's input, so the play can be run again exactly, step for step.
@@ -200,7 +208,9 @@ export function doSnap() {
   L3.rec?.log.push({ snap: true, control: lp.control ? [lp.control.side, lp.control.slot] : null });
   // The play as it stands at the snap. Lining up depends on the measured model footprints, which
   // change as models finish loading, so the replay starts from this copy rather than lining up again.
-  if (L3.rec) try { L3.rec.atSnap = structuredClone(lp); } catch { L3.rec.atSnap = null; }
+  if (L3.rec) try { L3.rec.atSnap = structuredClone(lp); L3.rec.atSnap.g.log = []; L3.rec.atSnap.g.drives = []; } catch { L3.rec.atSnap = null; }
+  // The snap ends the last play's challenge window.
+  if (L3.review) L3.review.done = true;
   snap(lp);
   L3.autoSnap = null;
   S.psPick = null;
@@ -258,11 +268,22 @@ function presnapKey(code) {
 
 // The whistle has blown: the game takes the result now (score, down and distance, possession,
 // the clock), while the field holds on the play for a beat.
+//
+// What goes on the books is the officials' call (see review.js): on a bang-bang spot, goal line
+// or fumble it can differ from what really happened. A copy of the game from before it is kept
+// for a challenge or the booth to put right.
 function commitPlay() {
   const lp = L3.lp, g = S.game, b = L3.before;
-  const entry = runLivePlay(g, L3.off, L3.def, lp.result, playSeconds(lp));
+  const R = fieldRuling(lp);
+  const r = lp.result;
+  const reviewable = !!R || (!lp.kick && g.phase === 'play' && !r?.noPlay && !r?.fouls?.length && ['run', 'pass', 'sack'].includes(r?.kind));
+  if (R?.wrong) applyDeltas(g, R.deltas, 1);
+  const pre = reviewable ? structuredClone(g) : null;
+  const secs = playSeconds(lp);
+  const entry = runLivePlay(g, L3.off, L3.def, R ? R.call : r, secs);
   L3.committed = entry;
-  if (L3.rec) { L3.rec.done = true; L3.rec.end = endKey(lp); }
+  L3.review = pre ? { ruling: R, pre, playNo: g.playNo, booth: boothReviews(R, pre), done: false, off: L3.off, def: L3.def, secs, before: b, rec: L3.rec } : null;
+  if (L3.rec) { L3.rec.done = true; L3.rec.end = endKey(lp); addToReel(L3.rec, L3.rec.g, entry); }
   const big = entry.highlight === 'td' || entry.kind === 'score' || entry.turnover || entry.kind === 'turnover';
   L3.hold = lp.end?.how === 'td' ? 3.2 : big ? 2.6 : lp.end?.how === 'incomplete' ? 1.6 : 2.0;
   L3.tickerUntil = performance.now() + 6500;
@@ -286,13 +307,14 @@ function endResult() {
   hideBanner(1200);
   setFlow('RESET_FORMATION');
   render();
+  if (autoReview()) return;
   autoAdvance();
 }
 
 // For plays resolved without the live field (punts, field goals): the same result beat.
 export function afterLivePlay(entry) {
   const g = S.game, b = L3.before;
-  L3.rec = null;
+  L3.rec = null; L3.review = null;
   L3.before = null;
   L3.pclock = 40;
   const now = performance.now();
@@ -310,7 +332,8 @@ export function afterLivePlay(entry) {
 // A new game: nothing from the last one (its result card, result and reset beats, held keys)
 // carries over onto the first call sheet.
 export function resetBetweenGames() {
-  L3.lp = null; L3.preview = null; L3.spots = null; L3.rec = null; L3.before = null; L3.committed = null;
+  L3.lp = null; L3.preview = null; L3.spots = null; L3.rec = null; L3.before = null; L3.committed = null; L3.review = null;
+  clearReel();
   L3.pclock = 40; L3.paused = false; L3.resultUntil = 0; L3.resetUntil = 0; L3.tickerUntil = 0; L3.scoreFlash = [0, 0];
   L3.deadT = 0; L3.hold = 0; L3.lob = null; L3.snapWant = false; L3.autoSnap = null; L3.keys.clear(); L3.edges.clear();
   if (L3.replay) stopReplay();
@@ -532,16 +555,21 @@ function loop(now) {
   } else if (L3.resultUntil > now) {
     // A kick or field goal result: hold the field for a beat.
     L3.acc = 0;
+  } else if (FILM.open) {
+    // The film room plays its own tape (see screens/film.js).
+    const f = filmFrame(dt);
+    sim = f.lp;
+    L3.acc = f.alpha * DT;
   } else if (L3.replay) {
     // The replay: the recorded steps again, at half speed, from the broadcast camera.
-    const R = L3.replay, log = L3.rec.log;
+    const R = L3.replay, log = R.rec.log;
     sim = R.lp;
     R.acc += dt * 0.5;
     while (R.acc >= DT && R.i < log.length) { stepLive(R.lp, log[R.i++]); R.acc -= DT; }
     if (R.i >= log.length) {
       R.end = (R.end ?? 0) + dt;
       // The tests check the replay ends exactly where the play did.
-      if (R.end > 1.6) { L3.lastReplay = { end: endKey(R.lp), want: L3.rec.end }; stopReplay(); sim = null; }
+      if (R.end > 1.6) { L3.lastReplay = { end: endKey(R.lp), want: R.rec.end }; stopReplay(); sim = null; }
     }
     L3.acc = R.acc;
   } else if (L3.preview?.lp) {
@@ -562,7 +590,7 @@ function loop(now) {
     }
     // The play clock runs while the call is yours; at :00 it is a delay of game on offense, or
     // the fitting call is made for you (see playClockOut).
-    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && !S.menuOpen && !L3.replay && L3.flow === 'PLAY_SELECTION') {
+    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && !S.menuOpen && !L3.replay && !FILM.open && L3.flow === 'PLAY_SELECTION') {
       L3.pclock = Math.max(0, L3.pclock - dt);
       if (L3.pclock <= 0) { L3.pclock = 40; playClockOut(); }
     }
@@ -604,10 +632,12 @@ export function togglePause() {
   L3.paused = !L3.paused;
   clearInput(true);
 }
-export function replayReady() { return !!(stage && L3.rec?.done && !L3.lp && !L3.replay && L3.rec.log.some((e) => e?.snap)); }
-export function startReplay() {
-  if (!replayReady()) return;
-  const r = L3.rec;
+export function replayReady(r = L3.rec) { return !!(stage && r?.done && !L3.lp && !L3.replay && !FILM.open && r.log.some((e) => e?.snap)); }
+// review ({ by, rec }): the replay is a review of the call (see startReview); it ends with the
+// verdict. It runs the reviewed play's recording (a play lined up and taken back has its own).
+export function startReplay(review = null) {
+  const r = review?.rec ?? L3.rec;
+  if (!replayReady(r)) return false;
   let i = 0;
   while (i < r.log.length && !r.log[i]?.snap) i++;
   const m = r.log[i++];
@@ -621,30 +651,98 @@ export function startReplay() {
   lp.preview = true;
   lp.control = m?.control ? lp[m.control[0]]?.[m.control[1]] ?? null : null;
   snap(lp);
-  L3.replay = { lp, i, acc: 0 };
+  L3.replay = { lp, i, acc: 0, rec: r, review };
   S.menuOpen = false;
   document.body.classList.add('pb-replay');
+  document.body.classList.toggle('pb-review', !!review);
   stage.setPlay(lp);
   stage.setCameraMode('broadcast');
   stage.snapCamera();
   render();
   syncOverlays();
+  return true;
 }
 export function stopReplay() {
   if (!L3.replay) return;
+  const review = L3.replay.review;
   L3.replay = null;
-  document.body.classList.remove('pb-replay');
+  document.body.classList.remove('pb-replay', 'pb-review');
   stage.setCameraMode(S.cam);
+  if (review) { finishReview(); return; }
   if (L3.preview?.lp) stage.setPlay(L3.preview.lp); else showPreview();
   stage.snapCamera();
   render();
 }
+
+// ---------- replay review ----------
+// The sides a person calls for: both in a two-player game, otherwise yours.
+const humanSides = () => (twoPlayer() ? [0, 1] : [userSide()]);
+// Can you challenge the last call now (G, or the Challenge button)?
+export function challengeReady(ti = userSide()) {
+  return !!stage && !L3.lp && !L3.replay && !FILM.open && !!S.game && humanSides().includes(ti) && canChallenge(S.game, L3.review, ti);
+}
+export function userChallenge(ti = userSide()) {
+  if (!challengeReady(ti)) return;
+  startReview(ti);
+}
+// After the whistle: the booth stops the game for its reviews, and an AI coach may challenge a
+// call that went against it. Returns true when a review started (it advances the game itself).
+function autoReview() {
+  const g = S.game, rv = L3.review;
+  if (!stage || !g || g.final || !rv || rv.done || g.playNo !== rv.playNo) return false;
+  if (rv.booth) { startReview(null); return true; }
+  for (const ti of [0, 1]) if (!humanSides().includes(ti) && aiWantsChallenge(g, rv, ti)) { startReview(ti); return true; }
+  return false;
+}
+// The flag (or the booth's buzzer): the ruling on the field is announced and the play runs again
+// at half speed from the broadcast camera. The verdict comes when it ends (or is skipped).
+function startReview(by) {
+  const g = S.game, rv = L3.review;
+  rv.by = by;
+  clearTimeout(timers.auto);
+  const said = rv.ruling?.said ?? 'the play as called';
+  showBanner({ head: by == null ? 'Booth review' : `${g.teams[by].abbr} challenge`, tone: 'flag', yds: '', clock: '', notes: [], possession: false,
+    text: `${by == null ? 'The play is under review.' : `${g.teams[by].name} throw the challenge flag.`} The ruling on the field: ${said}.`, next: 'Under review' });
+  if (!startReplay({ by, rec: rv.rec })) finishReview();
+}
+// The verdict: the call stands (or is confirmed), or it is reversed and the play goes on the
+// books as it really happened.
+function finishReview() {
+  const g = S.game, rv = L3.review;
+  if (!g || !rv || rv.done) { autoAdvance(); return; }
+  const score = [...g.score];
+  const out = decideReview(g, rv, rv.by ?? null, (gg, r) => runLivePlay(gg, rv.off, rv.def, r, rv.secs));
+  if (out.entry) setReelEntry(rv.rec, out.entry);
+  const now = performance.now();
+  for (const i of [0, 1]) if (g.score[i] !== score[i]) L3.scoreFlash[i] = now + 2200;
+  L3.tickerUntil = now + 6500;
+  L3.pclock = 40;
+  // The teams walk to the spot the review settled on.
+  if (L3.preview?.lp) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
+  save();
+  render();
+  const note = g.log[g.log.length - 1];
+  if (out.verdict === 'reversed') {
+    const B = resultBanner(out.entry, null, rv.before);
+    if (B) showBanner({ ...B, head: `Reversed · ${B.head}`, text: note.text });
+  } else {
+    showBanner({ head: note.head, tone: 'muted', yds: '', clock: '', notes: [], possession: false, text: note.text, next: `${downText(g)} at ${spotText(g)}` });
+  }
+  hideBanner(4500);
+  autoAdvance();
+}
+// A replay, a review or the film room has the field: the next play waits for it.
+export const fieldBusy = () => !!L3.replay || FILM.open;
 export function closeHelp() { S.helpOpen = false; S.seenHelp = true; savePrefs(); syncOverlays(); }
 export function syncOverlays() {
   const set = (id, show) => { const el = document.getElementById(id); if (el && el.hidden === show) el.hidden = !show; };
   set('pause-ov', !!L3.lp && L3.paused && L3.lp.phase !== 'dead');
-  set('replay-badge', !!L3.replay);
+  set('replay-badge', !!L3.replay || FILM.open);
+  const badge = document.getElementById('replay-badge'), bt = FILM.open ? 'Film room' : L3.replay?.review ? 'Under review' : 'Replay';
+  if (badge && badge.textContent !== bt) badge.textContent = bt;
   set('replay-btn', replayReady() && L3.flow === 'PLAY_SELECTION');
+  set('film-btn', filmReady() && !L3.replay && L3.flow === 'PLAY_SELECTION');
+  set('chal-btn', challengeReady() && (L3.flow === 'PLAY_SELECTION' || L3.flow === 'RESET_FORMATION'));
   set('help-ov', !!S.helpOpen);
 }
 
@@ -709,7 +807,10 @@ export function onKey(e, down) {
     if (code === 'Escape' && S.psPick) { e.preventDefault(); S.psPick = null; render(); return; }
     if (L3.lp?.phase === 'pre' && !S.coachDown && L3.lp.user != null && !L3.lp.kick && presnapKey(code)) { e.preventDefault(); return; }
     if (code === 'KeyI' && !L3.lp) { e.preventDefault(); S.csScout = !S.csScout; S.csFold = false; render(); return; }
+    if (FILM.open) { filmKey(e); return; }
     if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
+    if (code === 'KeyO' && filmReady() && !L3.replay) { e.preventDefault(); openFilm(); return; }
+    if (code === 'KeyG' && !L3.lp && !L3.replay) { e.preventDefault(); userChallenge(); return; }
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
     // P pauses a play on the field; between plays it falls through to the call sheet (Punt).
     if (code === 'KeyP' && L3.lp && L3.lp.phase !== 'dead') { e.preventDefault(); togglePause(); return; }
@@ -726,7 +827,7 @@ export function onKey(e, down) {
     }
   }
   // Call keys on the play sheet, only while no play is lined up or live.
-  if (!L3.lp && down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (!L3.lp && !L3.replay && !FILM.open && down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
     const g = S.game;
     if (!g.final && needsUser(g) && !S.busy) {
       const { tabs, cur } = csTabs(g);
