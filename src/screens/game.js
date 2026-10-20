@@ -12,7 +12,8 @@ import { P, edgeRow, esc, ovr, sprite, teamBadge, typeChips } from '../ui.js';
 import { adjustHtml, aiFormation, aiFront, callSheet, callSheetHtml, clockRow, formFor, frontFor } from './callsheet.js';
 import { DIFFICULTY, DIFFICULTY_LEVELS, applyDifficulty } from '../difficulty.js';
 import { tendencyLines, typeEdges } from '../scout.js';
-import { L3, afterLivePlay, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
+import { L3, afterLivePlay, markBefore, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
+import { driveChartSvg, scorebugHtml } from './broadcast.js';
 
 // ---------- game ----------
 // A two-player quick game: player one has the home team, player two the away team, and each
@@ -189,16 +190,9 @@ export function renderGame() {
   </section>`;
 }
 
-// Broadcast scoreboard: both teams, possession, quarter, clock, down and distance, the play
-// clock and the ball spot, in one strip.
+// Broadcast scoreboard: the scorebug from the broadcast package (screens/broadcast.js).
 function broadcastBar(g) {
-  const [H, A] = g.teams;
-  const scored = (i) => (L3.scoreFlash?.[i] ?? 0) > performance.now() ? 'scored' : '';
-  const team = (t, i) => `<div class="bc-team ${g.poss === i && !g.final ? 'has' : ''} ${scored(i)}" style="--team:${t.color}"><span class="bc-abbr">${esc(t.abbr)}</span><span class="bc-score">${g.score[i]}</span>${g.final ? '' : timeoutPips(g, i)}${g.poss === i && !g.final ? '<span class="bc-poss" title="Has the ball" aria-label="Has the ball"></span>' : ''}</div>`;
-  const info = g.final ? `<div class="bc-cell bc-down">FINAL</div>` : `<div class="bc-cell bc-q" title="Quarter">${g.quarter <= 4 ? `${['1st', '2nd', '3rd', '4th'][g.quarter - 1].toUpperCase()}<small>QTR</small>` : quarterText(g.quarter)}</div><div class="bc-cell bc-clock ${g.clockRunning ? 'run' : ''}" id="gclock" title="${g.clockRunning ? 'Clock running' : 'Clock stopped'}">${clockText(g.clock)}</div>
-    <div class="bc-cell bc-down">${downText(g)}</div><div class="bc-cell bc-pc" id="pclock" title="Play clock">:${String(Math.ceil(L3.pclock ?? 40)).padStart(2, '0')}</div>
-    <div class="bc-cell bc-spot">${spotText(g)}</div>`;
-  return `<div class="bcast" id="bcast">${team(A, 1)}${team(H, 0)}${info}</div>`;
+  return scorebugHtml(g, { pclock: L3.pclock, scored: L3.scoreFlash, live: !!L3.lp && L3.lp.phase !== 'pre', big: !!S.bigBug });
 }
 
 function tickerHtml(g) {
@@ -371,8 +365,9 @@ export function boxHtml(g) {
 function drivesHtml(g) {
   const ds = [...g.drives].reverse();
   if (!ds.length) return '<p class="muted">No completed drives yet.</p>';
-  return `<div class="tablewrap"><table class="drives"><thead><tr><th>Team</th><th>Start</th><th class="num">Plays</th><th class="num">Yards</th><th>Result</th></tr></thead>
-    <tbody>${ds.map((d) => `<tr><td>${teamBadge(g.teams[d.team])}</td><td>${quarterText(d.q)} ${clockText(d.clock)}</td><td class="num">${d.plays}</td><td class="num">${d.yards}</td><td>${d.result}</td></tr>`).join('')}</tbody></table></div>`;
+  // Each drive with its chart: every snap an arrow on the field, colored by what it was.
+  return `<div class="tablewrap"><table class="drives"><thead><tr><th>Team</th><th>Start</th><th class="num">Plays</th><th class="num">Yards</th><th>Result</th><th>Chart</th></tr></thead>
+    <tbody>${ds.map((d) => `<tr><td>${teamBadge(g.teams[d.team])}</td><td>${quarterText(d.q)} ${clockText(d.clock)}</td><td class="num">${d.plays}</td><td class="num">${d.yards}</td><td>${d.result}</td><td class="dchart">${d.at != null ? driveChartSvg(g, d, { w: 220 }) : ''}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 // Animate the ball carrier to the play's end spot, then redraw.
@@ -419,6 +414,7 @@ export function doCall(call) {
 // instead and the next call is made in the new situation.
 function playCall(off, def, tempo, opts) {
   const g = S.game;
+  markBefore();
   const pace = tempo && tempo !== 'auto' ? tempo : aiTempo(g);
   if (!snapClock(g, pace, off)) {
     if (stage) { if (L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; } afterLivePlay(g.log[g.log.length - 1]); return; }
@@ -445,6 +441,7 @@ function twoPlayerCall(g, call) {
   }
   const { off, formation } = S.p2Call, def = call;
   S.p2Call = null;
+  markBefore();
   if (stage && (['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]))) {
     startLive(off, def, { userSide: 0, user2: 1, formation, defFormation: frontFor(def) });
     return;
@@ -463,6 +460,7 @@ export function playClockOut() {
   const g = S.game;
   if (!g || g.final || S.busy || L3.lp) return;
   if (g.phase === 'play' && g.poss === userSide()) {
+    markBefore();
     if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
     const e = delayOfGame(g) ?? g.log[g.log.length - 1];
     S.csTab = null;

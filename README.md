@@ -124,6 +124,30 @@ Officials call false starts, offside, delay of game, holding (offensive and defe
 
 Three modes are in the menu: **Play** (you control the quarterback and then the ball carrier, or a defender), **Coach** (you call every play and watch the AI run it) and **Auto** (the AI calls and plays routine downs, and hands you 3rd and 4th downs and the last two minutes to call).
 
+### Broadcast and franchise kits
+
+Every game is presented like a TV broadcast (`src/broadcast.js` for the words and numbers, `src/screens/broadcast.js` for the graphics, checked by `test/broadcast.mjs`).
+
+- **The open.** The first call of a game opens on an aerial shot circling the stadium, with a card naming the venue ("Live from Cerulean Shoreline Park"), the time of day, both teams (with their records in a league) and the weather, over a brass fanfare. The aerial comes back after each quarter break and at halftime.
+- **The scorebug.** Both teams in their kit colors (the second color as a stripe under each abbreviation), their records in a league, timeouts, possession, the quarter and clock, down and distance, the play clock and the spot, plus a tag for a flag, a timeout or the red zone. A strip under it carries the booth's line for the moment: the two-minute situation, the team's third-down rate, fourth-down decisions, the red zone, the drive so far, or the player to watch. `scorebugHtml(g, { big: true })` draws the larger bug for watching rather than playing.
+- **Stingers.** Touchdowns, takeaways, field goals, safeties, quarter breaks and the final get a full-width wipe in the team's two colors and a stinger from the PA (brass for scores and the open, the stadium organ for takeaways, a chime for the end of a quarter); the video board above the end stands (a center-hung cube in a dome) shows the same graphic.
+- **Lower-thirds.** Before a drive's first snap a lower-third puts up the offense's player to watch: the Pokémon, its position and types and its line for the game. After every play the result card adds a line from the booth when there is something to say: the lead changing late, a long march, a takeaway count, a 100-yard day, a third-and-long conversion, the longest play of the game, a type matchup winning the rep.
+- **Drive charts.** When a drive ends, a chart shows every snap as an arrow on the field, colored run, pass, penalty, sack or turnover, and kick, with the result, plays, yards and time of possession. The Drives tab under the field has a chart for every drive.
+- **Night games.** A game kicks off in the afternoon, at dusk or in prime time. Under the lights the sky goes dark with stars and a moon, the light banks blaze, the stands and everything outside them fall into shadow while the field stays bright, phone lights and camera flashes twinkle in the crowd (more of them when it gets loud), the crowd hums louder and never quite sits down, and the city skyline's windows light up.
+- **The crowd.** The home crowd sings its team's chant (synthesized: claps, stomps, a drum, the stadium organ and a section of voices) at the open, after its team's scores and takeaways and on some third-down conversions, and chants DEE-FENSE on the other team's third and fourth downs.
+
+The **Franchise** page (in the top bar with a league open, or Franchise kit on the home screen for quick games and your next league) dresses your team:
+
+| | |
+| --- | --- |
+| Colors | The main color and a second color, used on the field, the end zones, the sidelines, the crowd's shirts, the scorebug, the stingers and the board |
+| End zone | A wordmark (your team's name unless you type one) in Block, Outline, Script or Block on stripes, with a band of the second color inside the lines; the page previews it with the field's own painter |
+| Home stadium | Open bowl (farmland and a city skyline), Dome (a roof and a ring of lights: random rain, hail and sandstorms stay outside, though a Pokémon that brings its own weather still does), Mountain (snow-capped peaks and pine forest), Seaside (the bowl on a point over the water, a lighthouse whose beam turns at night, boats in the bay) or Haunted (gravestones, dead trees, will-o'-wisps over the stands and a purple sky; never a day game) |
+| Kickoff | Let the schedule decide (about half day games, the rest at dusk or in prime time; the playoffs are always at night), day games or prime time |
+| Crowd chant | Let's go, Stomp stomp clap, War drum, Organ charge or Howl, each playable on the page |
+
+Every AI team has its own kit (the Cerulean Surf by the sea, the Pewter Boulders in the mountains, the Saffron Seers under a dome, the Lavender Haunts in the hollow, and so on), and a game is played in the home team's stadium (a neutral site is an open bowl). The venue and time of day come from the game's seed, never its random stream, so a kit changes how a game looks and sounds but not how it plays out, except that a dome keeps the sky's weather out.
+
 ### Abilities and types
 
 Every ability in the pool does something. `ABILITIES` in `src/types.js` gives each one a football effect: rating bonuses, some only in a weather, a quarter, the second half, when leading or trailing, when tired or fresh, at home or in the playoffs; absorbing abilities (Water Absorb, Flash Fire, Levitate and the like) that make one type's hits have no effect, Wonder Guard, Scrappy and Mold Breaker; and named effects such as Intimidate, Pressure, ball hawks, slippery carriers, armor against strips and barbs that keep rushers on a block. A Pokémon whose abilities include one of the original curated set still plays with that one, so saved leagues keep their abilities.
@@ -221,14 +245,17 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/live/defense.js`, `src/live/passing.js` | The defensive calls (`DEF_SCHEMES`) with rush, coverage and pursuit; routes, the quarterback's reads, throws, the ball's flight and catches |
 | `src/live/kicks.js` | Punts and field goals on the live field: the kicking units, the long snap, the kick from the specialist's ratings, coverage, fair catches, bounces, returns and the posts |
 | `src/field3d.js` | The 3D stage: players, ball, play art, markers and effects, driven by the live play |
-| `src/stadium3d.js` | Field, stands, crowd, lights and weather |
+| `src/stadium3d.js` | Field, stands, crowd, lights, the video board, the time of day and weather |
+| `src/venue3d.js` | The world around each kind of stadium: farmland and a skyline, a dome, mountains, the seaside, the haunted hollow |
+| `src/kits.js`, `src/kitdraw.js` | Franchise kits (second color, wordmark, stadium, kickoff time, chant), every team's default kit and a game's venue; painting an end zone |
+| `src/broadcast.js` | The broadcast's words and numbers: drive charts, the booth's lines, the player to watch, stingers and the open |
 | `src/camera3d.js` | Gameplay, tactical, broadcast and player-focus cameras |
 | `src/model3d.js`, `src/models3d.js` | Loading the real 3D models and their animation clips; the generated index of which Pokémon have one |
 | `src/figure3d.js` | Generated figures from the pixel sprites, for Pokémon without a model |
 | `src/anim3d.js` | The animation state machine |
 | `src/body.js` | Size classes, collision capsules and model fitting from height and weight |
 | `src/formations.js` | Offensive formations, defensive fronts, alignment and footprint spacing |
-| `src/audio.js` | Synthesized crowd and game sounds |
+| `src/audio.js` | Synthesized crowd and game sounds, the broadcast's stingers and the crowd's chants |
 | `src/playbook.js` | Play art for the call sheet |
 | `src/league.js` | Snake draft, AI drafters, schedule, standings, playoffs, league leaders |
 | `src/coach.js` | Coaching schemes: their draft lean, play-calling lean and ratings edges |
@@ -245,7 +272,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/live/presnap.js` | Pre-snap adjustments: audibles, hot routes, motion, shading the coverage, show blitz and back out |
 | `src/app.js`, `src/index.html` | The entry point (rendering and the click, key and form handlers) and the styles |
 | `src/state.js`, `src/ui.js` | The shared UI state with save and preference storage; small view helpers such as `esc`, `sprite` and `teamBadge` |
-| `src/screens/` | One module per screen: `home`, `draft` (and grades), `depth`, `season` (and box scores), `offseason`, `freeagency`, `records`, `game`, the play-call sheet (`callsheet`), the live 3D game loop and input (`live3d`), gamepads (`pad`) and the share link and shared-league card (`share`) |
+| `src/screens/` | One module per screen: `home`, `draft` (and grades), `depth`, `season` (and box scores), `offseason`, `freeagency`, `records`, `kit` (the franchise kit), `game`, the broadcast graphics (`broadcast`), the play-call sheet (`callsheet`), the live 3D game loop and input (`live3d`), gamepads (`pad`) and the share link and shared-league card (`share`) |
 | `src/share.js` | The league share code: encoding the draft seed, settings and picks, reading it back and rebuilding the league |
 | `src/data.js`, `src/sprites.js`, `src/sprites3d.js` | Generated Pokémon data, menu sprites and the index of the animated sprite strips (do not edit by hand) |
 | `dist/models3d/` | The 3D models, two Pokémon per file, loaded on demand (not in git: `npm run models` downloads them) |
@@ -274,6 +301,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `test/presnap.mjs` | Audibles, hot routes, motion (and the man defender following), shading, show blitz and back out on live plays; Pro matching the game without a difficulty and the win rate falling from Rookie to Legend; the "Fits" hint following tendencies (exits 1 on failure) |
 | `test/clock.mjs` | Checks the clock rules (runoff by tempo, what stops the clock, the two-minute warning, timeouts, spike and kneel, the try and onside kicks) in set situations, then plays seeded games with the rules checked after every snap (exits 1 on failure) |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
+| `test/broadcast.mjs` | Franchise kits (validation, every team's kit, venues and times of day, a dome keeping weather out without changing the random stream) and, over simulated games, the drive charts, booth lines, stingers and player lower-thirds (exits 1 on failure) |
 | `test/abilities.mjs` | Checks every ability has an effect the game knows, the absorbing abilities, Wonder Guard, Scrappy and Mold Breaker matchups, the situational conditions, type theater on the live field and the weather's hold on each type |
 
 ## Build

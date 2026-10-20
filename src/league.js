@@ -302,7 +302,7 @@ function letter(z) {
 // a starter from the other side of the ball plays both ways), players who are out sore sit
 // when the bench can cover them, and sore players start below full energy.
 export function teamForGame(t, L = null) {
-  const side = { id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach, lineup: { ...t.lineup }, bench: [...t.bench] };
+  const side = { id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach, kit: t.kit ?? null, lineup: { ...t.lineup }, bench: [...t.bench] };
   const cond = L?.condition;
   if (!cond) return side;
   const hurt = (id) => !!L.injuries?.[id];

@@ -12,6 +12,8 @@ import { esc } from '../ui.js';
 import { autoAdvance, doCall, needsUser, playClockOut, setMode, twoPlayer, userSide, userTimeout } from './game.js';
 import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions } from './callsheet.js';
 import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
+import { boothAfter } from '../broadcast.js';
+import { afterPlay as broadcastAfter, layersHtml, onCall as broadcastCall, onFlow as broadcastFlow, resetBroadcast } from './broadcast.js';
 
 function keysHelp() {
   return `<div class="keygrid">
@@ -85,6 +87,7 @@ function setFlow(st) {
   L3.trace.push({ state: st, at: Math.round(performance.now()), clock: g?.clock, poss: g?.poss, down: g?.down, toGo: g?.toGo, spot: g?.spot, score: g ? [...g.score] : null });
   if (L3.trace.length > 400) L3.trace.shift();
   stage?.setState?.(st);
+  broadcastFlow(st, g, stage, L3.lp);
   const d = document.getElementById('dbg-state');
   if (d) d.textContent = st;
 }
@@ -110,6 +113,7 @@ export function ensureStage() {
   stageWrap.className = 'stagewrap';
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
     <div class="lower3" id="lower3" aria-live="polite"></div>
+    ${layersHtml()}
     <div class="ov-badge" id="replay-badge" hidden>Replay</div>
     <button class="hud-replay" id="replay-btn" data-act="replay" hidden>Replay <kbd>Y</kbd></button>
     <div class="ov-pause" id="pause-ov" hidden><div><b>Paused</b><span>Press <kbd>P</kbd> or <kbd>Esc</kbd> to resume</span><button class="btn" data-act="resume">Resume</button></div></div>
@@ -172,8 +176,9 @@ export function startLive(off, def, opts) {
   const g = S.game;
   // Line up from wherever the players are standing in the preview.
   const from = L3.preview?.lp ? worldSpots(L3.preview.lp) : L3.spots ?? undefined;
-  L3.before = { poss: g.poss, down: g.down, toGo: g.toGo, spot: g.spot, score: [...g.score] };
+  markBefore();
   if (L3.replay) stopReplay();
+  broadcastCall(stage);
   // The replay recording: the game as it was before the play (its random seed included) and
   // every simulation step's input, so the play can be run again exactly, step for step.
   // Officials on the field: fouls are called as the contact happens (see penalties.js).
@@ -192,6 +197,13 @@ export function startLive(off, def, opts) {
   stage.setPlay(L3.lp);
   setFlow(L3.lp.set ? 'PRE_SNAP' : 'FORMATION_SETUP');
   render();
+}
+
+// The game as it stands before a call: what the result card, the score flash and the broadcast
+// compare the result with.
+export function markBefore() {
+  const g = S.game;
+  if (g) L3.before = { poss: g.poss, down: g.down, toGo: g.toGo, spot: g.spot, score: [...g.score], quarter: g.quarter, logN: g.log.length, drives: g.drives.length };
 }
 
 export function doSnap() {
@@ -271,6 +283,7 @@ function commitPlay() {
   save();
   render();
   showBanner(resultBanner(entry, lp, b));
+  broadcastAfter(g, b, stage);
 }
 
 // The result hold is over: the players get up and walk to the next spot.
@@ -303,7 +316,7 @@ export function afterLivePlay(entry) {
   render();
   if (!entry || !g) { autoAdvance(); return; }
   // No live play follows to clear it, so the card leaves once the result beat is over.
-  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); }
+  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); broadcastAfter(g, b, stage); }
   autoAdvance();
 }
 
@@ -315,6 +328,8 @@ export function resetBetweenGames() {
   L3.deadT = 0; L3.hold = 0; L3.lob = null; L3.snapWant = false; L3.autoSnap = null; L3.keys.clear(); L3.edges.clear();
   if (L3.replay) stopReplay();
   hideBanner();
+  resetBroadcast();
+  L3.flow = null;
   if (stage) setFlow('PLAY_SELECTION');
 }
 
@@ -355,7 +370,8 @@ function resultBanner(e, lp, before) {
   const notes = (lp?.notes ?? []).filter((n) => ['type', 'ability', 'size', 'weather'].includes(n.kind)).slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
   const next = g.final ? 'Final' : g.phase === 'penalty' ? 'Accept or decline the penalty' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
   const clock = !g.final && g.phase === 'play' && !changed && !td && e.down ? (g.clockRunning ? '' : 'Clock stopped') : '';
-  return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed };
+  const booth = boothAfter(g, e, before, lp?.notes ?? []);
+  return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed, booth };
 }
 function showBanner(B) {
   const el = document.getElementById('lower3');
@@ -364,7 +380,7 @@ function showBanner(B) {
   L3.banner = B;
   el.className = `lower3 on ${B.tone}${B.possession ? ' poss' : ''}`;
   el.innerHTML = `<div class="l3-head"><b>${esc(B.head)}</b>${B.yds ? `<span class="l3-yds">${esc(B.yds)}</span>` : ''}${B.clock ? `<span class="l3-clock">${B.clock}</span>` : ''}</div>
-    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size', weather: 'Weather' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}<p class="l3-next">${esc(B.next)}</p>`;
+    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size', weather: 'Weather' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}${B.booth ? `<p class="l3-booth"><span class="l3-mic" aria-hidden="true"></span>${esc(B.booth)}</p>` : ''}<p class="l3-next">${esc(B.next)}</p>`;
 }
 function hideBanner(after = 0) {
   clearTimeout(timers.banner);

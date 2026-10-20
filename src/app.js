@@ -17,6 +17,8 @@ import { initPads } from './screens/pad.js';
 import { copyShare, loadShared, openSharedText, readShareFromUrl } from './screens/share.js';
 import { renderFreeAgency } from './screens/freeagency.js';
 import { renderRecords } from './screens/records.js';
+import { drawKitPreview, kitAct, kitInput, renderKit } from './screens/kit.js';
+import { cleanKit } from './kits.js';
 import * as FA from './freeagency.js';
 import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, userSide, userTimeout } from './screens/game.js';
 import { applyDifficulty } from './difficulty.js';
@@ -43,7 +45,7 @@ function renderTop() {
     else if (L.phase === 'offseason') items.push(['offseason', 'Offseason'], ['season', 'Last season']);
     else if (L.phase === 'freeagency') items.push(['freeagency', 'Free agency']);
     else items.push(['grades', 'Draft grades'], ['depth', 'Depth chart'], ['season', 'Season']);
-    items.push(['records', 'Records']);
+    items.push(['records', 'Records'], ['kit', 'Franchise']);
   }
   if (S.game && !S.game.final) items.push(['game', 'Live game']);
   return `<header class="top">
@@ -60,6 +62,7 @@ function onClick(e) {
   const L = S.league;
   switch (act) {
     case 'skip': S.skipOpen = !S.skipOpen; render(); break;
+    case 'kit': case 'kitchant': kitAct(act, el); break;
     case 'home': S.game = S.gameMeta?.quick ? null : S.game; setScreen('home'); break;
     case 'go': setScreen(el.dataset.to); break;
     case 'continue': {
@@ -136,6 +139,9 @@ function onClick(e) {
       const Q = LG.quickRosters(seed);
       const [a, b] = Q.teams;
       a.name = S.setup.name || 'Pallet Starters'; a.abbr = (S.setup.abbr || 'PAL').toUpperCase();
+      // Your quick-game team wears your franchise kit (the kit screen without a league open).
+      if (S.setup.color) a.color = S.setup.color;
+      if (S.setup.kit) a.kit = cleanKit(S.setup.kit, a);
       const game = createGame({ home: LG.teamForGame(a), away: LG.teamForGame(b), seed });
       // Two players: player one takes the home team, player two the away team.
       startGame(game, { quick: true, userTeamId: a.id, twoPlayer: act === 'quick2' });
@@ -214,6 +220,7 @@ function onClick(e) {
 
 function onInput(e) {
   const t = e.target;
+  if (t.id === 'k-word') { kitInput(t); return; }
   if (t.id === 'fa-amount') {
     S.faAmount = Math.round(Number(t.value));
     const pos = t.selectionStart;
@@ -233,6 +240,7 @@ function onInput(e) {
 }
 function onChange(e) {
   const t = e.target;
+  if (t.id === 'k-color' || t.id === 'k-color2') { kitInput(t); return; }
   if (t.id === 'fa-release') { S.faRelease = Number(t.value); render(); }
   if (t.id === 'rec-team') { S.recTeam = t.value === 'league' ? 'league' : Number(t.value); render(); }
   if (t.id === 'd-type') { S.draft.type = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
@@ -271,7 +279,8 @@ function onSubmit(e) {
   };
   S.slot = Number(f.querySelector('#f-slot')?.value ?? S.slot); S.confirmDelete = null;
   S.league = LG.createLeague({ teamName: S.setup.name, abbr: S.setup.abbr, rounds: S.setup.rounds, legendaries: S.setup.legendaries,
-    typeCap: S.setup.typeCap, scheme: S.setup.scheme, seed: Math.floor(Math.random() * 2 ** 31) });
+    typeCap: S.setup.typeCap, scheme: S.setup.scheme, seed: Math.floor(Math.random() * 2 ** 31), ...(S.setup.color ? { userColor: S.setup.color } : {}) });
+  if (S.setup.kit) S.league.teams[0].kit = cleanKit(S.setup.kit, S.league.teams[0]);
   S.game = null; S.gameMeta = null;
   S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false };
   setScreen('draft');
@@ -291,6 +300,7 @@ export function render() {
     case 'offseason': body = L?.phase === 'offseason' ? renderOffseason() : renderHome(); break;
     case 'freeagency': body = L?.phase === 'freeagency' ? renderFreeAgency() : renderHome(); break;
     case 'records': body = L ? renderRecords() : renderHome(); break;
+    case 'kit': body = renderKit(); break;
     case 'game': ensureStage(); body = renderGame(); break;
     default: body = renderHome();
   }
@@ -300,6 +310,7 @@ export function render() {
   app.innerHTML = renderTop() + `<main>${body}</main>`;
   document.body.classList.toggle('g3d-on', S.screen === 'game' && !!stage);
   if (S.screen === 'game') mountStage();
+  if (S.screen === 'kit') drawKitPreview();
   if (S.screen === 'draft' && boardScroll != null) { const b = document.querySelector('.board .tablewrap'); if (b) b.scrollTop = boardScroll; }
   if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
   // On a narrow screen the call sheet's tab row scrolls: keep the open tab in view.

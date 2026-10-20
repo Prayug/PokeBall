@@ -7,6 +7,7 @@ import { diffOf, diffUser } from './difficulty.js';
 import { schemeBonus, schemeOf } from './coach.js';
 import { coverSlot, injuryOdds, injuryWeeks } from './injuries.js';
 import { PENALTIES, announce, enforce, foul, preSnapFoul, simFouls, stateValue } from './penalties.js';
+import { cleanKit, venueFor } from './kits.js';
 
 // The playbook. Each run or pass has its kind, the fast simulator's numbers (depth, air yards,
 // target weights) and, for plays added on top of the original eleven, either `sim`: the original
@@ -139,7 +140,7 @@ function makeSide(t) {
   // (A two-way player covering for an injured starter is in the lineup twice: count him once.)
   const roster = [...new Set([...Object.values(t.lineup), ...(t.bench ?? [])])];
   return {
-    id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach ?? 'balanced',
+    id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach ?? 'balanced', kit: cleanKit(t.kit, t),
     starters: { ...t.lineup }, lineup: { ...t.lineup }, bench: [...(t.bench ?? [])], roster,
     energy: Object.fromEntries(roster.map((id) => [id, t.energy?.[id] ?? 100])),
     locks: {}, out: {},
@@ -164,6 +165,7 @@ export function createGame({ home, away, seed = Date.now(), playoff = false, wea
     // wait for a call (the user's team; every other side's are made by the AI on the spot).
     timeouts: [3, 3], clockRunning: false, warned: {}, manual: [false, false],
   };
+  g.venue = venueFor(g.teams[0], { seed, playoff, neutral });
   if (!weather) g.weather = pickWeather(g);
   const receiver = chance(g, 0.5) ? 0 : 1;
   g.firstReceiver = receiver;
@@ -180,7 +182,10 @@ function pickWeather(g) {
       if (w && chance(g, 0.6)) return w;
     }
   }
-  return pickWeighted(g, { clear: 70, rain: 12, sun: 8, sand: 5, hail: 5 });
+  // Under a dome the sky's weather stays outside (the roll is still made, so the game's random
+  // stream is the same in any stadium).
+  const w = pickWeighted(g, { clear: 70, rain: 12, sun: 8, sand: 5, hail: 5 });
+  return g.venue?.roof ? 'clear' : w;
 }
 
 // ---------- ratings in context ----------
@@ -286,7 +291,7 @@ export function fgDistance(g) { return 100 - g.spot + 17; }
 export function absSpot(poss, spot) { return poss === 0 ? spot : 100 - spot; }
 
 function startDrive(g) {
-  g.drive = { team: g.poss, start: g.spot, plays: 0, yards: 0, q: g.quarter, clock: g.clock, top: 0 };
+  g.drive = { team: g.poss, start: g.spot, plays: 0, yards: 0, q: g.quarter, clock: g.clock, top: 0, at: g.log.length };
   checkSubs(g, g.poss, OFF_SLOTS);
   checkSubs(g, 1 - g.poss, DEF_SLOTS);
 }
