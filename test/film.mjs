@@ -73,7 +73,7 @@ for (let n = 0; n < plays && !mine; n++) {
     await page.waitForFunction(() => !window.__pb.L3.replay, null, { timeout: 240000 });
     await page.waitForTimeout(400);
     await shot(`2-verdict-${g0.who}`);
-    const after = await pb(() => { const g = window.__pb.S.game, e = g.log[g.log.length - 1]; return { spot: g.spot, down: g.down, poss: g.poss, score: [...g.score], head: e.head, text: e.text, banner: window.__pb.L3.banner?.head ?? '', challenges: [...g.challenges], timeouts: [...g.timeouts] }; });
+    const after = await pb(() => { const g = window.__pb.S.game, e = g.log[g.log.length - 1]; return { spot: g.spot, down: g.down, poss: g.poss, score: [...g.score], head: e.head, text: e.text, banner: document.getElementById('lower3')?.textContent ?? '', challenges: [...g.challenges], timeouts: [...g.timeouts] }; });
     review ??= { before: g0, after };
     if (g0.who === (await pb(() => window.__pb.S.game.teams[0].id === (window.__pb.S.gameMeta?.userTeamId ?? 0) ? 0 : 1))) mine = { before: g0, after };
     if (g0.wrong && after.head !== 'Reversed') problems.push(`a wrong call was not reversed (${after.head}: ${after.text})`);
