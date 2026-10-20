@@ -76,6 +76,7 @@ export function buildRoute(lp, p, name) {
     y = clamp(y + across, -SIDE + 1.5, SIDE - 1.5);
     pts.push({ x, y });
   }
+  pts.from = { x: p.x, y: p.y }; // where the route is drawn from (the first leg starts here)
   return pts;
 }
 
@@ -224,12 +225,17 @@ export function routeWant(lp, p) {
   const r = p.route;
   const live = !!lp.players;   // (futureRoute runs this on a bare copy to lead the receiver)
   // The quarterback is out of the pocket and still looking to throw: the scramble drill.
-  if (live && scrambling(lp) && !(r?.[p.wp]?.block != null)) return scrambleWant(lp, p);
+  if (live && scrambleDrill(lp, p) && !(r?.[p.wp]?.block != null)) return scrambleWant(lp, p);
   if (!r || p.wp >= r.length) {
     if (!live) {
-      if (r && r[r.length - 1]?.stop) { p.want = { vx: 0, vy: 0 }; return; }
-      const l = len(p.vx, p.vy) || 1;
-      p.want = { vx: (p.vx / l) * p.top * 0.95, vy: (p.vy / l) * p.top * 0.95 };
+      // Leading him past the end of his route: where he really goes next (below), not on into
+      // the bench or out the back of the end zone. A deep man keeps running downfield; everyone
+      // else pulls up and sits down.
+      const stop = !r || r[r.length - 1]?.stop;
+      if (!stop && p.x > 16 && p.x < lp.goalX + 6) {
+        const l = len(p.vx, p.vy) || 1;
+        p.want = { vx: p.top * 0.95, vy: (p.vy / l) * p.top * 0.3 };
+      } else p.want = { vx: 0, vy: 0 };
       return;
     }
     // The route is run. A deep route keeps going (bending away from whoever is on him); a curl,
@@ -246,12 +252,48 @@ export function routeWant(lp, p) {
   }
   const w = r[p.wp];
   if (w.block != null) {
-    if (lp.t > w.block) { p.wp++; return routeWant(lp, p); }
+    if (lp.t > w.block) {
+      // Done checking for the blitz: release into the route, the same shape as drawn, from
+      // wherever the block left him.
+      const o = r[p.wp + 1], base = r.from;
+      if (o && o.x != null && base) {
+        const ox = p.x - base.x, oy = p.y - base.y;
+        for (let i = p.wp + 1; i < r.length; i++) if (r[i].x != null) r[i] = { ...r[i], x: r[i].x + ox, y: clamp(r[i].y + oy, -SIDE + 1.5, SIDE - 1.5) };
+      }
+      p.wp++; p.legFrom = { x: p.x, y: p.y }; return routeWant(lp, p);
+    }
     return passBlockWant(lp, p);
   }
+  // Run the leg as drawn: the leg runs from the last break (or where he started) to this one.
+  // He chases a point a little ahead of himself on that line, so a step off it (a release around
+  // a press corner, a defender's shoulder) is worked back onto the line instead of becoming a
+  // new diagonal to the break; and he counts the break as made once he is level with it, so he
+  // never circles back to touch a spot he ran past.
+  const prev = r[p.wp - 1];
+  const a = prev && prev.x != null ? prev : p.legFrom ?? r.from ?? w;
+  const lx = w.x - a.x, ly = w.y - a.y, L = len(lx, ly);
   const d = dist(p, w);
-  if (d < 0.7) { p.wp++; return routeWant(lp, p); }
-  seek(p, w, 0.97, w.stop ? 1.0 : 0.01);
+  const u = L > 0.01 ? ((p.x - a.x) * lx + (p.y - a.y) * ly) / (L * L) : 1;
+  if (d < 0.6 || u >= 1) { p.wp++; p.legFrom = { x: w.x, y: w.y }; return routeWant(lp, p); }
+  const sp = len(p.vx, p.vy);
+  const ahead = clamp(u, 0, 1) * L + 1.1 + sp * 0.12;
+  const t = Math.min(ahead, L);
+  const aim = L > 0.01 ? { x: a.x + (lx / L) * t, y: a.y + (ly / L) * t } : w;
+  // Into a break: sink the hips. He gets down to the speed he can carry through the cut by the
+  // time he reaches it, so he plants at the spot the play shows rather than rounding it off
+  // a few yards past.
+  let frac = 0.97;
+  const next = r[p.wp + 1];
+  if (w.stop) frac = Math.min(frac, Math.sqrt(2 * p.accel * (p.cut ?? 2) * 0.7 * d) / p.top);
+  else if (next && next.x != null && L > 0.01) {
+    const nx = next.x - w.x, ny = next.y - w.y, nl = len(nx, ny) || 1;
+    const turn = Math.acos(clamp((lx * nx + ly * ny) / (L * nl), -1, 1));
+    if (turn > 0.35) {
+      const vCut = p.top * clamp(1.05 - turn / 2.1, 0.3, 1);
+      frac = Math.min(frac, Math.sqrt(vCut * vCut + 2 * p.accel * (p.cut ?? 2) * 0.6 * d) / p.top);
+    }
+  }
+  seek(p, aim, Math.max(frac, 0.25), 0.01);
 }
 
 // Is the quarterback scrambling with the ball, still a passer (rolled out of the pocket, or
@@ -260,6 +302,21 @@ export function scrambling(lp) {
   const qb = lp.off.QB;
   if (!qb || lp.kind !== 'pass' || lp.thrown || lp.windup || lp.carrierSet || lp.ball.holder !== qb || lp.t < 1.2 || lp.play.boot) return false;
   return Math.abs(qb.y) > 4.5 || qb.x < lp.dropX - 2.5;
+}
+
+// Does this receiver break off into the scramble drill? A quarterback sliding in the pocket or
+// stepping a yard or two wide doesn't break the play: the routes run as called until he has
+// clearly been on the move outside it for a beat. A man who has finished his route reacts at once.
+export function scrambleDrill(lp, p) {
+  if (lp.scrambleChk !== lp.t) {
+    lp.scrambleChk = lp.t;
+    // (Once the drill is on, it stays on through the throwing motion: nobody snaps back to the
+    // old route while the arm comes forward.)
+    if (!scrambling(lp) && !(lp.windup && lp.scrambleFrom != null)) lp.scrambleFrom = null;
+    else lp.scrambleFrom ??= lp.t;
+  }
+  if (lp.scrambleFrom == null) return false;
+  return lp.t - lp.scrambleFrom > 0.6 || !p.route || p.wp >= p.route.length;
 }
 
 // The scramble drill, the way receivers are coached it: deep men keep going deep and drift
@@ -348,7 +405,7 @@ function release(lp, r, away, kind = 'touch', place = null) {
   // Lead the receiver: where will he be when the ball arrives?
   let T = dist(rp, r) / v, px = r.x, py = r.y;
   for (let i = 0; i < 4; i++) {
-    const fut = futureRoute(r, T);
+    const fut = futureRoute(r, T, lp.goalX);
     px = fut.x; py = fut.y;
     T = Math.hypot(px - rp.x, py - rp.y) / v;
   }
@@ -379,7 +436,15 @@ function release(lp, r, away, kind = 'touch', place = null) {
     if (place.x > 0.5) zc += 0.35; else if (place.x < -0.5) zc -= 0.3;
     zc = clamp(zc, 0.6, 3.2);
   }
-  px += randn(g) * sd * 1.2; py += randn(g) * sd;
+  // The miss. Near a sideline or the end line a passer keeps the ball on the field side of his
+  // man (only he can get it, or nobody), so a miss that would sail out is mostly pulled back in:
+  // a wild one still can, but the ball no longer goes out wherever the receiver would be if
+  // the field kept going.
+  let ex = randn(g) * sd * 1.2, ey = randn(g) * sd;
+  const out = (x, y) => Math.abs(y) > SIDE - 0.4 || x > lp.goalX + 9.6;
+  if (out(px + ex, py + ey)) { ex = randn(g) * sd * 1.2; ey = randn(g) * sd; }
+  if (out(px + ex, py + ey) && chance(g, 0.6)) { ey = Math.abs(py + ey) > SIDE - 0.4 ? -sgn(py) * Math.abs(ey) * 0.5 : ey; ex = px + ex > lp.goalX + 9.6 ? -Math.abs(ex) * 0.5 : ex; }
+  px += ex; py += ey;
   py = clamp(py, -SIDE - 2, SIDE + 2);
   // Touch: deep balls are lofted, short ones are drilled.
   const loft = kind !== 'touch' ? 1 : air > 18 ? 0.86 : air > 10 ? 0.94 : 1;
@@ -413,18 +478,20 @@ export function flightAt(F, e) {
   return { x: F.sx + (F.tx - F.sx) * u, y: F.sy + (F.ty - F.sy) * u, z: F.z0 + F.vz * e - 0.5 * GRAVITY * e * e };
 }
 
-function futureRoute(r, T) {
+function futureRoute(r, T, goalX = 999) {
   // Run a copy of the receiver along his route for T seconds.
-  const c = { x: r.x, y: r.y, vx: r.vx, vy: r.vy, fx: r.fx, fy: r.fy, top: r.top, accel: r.accel, cut: r.cut, grip: r.grip, route: r.route, wp: r.wp, role: 'route' };
-  const stub = { thrown: null, t: 9, goalX: 999 };
+  const c = { x: r.x, y: r.y, vx: r.vx, vy: r.vy, fx: r.fx, fy: r.fy, top: r.top, accel: r.accel, cut: r.cut, grip: r.grip, route: r.route, wp: r.wp, legFrom: r.legFrom, role: 'route' };
+  const stub = { thrown: null, t: 9, goalX };
   for (let t = 0; t < T; t += DT) {
     const w = c.route?.[c.wp];
     if (w && w.block != null) { c.wp++; continue; }
     routeWant(stub, c);
     const want = c.want ?? { vx: 0, vy: 0 };
     kin(c, want.vx, want.vy, c.top, DT);
+    // He bends along the sideline rather than over it (as move() has him do).
+    if (Math.abs(c.y) > SIDE - 1.5 && c.vy * c.y > 0) c.vy *= clamp((SIDE + 0.5 - Math.abs(c.y)) / 2, 0, 1);
   }
-  return { x: c.x, y: c.y };
+  return { x: Math.min(c.x, goalX + 9), y: clamp(c.y, -SIDE + 1, SIDE - 1) };
 }
 
 function nearestDef(lp, r) {
