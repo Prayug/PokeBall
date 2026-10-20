@@ -1,5 +1,6 @@
 // Football attributes derived from Pokémon base stats, and the 22 roster slots.
 import { POKEMON } from './data.js';
+import { MODEL_INDEX } from './models3d.js';
 import { pickAbility, TYPE_TRAITS, ABILITIES } from './types.js';
 
 export const ATTRS = {
@@ -173,7 +174,11 @@ function curvedOverall(attrs, slot) {
 }
 
 export const PLAYERS = buildPlayers();
-export const ALL_IDS = Object.keys(PLAYERS).map(Number);
+// Only Pokémon with a 3D model are in the game. The rest stay in PLAYERS, rated on the same
+// curve, so old saves, box scores and record books still name them, but nobody can draft,
+// sign or play one (league.js swaps them off saved rosters).
+export const ALL_IDS = Object.keys(PLAYERS).map(Number).filter((id) => id in MODEL_INDEX);
+export const RETIRED = new Set(Object.keys(PLAYERS).map(Number).filter((id) => !(id in MODEL_INDEX)));
 
 // League development: growth = { id: { attr: points } } on top of the base ratings.
 // PLAYERS is shared, so the active league's growth is applied in place.

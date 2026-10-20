@@ -10,7 +10,7 @@
 // over plays: `add` returns how far a play moves it, `reset` breaks a streak), `attr` (rating
 // bonuses while active, through eff() in engine.js) and `live` (live-field effects read by the
 // trait table in traits.js).
-import { PLAYERS, SLOT } from './ratings.js';
+import { PLAYERS, RETIRED, SLOT } from './ratings.js';
 import { TYPE_COLORS } from './types.js';
 
 // Where a power works: the position group of the slot the Pokémon plays.
@@ -240,6 +240,7 @@ function boosted(base, sig) {
 function assign() {
   const out = {};
   for (const [key, p] of Object.entries(PLAYERS)) {
+    if (RETIRED.has(p.id)) continue;
     const slot = naturalSlot(p);
     const group = groupOfSlot(slot);
     const sig = SIGNATURES[p.name];

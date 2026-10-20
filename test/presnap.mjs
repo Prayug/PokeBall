@@ -113,7 +113,8 @@ for (const [def, man] of [['base', true], ['cover3', false]]) {
 {
   const g = game(15, 1);
   const lp = lineUp(g, 'curl', 'mug', { userSide: 0 });
-  const mlb = lp.def.MLB, x0 = mlb.home.x;
+  // A blitzer the mug walked up into the line (a big linebacker can line up deep enough already).
+  const mlb = lp.def[lp.blitz.find((k) => lp.def[k].home.x < 4) ?? 'MLB'], x0 = mlb.home.x;
   check(setDisguise(lp, 'back') && mlb.home.x > x0 + 1.5, 'back out drops the blitzers to normal depth');
   pre(lp, 1.2);
   check(mlb.x > x0 + 1.5, `the linebacker backed out (x ${x0.toFixed(1)} to ${mlb.x.toFixed(1)})`);
