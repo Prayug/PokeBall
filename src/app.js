@@ -18,7 +18,7 @@ import { copyShare, loadShared, openSharedText, readShareFromUrl } from './scree
 import { renderFreeAgency } from './screens/freeagency.js';
 import { renderRecords } from './screens/records.js';
 import * as FA from './freeagency.js';
-import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, userSide, userTimeout } from './screens/game.js';
+import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, toggleTakeOver, userSide, userTimeout } from './screens/game.js';
 import { applyDifficulty } from './difficulty.js';
 import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, setCamera, setDebug, stage, startReplay, syncOverlays } from './screens/live3d.js';
 
@@ -32,6 +32,24 @@ export function setScreen(screen) {
   render();
   if (changed) window.scrollTo(0, 0);
   if (screen === 'draft') draftTick();
+}
+
+// A quick game: two AI-drafted rosters. Two players: player one takes the home team, player two
+// the away team. Spectate: the AI calls and plays both (Watch mode for this game only).
+export function quickGame({ twoPlayer = false, spectate = false } = {}) {
+  applyGrowth({});
+  // ?seed=N in the address replays the same quick game (rosters, weather, coin toss): the
+  // screenshot tests compare builds on exactly the same game state. A streamer's later games
+  // move on from it.
+  let seed = Math.floor(Math.random() * 2 ** 31);
+  try { const m = /[?&#]seed=(\d+)/.exec(location.search + location.hash); if (m && !(S.streamer && S.game)) seed = Number(m[1]); } catch { /* no location */ }
+  const Q = LG.quickRosters(seed);
+  const [a, b] = Q.teams;
+  if (!spectate) { a.name = S.setup.name || 'Pallet Starters'; a.abbr = (S.setup.abbr || 'PAL').toUpperCase(); }
+  const game = createGame({ home: LG.teamForGame(a), away: LG.teamForGame(b), seed });
+  const meta = { quick: true, userTeamId: a.id, twoPlayer };
+  if (spectate) meta.spectate = true;
+  startGame(game, meta);
 }
 
 // ---------- top bar ----------
@@ -91,7 +109,7 @@ function onClick(e) {
     }
     case 'share': S.shareOpen = !S.shareOpen; S.shareMsg = ''; render(); break;
     case 'sharecopy': if (L) copyShare(L, el.dataset.what); break;
-    case 'shareload': loadShared(el.dataset.replay === '1'); break;
+    case 'shareload': loadShared(el.dataset.replay === '1', el.dataset.challenge === '1'); break;
     case 'sharedismiss': S.shareIn = null; S.shareErr = ''; render(); break;
     case 'recap': if (L) download(`pokeball-season${L.season ?? 1}-recap.txt`, recapText(L), 'text/plain'); break;
     case 'openresult': S.resultIdx = Number(el.dataset.i); setScreen('result'); break;
@@ -127,20 +145,10 @@ function onClick(e) {
       save(); render();
       break;
     }
-    case 'quick': case 'quick2': {
-      applyGrowth({});
-      // ?seed=N in the address replays the same quick game (rosters, weather, coin toss): the
-      // screenshot tests compare builds on exactly the same game state.
-      let seed = Math.floor(Math.random() * 2 ** 31);
-      try { const m = /[?&#]seed=(\d+)/.exec(location.search + location.hash); if (m) seed = Number(m[1]); } catch { /* no location */ }
-      const Q = LG.quickRosters(seed);
-      const [a, b] = Q.teams;
-      a.name = S.setup.name || 'Pallet Starters'; a.abbr = (S.setup.abbr || 'PAL').toUpperCase();
-      const game = createGame({ home: LG.teamForGame(a), away: LG.teamForGame(b), seed });
-      // Two players: player one takes the home team, player two the away team.
-      startGame(game, { quick: true, userTeamId: a.id, twoPlayer: act === 'quick2' });
-      break;
-    }
+    case 'quick': quickGame(); break;
+    case 'quick2': quickGame({ twoPlayer: true }); break;
+    case 'watchgame': quickGame({ spectate: true }); break;
+    case 'takeover': toggleTakeOver(); break;
     case 'newleague': S.league = null; S.game = null; setScreen('home'); break;
     case 'select': {
       if (e.target.closest('[data-act="draftbtn"]')) return;
@@ -317,6 +325,9 @@ function start(data) {
   initAudio();
   setSound(S.sound);
   try { if (/[?&#]debug\b/.test(location.search + location.hash)) S.debug = true; } catch { /* no location */ }
+  // Streamer mode: ?watch in the address opens straight into a game the AI plays on both sides,
+  // and each final rolls into the next game. Your saved league and mode are left as they were.
+  try { if (/[?&#]watch\b/.test(location.search + location.hash)) S.streamer = true; } catch { /* no location */ }
   readShareFromUrl();
   const snap = data?.state;
   if (snap?.league || snap?.game) {
@@ -333,6 +344,7 @@ function start(data) {
   window.addEventListener('blur', () => clearInput(true));
   initPads();
   if (S.shareIn) S.screen = 'home';
+  if (S.streamer && !S.shareIn) { quickGame({ spectate: true }); return; }
   render();
   if (S.screen === 'draft') draftTick();
   if (S.screen === 'game') autoAdvance();

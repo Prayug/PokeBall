@@ -9,7 +9,7 @@ import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
 import { S, save, savePrefs, timers } from '../state.js';
 import { esc } from '../ui.js';
-import { autoAdvance, doCall, needsUser, playClockOut, setMode, twoPlayer, userSide, userTimeout } from './game.js';
+import { autoAdvance, doCall, needsUser, playClockOut, setMode, spectating, toggleTakeOver, twoPlayer, userSide, userTimeout } from './game.js';
 import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions } from './callsheet.js';
 import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 
@@ -32,6 +32,7 @@ function keysHelp() {
     <span><kbd>I</kbd> on the play sheet: type edges and their tendencies</span>
     <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
     <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
+    <span><kbd>O</kbd> in Watch mode: call the next play yourself (press again to hand it back)</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
   </div>
   <h4>Gamepad</h4>
@@ -713,6 +714,7 @@ export function onKey(e, down) {
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
     // P pauses a play on the field; between plays it falls through to the call sheet (Punt).
     if (code === 'KeyP' && L3.lp && L3.lp.phase !== 'dead') { e.preventDefault(); togglePause(); return; }
+    if (code === 'KeyO' && spectating()) { e.preventDefault(); toggleTakeOver(); return; }
     if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
