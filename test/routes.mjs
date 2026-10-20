@@ -46,7 +46,9 @@ for (let i = 0; i < N; i++) {
     if (scrambling(lp)) C.scrambleDrill++;
     if (lp.thrown || lp.windup || lp.carrierSet) continue;
     for (const p of lp.players) {
-      if (p.side !== 'off' || p.role !== 'route' || !p.route || p.jam > 0 || scrambleDrill(lp, p)) continue;
+      if (p.side !== 'off' || p.role !== 'route' || !p.route || p.jam > 0 || R.get(p)?.drill) continue;
+      // Once he breaks off into the scramble drill he is off the route by design.
+      if (scrambleDrill(lp, p)) { if (R.has(p)) R.get(p).drill = true; continue; }
       if (p.wp >= p.route.length || p.route[p.wp]?.block != null) continue;
       // Measured against the route as drawn, from where he lined up (or, for a back who checks
       // the blitz first, from where he released).

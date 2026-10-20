@@ -7,7 +7,9 @@
 // Exits non-zero on any failure.
 // Usage: node test/league.mjs [seasons, default 2] [seed, default 11]
 import * as LG from '../src/league.js';
-import { PLAYERS, SLOT, SLOT_KEYS, applyGrowth } from '../src/ratings.js';
+import { PLAYERS, RETIRED, SLOT, SLOT_KEYS, applyGrowth } from '../src/ratings.js';
+import { MODEL_INDEX } from '../src/models3d.js';
+import { createGame as newGame } from '../src/engine.js';
 import { createGame, fgRange, simUntil } from '../src/engine.js';
 import { SCHEMES, schemeBonus } from '../src/coach.js';
 import { injuryOdds } from '../src/injuries.js';
@@ -497,6 +499,40 @@ check(injuryOdds(479, 143) > 3 * injuryOdds(143, 479), 'injuries: the small body
   };
   const air = groups('airraid'), ground = groups('ground');
   check(air > ground, `schemes: Air Raid auto-drafts more passers and receivers early (${air} vs ${ground} in the first 8 picks)`);
+}
+
+// ---------- Pokémon without a 3D model (league.js replaceRetired) ----------
+{
+  check(RETIRED.size > 0 && [...RETIRED].every((id) => !(id in MODEL_INDEX)), 'retired: every retired Pokémon is one without a model');
+  const X = LG.createLeague({ seed: 77, rounds: 24 });
+  check(LG.available(X).every((id) => id in MODEL_INDEX), 'retired: only Pokémon with a 3D model can be drafted');
+  while (X.phase === 'draft') { const c = LG.aiChoosePick(X); LG.makePick(X, c.id, c.slot); }
+  // An old save: two retired Pokémon on rosters, one a starter with a contract and growth.
+  const [r1, r2] = [...RETIRED];
+  const me = X.teams[0], them = X.teams[1];
+  const slot = Object.keys(me.lineup)[0], was = me.lineup[slot];
+  const put = (t, old, id) => {
+    t.roster = t.roster.map((x) => (x === old ? id : x)); t.bench = t.bench.map((x) => (x === old ? id : x));
+    for (const m of [t.slots, t.lineup]) for (const k of Object.keys(m)) if (m[k] === old) m[k] = id;
+  };
+  put(me, was, r1); put(them, them.roster[them.roster.length - 1], r2);
+  X.contracts[r1] = { salary: 3, years: 2 }; X.growth[r1] = { spd: 2 };
+  const game = newGame({ home: LG.teamForGame(me, X), away: LG.teamForGame(them, X), seed: 5 });
+  const saved = JSON.parse(JSON.stringify({ league: X, game }));
+  LG.migrateLeague(saved.league);
+  LG.replaceRetiredInGame(saved.game, saved.league);
+  const L2 = saved.league, all = L2.teams.flatMap((t) => t.roster);
+  check(!all.some((id) => RETIRED.has(id)), 'retired: a saved league keeps no retired Pokémon on a roster');
+  check(new Set(all).size === all.length, 'retired: their replacements are not on another roster');
+  check(L2.teams.every((t, i) => t.roster.length === X.teams[i].roster.length), 'retired: rosters keep their size');
+  const sub = L2.teams[0].lineup[slot];
+  check(!RETIRED.has(sub) && L2.contracts[sub]?.salary === 3 && L2.growth[sub]?.spd === 2 && !(r1 in L2.contracts),
+    'retired: the newcomer takes over the starter\'s slot, contract and growth');
+  const gIds = saved.game.teams.flatMap((t) => [...t.roster, ...Object.values(t.lineup)]);
+  check(!gIds.some((id) => RETIRED.has(id)) && saved.game.teams[0].lineup[slot] === sub && saved.game.teams[0].stats[sub],
+    'retired: a game saved in progress swaps them for the same newcomers');
+  LG.migrateLeague(L2);
+  check(L2.teams[0].lineup[slot] === sub, 'retired: migrating twice changes nothing');
 }
 
 applyGrowth({});

@@ -6,8 +6,8 @@
 // uses; see README for the details. build/build_models3d.mjs converts them (one idle, run,
 // walk, attack, damage, down and glad clip at most, 512px textures, meshopt compression) and
 // packs them two to a file as models3d/<chunk>.js next to the page, each a call to
-// __pbModels({id: base64Glb}). Species without a model keep the generated figure from
-// figure3d.js.
+// __pbModels({id: base64Glb}). Species without a model are not in the game (ratings.js
+// ALL_IDS); the generated figure from figure3d.js only stands in while a model loads.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
@@ -556,9 +556,9 @@ export function foldWings(fig, w) {
 const GESTURES = ['glance', 'shrug', 'wave', 'bounce', 'wag', 'ruffle']; // stretch: a wave of one arm
 const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 function gestureAt(t, seed) {
-  const period = 4.5 + hash(seed * 13) * 2.5, k = Math.floor((t + seed * 17) / period), u = ((t + seed * 17) / period - k) * period;
+  const period = 3 + hash(seed * 13) * 1.5, k = Math.floor((t + seed * 17) / period), u = ((t + seed * 17) / period - k) * period;
   const len = 1.7;
-  if (u > len || hash(k + seed * 7) < 0.25) return null;
+  if (u > len || hash(k + seed * 7) < 0.15) return null;
   return { kind: GESTURES[Math.floor(hash(k * 3.7 + seed) * GESTURES.length)], e: Math.sin((Math.PI * u) / len) ** 2, u: u / len, side: hash(k * 9.1 + seed) < 0.5 ? 1 : -1 };
 }
 export function driveLimbs(fig, g) {

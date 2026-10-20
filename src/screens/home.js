@@ -13,7 +13,7 @@ function resumeScreen(L, game) {
   return { draft: 'draft', grades: 'grades', offseason: 'offseason', freeagency: 'freeagency' }[L.phase] ?? 'season';
 }
 export function loadSnapshot(snap) {
-  S.league = LG.migrateLeague(snap.league); S.game = snap.game ?? null; S.gameMeta = snap.gameMeta ?? null;
+  S.league = LG.migrateLeague(snap.league); S.game = LG.replaceRetiredInGame(snap.game ?? null, S.league); S.gameMeta = snap.gameMeta ?? null;
   S.offCuts = null; S.subSel = null; S.resultIdx = null;
   setScreen(resumeScreen(S.league, S.game));
   if (S.screen === 'game') autoAdvance();

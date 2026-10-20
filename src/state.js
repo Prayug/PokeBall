@@ -43,6 +43,7 @@ export function loadSaved(n = S.slot) {
     const s = JSON.parse(localStorage.getItem(slotKey(n)) || 'null');
     if (!s?.league) return null;
     LG.migrateLeague(s.league);
+    LG.replaceRetiredInGame(s.game, s.league);
     return s;
   } catch { return null; }
 }

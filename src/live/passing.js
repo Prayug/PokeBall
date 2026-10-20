@@ -310,7 +310,9 @@ export function scrambling(lp) {
 export function scrambleDrill(lp, p) {
   if (lp.scrambleChk !== lp.t) {
     lp.scrambleChk = lp.t;
-    if (!scrambling(lp)) lp.scrambleFrom = null;
+    // (Once the drill is on, it stays on through the throwing motion: nobody snaps back to the
+    // old route while the arm comes forward.)
+    if (!scrambling(lp) && !(lp.windup && lp.scrambleFrom != null)) lp.scrambleFrom = null;
     else lp.scrambleFrom ??= lp.t;
   }
   if (lp.scrambleFrom == null) return false;
