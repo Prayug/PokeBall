@@ -6,7 +6,7 @@ import { formationsFor } from '../formations.js';
 import { diagram, formationName } from '../playbook.js';
 import { render } from '../app.js';
 import { S } from '../state.js';
-import { edgeRow, esc } from '../ui.js';
+import { edgeRow, esc, powersRow } from '../ui.js';
 import { SCHEMES, schemePlay } from '../coach.js';
 import { twoPlayer, userSide } from './game.js';
 import { tendencyFit, tendencyLines, typeEdges } from '../scout.js';
@@ -169,7 +169,7 @@ export function callSheetHtml(g) {
   const body = S.csAll
     ? `<div class="cs-book">${tabs.map(([k, label, cs]) => `<section><h4>${label}</h4><div class="cs-cards">${cs.map(card).join('')}</div></section>`).join('')}</div>`
     : `<div class="cs-cards">${tabs.find(([k]) => k === cur)[2].map(card).join('')}</div>`;
-  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff)}${body}</div>`;
+  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff)}${powersRow(g, us)}${body}</div>`;
 }
 
 // The clock between plays: running or stopped, your timeouts with the button to call one, and

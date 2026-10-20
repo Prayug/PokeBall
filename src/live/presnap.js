@@ -6,7 +6,7 @@
 // Everything here changes the live play in place and is deterministic, so the replay (which
 // starts from a copy of the play at the snap) shows exactly what was played.
 import { formationsFor, frontX, lineX } from '../formations.js';
-import { DT, RECEIVERS, SIDE, dist, kin, seek, separate, sgn, steer } from '../live.js';
+import { DT, RECEIVERS, SIDE, dist, kin, seek, separate, sgn, steer } from './core.js';
 import { PLAY_ROUTES, buildRoute } from './passing.js';
 import { clamp } from '../engine.js';
 

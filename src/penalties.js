@@ -91,6 +91,7 @@ export function enforce(before, f) {
     moved = -Math.min(P.yards, Math.floor(spot / 2));
     spot += moved; toGo -= moved;
   } else {
+    // From the 1 there is nowhere left to go: interference there is a first down at the 1.
     moved = P.spot ? Math.min(Math.max(1, f.x), 99 - spot) : Math.min(P.yards, Math.floor((100 - spot) / 2));
     spot += moved;
     if (P.auto || moved >= toGo) { first = true; down = 1; toGo = Math.min(10, 100 - spot); } else toGo -= moved;

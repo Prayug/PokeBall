@@ -508,6 +508,8 @@ table.kicking thead th { font: 600 12px/1 var(--f-data); color: var(--chalk-dim)
 .hud-flash.td { color: var(--amber); }
 .hud-flash.big { color: var(--good); }
 .hud-flash.muted { color: var(--chalk-dim); font-size: clamp(22px, 4vw, 36px); }
+.hud-flash.power { color: #ffd23f; font-size: clamp(24px, 5vw, 44px); text-shadow: 0 0 18px rgba(255, 210, 63, .55), 0 3px 0 rgba(0,0,0,0.55); }
+.hud-flash.on.power { animation: fl-pop 0.5s ease-out; }
 .hud-tip { justify-self: end; font: 600 14px/1.2 var(--f-data); letter-spacing: 0.06em; background: rgba(13, 43, 32, 0.8); padding: 7px 12px; border-radius: 4px; text-align: right; white-space: pre-line; }
 .touch, .touch-top { display: none; }
 @media (pointer: coarse) {
@@ -620,6 +622,25 @@ body.g3d-on main { max-width: none; }
 .cs-flag .flagtxt { color: #ffe27a; font-weight: 600; } .cs-flag .flagtxt::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 7px; background: #ffd23f; transform: rotate(8deg); }
 .lower3.flag { border-color: #ffd23f; } .lower3.flag .l3-head b { color: #ffd23f; } .pcard.k-spike, .pcard.k-kneel { --fam: #c792ff; }
 @media (prefers-reduced-motion: reduce) { .cs-clock .clk.run::before { animation: none; } }
+/* Powers: the carriers' meters between plays, the tag on a lineup spot, the scouting card. */
+.cs-powers { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 2px 8px; font: 600 12px/1.2 var(--f-data); color: #c9d3cc; }
+.cs-powers .pw-label, .cs-powers .pw-vs { text-transform: uppercase; letter-spacing: 0.05em; color: #ffd23f; }
+.cs-powers .pw-vs { color: #c9d3cc; margin-left: 6px; }
+.pw-chip { display: inline-flex; gap: 5px; align-items: center; padding: 3px 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--pw) 55%, transparent); background: rgba(0, 0, 0, .25); white-space: nowrap; }
+.pw-chip b { font-weight: 700; color: #fff; }
+.pw-chip.on { background: color-mix(in srgb, var(--pw) 32%, rgba(0,0,0,.3)); border-color: var(--pw); box-shadow: 0 0 10px color-mix(in srgb, var(--pw) 60%, transparent); }
+.pw-chip.on::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--pw); box-shadow: 0 0 6px var(--pw); }
+.pw-pips { display: inline-flex; gap: 2px; }
+.pw-pips i { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.18); }
+.pw-pips i.on { background: var(--pw); }
+.pw-pips i.num { width: auto; height: auto; border-radius: 0; background: none; font-style: normal; color: #c9d3cc; }
+.pw-tag { display: block; font-size: 10px; font-weight: 700; letter-spacing: .03em; color: var(--pw); text-transform: uppercase; }
+.pw-tag.dormant { opacity: .45; text-decoration: line-through; }
+.pw-desc { border-left: 3px solid var(--pw); padding-left: 8px; margin: 6px 0; }
+.pw-desc p { margin: 2px 0; }
+.pw-log { font-weight: 700; color: var(--pw); }
+.pw-log:not(.on) { opacity: .7; }
+.pw-sig { font-style: normal; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 1px 5px; border-radius: 3px; background: var(--pw); color: #111; }
 .cs-cards { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
 .cs-book { display: grid; gap: 8px; }
 .cs-book h4 { margin: 0 0 4px; }
@@ -663,6 +684,8 @@ body.g3d-on main { max-width: none; }
 .l3-tag.ability { background: rgba(147, 197, 253, .18); color: #93c5fd; }
 .l3-tag.size { background: rgba(255, 255, 255, .12); color: #e5e7eb; }
 .l3-tag.weather { background: rgba(94, 234, 212, .16); color: #5eead4; }
+.l3-tag.power { background: rgba(255, 210, 63, .22); color: #ffd23f; }
+.l3-tag.powerOff { background: rgba(255, 255, 255, .1); color: #c9d1ce; }
 .l3-next { margin: 6px 0 0; font: 600 13px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.08em; color: var(--chalk-dim); }
 @media (prefers-reduced-motion: reduce) { .lower3 { transition: none; } }
 /* Debug HUD: developer only */
