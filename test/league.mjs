@@ -15,7 +15,7 @@ import { SCHEMES, schemeBonus } from '../src/coach.js';
 import { injuryOdds } from '../src/injuries.js';
 import * as FA from '../src/freeagency.js';
 import * as RC from '../src/records.js';
-import { decodeLeague, encodeLeague, leagueFromShare } from '../src/share.js';
+import { attachChallenge, challengeStatus, decodeLeague, encodeLeague, leagueFromShare, settleChallenge } from '../src/share.js';
 
 const SEASONS = Number(process.argv[2] ?? 2);
 const SEED = Number(process.argv[3] ?? 11);
@@ -411,13 +411,47 @@ check(firstSeason(L) === again.champion, 'dynasty: the same seed crowns the same
   check(same(draftView(leagueFromShare(D)), draftView(S2)), 'share: the code rebuilds the finished draft, schedule and trade offer');
   const own = leagueFromShare(D, { replay: false, teamName: 'Mine', abbr: 'MIN' });
   check(own.phase === 'draft' && own.pickIndex === 0 && own.teams[0].name === 'Mine' && same(own.picks.map((p) => p.team), S2.picks.map((p) => p.team)), 'share: drafting it yourself starts the same draft order fresh');
-  // Through a season and the offseason: the first draft is kept for sharing.
+  check(!D.challenge, 'challenge: a code shared before any game carries no challenge');
+  // Through a season and the offseason: the first draft is kept for sharing, and once games are
+  // played the code is a challenge carrying the sharer's record.
   S2.phase = 'season';
+  playWeek(S2); playWeek(S2);
+  const mid = decodeLeague(encodeLeague(S2));
+  const me2 = LG.teamSeason(S2, 0);
+  check(mid?.challenge && mid.challenge.gp === 2 && mid.challenge.finish === 0 && mid.challenge.w === me2.w && mid.challenge.pf === me2.pf && same(mid.picks, D.picks),
+    'challenge: mid-season, the code carries the draft and the record so far');
+  // Same seed, drafted your own way: judged on your first two games.
+  const taker = attachChallenge(leagueFromShare(mid, { replay: false, teamName: 'Taker', abbr: 'TKR' }), mid, 'own');
+  draftAll(taker); taker.phase = 'season';
+  check(challengeStatus(taker).state === 'pending', 'challenge: pending before the taker has played as many games');
+  playWeek(taker); playWeek(taker);
+  const mine = LG.teamSeason(taker, 0, 2), st = settleChallenge(taker);
+  const want = Math.sign((mine.w - mine.l) - (me2.w - me2.l) || (mine.pf - mine.pa) - (me2.pf - me2.pa));
+  check(st.state === ['lost', 'tied', 'won'][want + 1] && taker.challenge.done === st, `challenge: decided on the first two games (${mine.w}-${mine.l} vs ${me2.w}-${me2.l}: ${st.state})`);
   while (S2.phase === 'season') playWeek(S2);
   while (S2.phase === 'playoffs') playPlayoffRound(S2);
+  const full = decodeLeague(encodeLeague(S2)).challenge, fin = LG.teamSeason(S2, 0);
+  check(full.finish === fin.finish && fin.finish > 0 && full.gp === S2.schedule.length, `challenge: after the playoffs the code carries the whole season (finish ${full.finish})`);
   LG.startOffseason(S2);
   LG.finishOffseason(S2, null);
-  check(encodeLeague(S2) === code, 'share: after the rookie draft the league still shares its first draft');
+  check(encodeLeague(S2, { challenge: false }) === code, 'share: after the rookie draft the league still shares its first draft');
+  const later = decodeLeague(encodeLeague(S2));
+  check(same(later.challenge, full), 'challenge: in season 2 the code still carries the first season');
+  // Playing their team: the same roster, judged on the whole season.
+  const theirs = attachChallenge(leagueFromShare(later), later, 'theirs');
+  theirs.phase = 'season';
+  playWeek(theirs);
+  check(challengeStatus(theirs).state === 'pending', 'challenge: a whole-season mark waits for the season to end');
+  while (theirs.phase === 'season') playWeek(theirs);
+  while (theirs.phase === 'playoffs') playPlayoffRound(theirs);
+  check(['won', 'lost', 'tied'].includes(settleChallenge(theirs).state), 'challenge: decided once the taker\'s season is over');
+  LG.startOffseason(theirs); LG.finishOffseason(theirs, null);
+  check(challengeStatus(theirs) === theirs.challenge.done, 'challenge: the verdict stays after the season rolls over');
+  // An edited record fails the check.
+  const raw = encodeLeague(S2);
+  const bytes = Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  bytes[bytes.length - 9] ^= 1;
+  check(decodeLeague(bytes.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')) === null, 'challenge: a hand-edited record is refused');
   check(decodeLeague('not a code') === null && decodeLeague('#league=AAAA') === null && decodeLeague(`#league=${code.slice(0, 40)}`) === null, 'share: a bad or cut-off code is refused');
 }
 

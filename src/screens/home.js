@@ -71,8 +71,10 @@ export function renderHome() {
         <h2>Quick game</h2>
         <p>Two AI-drafted rosters, kickoff right away. You coach the home side.</p>
         <div class="actions"><button class="btn" data-act="quick">Play a quick game</button>
-          <button class="btn" data-act="quick2">Two players, one screen</button></div>
+          <button class="btn" data-act="quick2">Two players, one screen</button>
+          <button class="btn" data-act="watchgame">Watch a game</button></div>
         <p class="small muted">Two players: one keyboard (WASD and the arrows) or gamepads. Player 1 has the home team, player 2 the away team, and each of you calls and plays your own side.</p>
+        <p class="small muted">Watch: the AI calls and plays both sides, under a big scoreboard. Press O to call the next play yourself. For a stream, open the game with <code>?watch</code> on the address and every final rolls into the next game.</p>
         <hr>
         <details class="importbox" ${S.importMsg ? 'open' : ''}><summary>Import a save or a shared league</summary>
           <p class="small muted">Load a league from an exported file, or paste its contents, a league code or a share link, into the slot you pick.</p>

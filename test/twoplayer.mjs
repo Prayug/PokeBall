@@ -5,8 +5,12 @@
 //     arrows) each steer their own Pokémon in the same play, and only the offense snaps
 //   - gamepad: a fake pad calls a play with the D-pad and A, snaps with A, runs with the stick
 //     and throws with a face button
+//   - challenge: after a few games the share link is a challenge; a fresh browser opens it,
+//     drafts its own team from the same seed and gets a verdict after as many games
+//   - watch: ?watch opens a game the AI plays on both sides with no call sheet, and O takes the
+//     next call
 // Screenshots go to the output folder with a results.json.
-// Usage: node test/twoplayer.mjs <outdir> [share,2p,pad]   (which parts to run, default all)
+// Usage: node test/twoplayer.mjs <outdir> [share,2p,pad,challenge,watch]   (which parts to run, default all)
 // Needs Playwright with Chromium (software WebGL is enough).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -16,7 +20,7 @@ const PW = process.env.PLAYWRIGHT ?? '/opt/node-tools/node_modules/playwright/in
 const { chromium } = await import(pathToFileURL(PW).href);
 const out = resolve(process.argv[2] ?? 'test-twoplayer-out');
 mkdirSync(out, { recursive: true });
-const parts = (process.argv[3] ?? 'share,2p,pad').split(',');
+const parts = (process.argv[3] ?? 'share,2p,pad,challenge,watch').split(',');
 const url = pathToFileURL(resolve(fileURLToPath(new URL('../dist/index.html', import.meta.url)))).href;
 
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
@@ -198,6 +202,62 @@ if (parts.includes('pad')) {
   }
   await page.waitForFunction(() => window.__pb.L3.flow === 'PLAY_RESULT' || window.__pb.L3.flow === 'PLAY_SELECTION', null, { timeout: 60000 });
   await page.screenshot({ path: join(out, 'pad-2-result.png') });
+  if (page.errors.length) check(false, `page errors: ${page.errors.slice(0, 3).join(' | ')}`);
+  await ctx.close();
+}
+
+// ---------- a challenge code ----------
+if (parts.includes('challenge')) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await newPage(ctx);
+  await page.goto(url);
+  await page.fill('#f-name', 'Challengers');
+  await page.click('#setup-form button[type="submit"]');
+  await page.click('[data-act="autodraft"]');
+  await page.waitForSelector('.grades', { timeout: 120000 });
+  await page.click('[data-act="startseason"]');
+  for (let i = 0; i < 2; i++) { await page.click('[data-act="simweek"]'); await page.waitForSelector('[data-act="simweek"]'); }
+  await page.click('[data-act="share"]');
+  const link = await page.inputValue('#share-link');
+  check(/challenge/i.test(await page.textContent('.sharebox')), 'after two games the share box offers a challenge');
+  const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page2 = await newPage(ctx2);
+  await page2.goto(url + link.slice(link.indexOf('#')));
+  await page2.waitForSelector('.challenge-in');
+  check(/Challengers \(PAL\) challenges you to beat .* through 2 games/.test(await page2.textContent('.challenge-in h2')), 'the challenge card names the sharer and their mark');
+  await page2.screenshot({ path: join(out, 'challenge-0-card.png') });
+  await page2.click('[data-act="shareload"][data-replay="0"]');
+  await page2.click('[data-act="autodraft"]');
+  await page2.waitForSelector('.grades', { timeout: 120000 });
+  await page2.click('[data-act="startseason"]');
+  check(/Their mark/.test(await page2.textContent('.card.challenge')), 'the season screen shows the challenge');
+  for (let i = 0; i < 2; i++) { await page2.click('[data-act="simweek"]'); await page2.waitForSelector('[data-act="simweek"]'); }
+  const done = await page2.evaluate(() => window.__pb.S.league.challenge.done?.state ?? null);
+  check(['won', 'lost', 'tied'].includes(done) && (await page2.$('.card.challenge .verdict')) != null, `two games in, the challenge has a verdict (${done})`);
+  await page2.locator('.card.challenge').screenshot({ path: join(out, 'challenge-1-verdict.png') });
+  for (const p of [page, page2]) if (p.errors.length) check(false, `page errors: ${p.errors.slice(0, 3).join(' | ')}`);
+  await ctx.close(); await ctx2.close();
+}
+
+// ---------- watch mode ----------
+if (parts.includes('watch')) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 760 } });
+  const page = await newPage(ctx);
+  await page.goto(`${url}?watch&seed=42`);
+  await page.waitForFunction(() => window.__pb?.stage && window.__pb.S.gameMeta?.spectate, null, { timeout: 120000 });
+  check(await page.evaluate(() => document.getElementById('help-ov')?.hidden !== false), 'watch: no controls card');
+  let sheet = false;
+  await page.waitForFunction(() => window.__pb.S.game.log.length >= 2 && window.__pb.L3.flow === 'LIVE_PLAY', null, { timeout: 240000 })
+    .finally(async () => { sheet = await page.$('.callsheet') != null; });
+  check(!sheet && (await page.$('.game.spectate .pill.spec')) != null, 'watch: plays run with no call sheet, under the Watching chip');
+  await page.screenshot({ path: join(out, 'watch-0-live.png') });
+  await page.keyboard.press('KeyO');
+  await page.waitForSelector('.callsheet', { timeout: 240000 });
+  await page.screenshot({ path: join(out, 'watch-1-takeover.png') });
+  check(true, 'watch: O brings up the call sheet for the next down');
+  await page.keyboard.press('Digit1');
+  await page.waitForFunction(() => !window.__pb.S.takeOver && !document.querySelector('.callsheet'), null, { timeout: 30000 });
+  check(true, 'watch: after the call the AI takes over again');
   if (page.errors.length) check(false, `page errors: ${page.errors.slice(0, 3).join(' | ')}`);
   await ctx.close();
 }
