@@ -49,10 +49,12 @@ export function quickGame({ twoPlayer = false, spectate = false } = {}) {
   try { const m = /[?&#]seed=(\d+)/.exec(location.search + location.hash); if (m && !(S.streamer && S.game)) seed = Number(m[1]); } catch { /* no location */ }
   const Q = LG.quickRosters(seed);
   const [a, b] = Q.teams;
-  if (!spectate) { a.name = S.setup.name || 'Pallet Starters'; a.abbr = (S.setup.abbr || 'PAL').toUpperCase(); }
-  // Your quick-game team wears your franchise kit (the kit screen without a league open).
-  if (S.setup.color) a.color = S.setup.color;
-  if (S.setup.kit) a.kit = cleanKit(S.setup.kit, a);
+  if (!spectate) {
+    a.name = S.setup.name || 'Pallet Starters'; a.abbr = (S.setup.abbr || 'PAL').toUpperCase();
+    // Your quick-game team wears your franchise kit (the kit screen without a league open).
+    if (S.setup.color) a.color = S.setup.color;
+    if (S.setup.kit) a.kit = cleanKit(S.setup.kit, a);
+  }
   const game = createGame({ home: LG.teamForGame(a), away: LG.teamForGame(b), seed });
   const meta = { quick: true, userTeamId: a.id, twoPlayer };
   if (spectate) meta.spectate = true;

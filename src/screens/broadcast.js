@@ -31,8 +31,8 @@ const teamVars = (t) => { const k = kitOf(t); return `--team:${t.color};--team2:
 // Both teams (in their kit colors, with timeouts, possession and, in a league, their records),
 // the quarter and clock, down and distance, the play clock and the ball's spot, plus a state
 // tag (a flag, a timeout, the red zone) and a strip under it with the booth's line for the
-// moment. `big` is the larger bug for watching rather than playing.
-export function scorebugHtml(g, { big = false, pclock = 40, scored = [0, 0], live = false } = {}) {
+// moment. Watch mode grows it from CSS (.game.spectate .bcast).
+export function scorebugHtml(g, { pclock = 40, scored = [0, 0], live = false } = {}) {
   const [H, A] = g.teams;
   const rec = records(g);
   const now = performance.now();
@@ -51,7 +51,7 @@ export function scorebugHtml(g, { big = false, pclock = 40, scored = [0, 0], liv
     <div class="bc-cell bc-down">${downText(g)}</div><div class="bc-cell bc-pc" id="pclock" title="Play clock">:${String(Math.ceil(pclock ?? 40)).padStart(2, '0')}</div>
     <div class="bc-cell bc-spot">${spotText(g)}</div>${tag}`;
   const strip = live || g.final ? '' : boothBefore(g);
-  return `<div class="bcast ${big ? 'big' : ''}" id="bcast"><div class="bc-row">${team(A, 1)}${team(H, 0)}${info}</div>${strip ? `<div class="bc-strip">${esc(strip)}</div>` : ''}</div>`;
+  return `<div class="bcast" id="bcast"><div class="bc-row">${team(A, 1)}${team(H, 0)}${info}</div>${strip ? `<div class="bc-strip">${esc(strip)}</div>` : ''}</div>`;
 }
 
 // ---------- the layers over the field ----------
@@ -136,9 +136,10 @@ function showDrive(g, d) {
 
 // ---------- moments ----------
 // After a play has gone into the game: the stinger, the board, the music and the crowd.
-// `before` is the game as it was at the snap (score, possession, log length, drives).
+// `before` is the game as it was at the snap (score, possession, log length, drives). Returns
+// how long the stinger holds the middle of the screen, in ms (0 with none).
 export function afterPlay(g, before, stage) {
-  if (!g || !before) return;
+  if (!g || !before) return 0;
   const fresh = g.log.slice(before.logN ?? g.log.length - 1);
   const rank = { td: 5, to: 4, fg: 3, final: 6, quarter: 2 };
   let best = null;
@@ -159,6 +160,7 @@ export function afterPlay(g, before, stage) {
     BC.timers.chant = setTimeout(() => chant(kitOf(g.teams[0]).chant, { times: 1 }), 900);
   }
   if (g.drives.length > (before.drives ?? g.drives.length)) BC.drive = g.drives[g.drives.length - 1];
+  return best ? 1900 : 0;
 }
 
 // Each change of the game flow: the open on the first call, the aerial back from a break, the
