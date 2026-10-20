@@ -1,6 +1,7 @@
 // Replay review and the film room's tape, through the same simulation the 3D game runs.
 //   - the officials miss only close plays (spot, goal line, fumble), and not too often
-//   - a reversed call leaves the game exactly as if the play had been ruled right the first time
+//   - a reversed call leaves the game exactly as if the play had been ruled right the first time,
+//     powers' streaks and on/off state included
 //   - a lost challenge costs the challenge and a timeout; a won one keeps the timeout
 //   - the booth takes the last two minutes and close scoring plays and turnovers, coaches the rest
 //   - the tape plays a recording to the same end, a seek lands on the same step as playing
@@ -9,7 +10,7 @@
 import { createLeague, aiChoosePick, makePick, teamForGame } from '../src/league.js';
 import { createGame, runPlay, runLivePlay, snapClock, aiOffenseCall, aiDefenseCall, OFF_PLAYS } from '../src/engine.js';
 import { createLivePlay, snap, step, playSeconds } from '../src/live.js';
-import { applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../src/review.js';
+import { REVIEW, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../src/review.js';
 import { CHECKPOINT, advance, clipFromJson, clipJson, makeTape, seekTape } from '../src/film.js';
 
 const N = Number(process.argv[2] ?? 10);
@@ -22,7 +23,9 @@ const check = (ok, what) => { checks++; if (!ok) { failures++; console.log(`FAIL
 const endKey = (lp) => `${lp.end?.how ?? lp.phase}@${(lp.spotX ?? lp.ball.x).toFixed(4)},${lp.ball.y.toFixed(4)}`;
 // The parts of a game a ruling can change.
 const state = (g) => JSON.stringify({ score: g.score, poss: g.poss, spot: g.spot, down: g.down, toGo: g.toGo, phase: g.phase, clock: g.clock, q: g.quarter,
-  stats: g.teams.map((t) => t.stats), team: g.teams.map((t) => ({ ...t.team, top: 0 })), drives: g.drives.length });
+  stats: g.teams.map((t) => t.stats), team: g.teams.map((t) => ({ ...t.team, top: 0 })), drives: g.drives.length,
+  // Powers' streaks and who is in the zone (see powers.js) follow the result on the books.
+  pw: g.pw?.s });
 
 // A live play recorded the way the 3D game records it: a null input for each step of the walk
 // to the line, the snap mark, then each step's input. The user steers (a little, now and then)
@@ -42,10 +45,12 @@ function recordPlay(g, off, def, steer) {
   return { lp, rec };
 }
 
-const seen = { plays: 0, close: 0, wrong: 0, kinds: {}, reversed: 0, stands: 0, booth: 0, coach: 0, taped: 0 };
+const fresh = () => ({ plays: 0, close: 0, wrong: 0, kinds: {}, reversed: 0, pwDiff: 0, stands: 0, booth: 0, coach: 0, taped: 0 });
+let seen = fresh();
+function playGames(N, seed) {
 for (let gi = 0; gi < N; gi++) {
   const a = gi % 8, b = (a + 1 + (gi % 7)) % 8;
-  const g = createGame({ home: teamForGame(L.teams[a]), away: teamForGame(L.teams[b]), seed: 900 + gi });
+  const g = createGame({ home: teamForGame(L.teams[a]), away: teamForGame(L.teams[b]), seed: seed + gi });
   let n = 0;
   while (!g.final && n++ < 400) {
     const off = aiOffenseCall(g), def = aiDefenseCall(g);
@@ -54,7 +59,7 @@ for (let gi = 0; gi < N; gi++) {
     if (!snapClock(g, null, off)) continue;
     // Some plays are steered by a user (a little, now and then) so their tapes carry real
     // inputs; the rest are all autopilot, like the AI's plays.
-    const taped = seen.taped < 40 && n % 3 === 0;
+    const taped = seen.taped < 40 && n % 3 === 0 && seed === 900;
     const { lp, rec } = recordPlay(g, off, def, taped);
     seen.plays++;
     const R = fieldRuling(lp);
@@ -96,7 +101,7 @@ for (let gi = 0; gi < N; gi++) {
     if (rv.booth) check(!canChallenge(g, rv, R.against), 'no coach challenges what the booth reviews');
     const by = rv.booth ? null : R.against;
     if (by != null && !canChallenge(g, rv, by)) { continue; }
-    const before = { ch: [...g.challenges], to: [...g.timeouts] };
+    const before = { ch: [...g.challenges], to: [...g.timeouts], pw: JSON.stringify(g.pw?.s) };
     const out = decideReview(g, rv, by, (gg, r) => runLivePlay(gg, off, def, r, secs));
     check(!canChallenge(g, rv, 1 - (by ?? 0)) && !canChallenge(g, rv, by ?? 0), 'a play is reviewed only once');
     if (R.wrong) {
@@ -105,6 +110,7 @@ for (let gi = 0; gi < N; gi++) {
       // The same game as if the officials had seen it right.
       const ref = structuredClone(preG);
       runLivePlay(ref, off, def, R.truth, secs);
+      if (JSON.stringify(ref.pw?.s) !== before.pw) seen.pwDiff++;
       const want = { ...JSON.parse(state(ref)) }, got = JSON.parse(state(g));
       check(JSON.stringify(got) === JSON.stringify(want), `a reversal leaves the game as if ruled right (${R.kind})`);
       if (by != null) check(g.challenges[by] === before.ch[by] - 1 && g.timeouts[by] === before.to[by], 'a won challenge keeps the timeout');
@@ -115,6 +121,21 @@ for (let gi = 0; gi < N; gi++) {
     }
   }
 }
+}
+playGames(N, 900);
+const real = seen;
+
+// Officials who miss nearly every close play: many reversals, so the powers' streaks (a
+// completion streak, sacks, dropbacks without a sack) are put right after many of them too.
+const KEEP = { ...REVIEW };
+Object.assign(REVIEW, { spotWindow: 6, goalWindow: 6, miss: 3, fumbleClose: 1, fumbleMiss: 1 });
+seen = fresh();
+playGames(3, 4400);
+check(seen.reversed > 20, `the forced misses are reversed (${seen.reversed})`);
+check(seen.pwDiff + real.pwDiff > 0, `and a reversal that moves a power's streak puts it right (${seen.pwDiff + real.pwDiff} did)`);
+console.log(`forced misses: ${seen.reversed} reversed, ${seen.pwDiff} of them moved a power's streak`);
+Object.assign(REVIEW, KEEP);
+seen = real;
 
 // Each side gets its challenge back at halftime.
 {
@@ -127,7 +148,7 @@ for (let gi = 0; gi < N; gi++) {
 
 const pct = (x) => (100 * x / seen.plays).toFixed(2);
 console.log(`${seen.plays} live plays: ${seen.close} close (${pct(seen.close)}%), ${seen.wrong} missed (${pct(seen.wrong)}%) · ${JSON.stringify(seen.kinds)}`);
-console.log(`reviews: ${seen.booth} by the booth, ${seen.coach} open to a coach · ${seen.reversed} reversed, ${seen.stands} stood · ${seen.taped} tapes checked`);
+console.log(`reviews: ${seen.booth} by the booth, ${seen.coach} open to a coach · ${seen.reversed} reversed, ${seen.stands} stood · ${seen.taped} tapes checked · ${seen.pwDiff} reversals moved a power's streak`);
 check(seen.close > 0 && seen.wrong > 0, 'some plays are close and some calls are missed');
 check(seen.wrong / seen.plays < 0.04, `the officials miss under 4% of plays (${pct(seen.wrong)}%)`);
 check(seen.wrong / seen.plays > 0.003, `but they do miss some (${pct(seen.wrong)}%)`);
