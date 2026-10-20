@@ -95,6 +95,8 @@ export function sfx(kind) {
     // Type theater: a rising chime and a big hit for super effective, a dull thud for not very
     // effective, a hollow falling ping for no effect.
     case 'super': noise(t, 0.35, 'lowpass', 700, 0.8, 0.8); tone(t, 0.12, 660, 0.12, 'square', 990); tone(t + 0.09, 0.2, 990, 0.12, 'square', 1480); crowd(0.6); break;
+    // A power kicking in: a rising three-note charge over a low swell.
+    case 'power': tone(t, 0.14, 440, 0.1, 'square', 660); tone(t + 0.08, 0.14, 660, 0.1, 'square', 880); tone(t + 0.16, 0.3, 880, 0.12, 'triangle', 1760); noise(t, 0.5, 'bandpass', 900, 0.6, 0.25, 0.1); crowd(0.4); break;
     case 'weak': noise(t, 0.18, 'lowpass', 300, 0.8, 0.4); tone(t, 0.18, 140, 0.15, 'sine', 90); break;
     case 'immune': tone(t, 0.35, 880, 0.08, 'sine', 330); tone(t, 0.35, 1320, 0.04, 'triangle', 500); break;
     default: break;

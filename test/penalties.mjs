@@ -153,7 +153,9 @@ for (let s = 0; s < GAMES; s++) {
     for (const e of g.log.slice(len)) if (e.foul && e.head !== 'Penalty declined') { count[e.foul.type] = (count[e.foul.type] ?? 0) + 1; flags.n++; }
   }
   check(g.final, `game ${s} finishes`);
-  for (const t of g.teams) check((t.team.pen ?? 0) >= 0 && (t.team.penYds ?? 0) >= (t.team.pen ?? 0), 'penalty yards add up');
+  // (Half the distance from the 1 is under a yard, so a flag there walks off nothing: a team can
+  // have more flags than penalty yards.)
+  for (const t of g.teams) check((t.team.pen ?? 0) >= 0 && (t.team.penYds ?? 0) >= 0 && (t.team.penYds ?? 0) <= 60 * (t.team.pen ?? 0), 'penalty yards add up');
   teamGames += 2; points += g.score[0] + g.score[1];
 }
 const per = (k) => (count[k] ?? 0) / teamGames;

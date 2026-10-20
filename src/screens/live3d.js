@@ -8,7 +8,9 @@ import { Stage, webglAvailable } from '../field3d.js';
 import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
 import { S, save, savePrefs, timers } from '../state.js';
-import { esc } from '../ui.js';
+import { P, esc } from '../ui.js';
+import { sfx } from '../audio.js';
+import { POWER_OF, powerLine } from '../powers.js';
 import { autoAdvance, doCall, needsUser, playClockOut, setMode, twoPlayer, userSide, userTimeout } from './game.js';
 import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions } from './callsheet.js';
 import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
@@ -271,6 +273,16 @@ function commitPlay() {
   save();
   render();
   showBanner(resultBanner(entry, lp, b));
+  powerFlash(entry);
+}
+
+// A power switching on is called out over the field as well as on the result card.
+function powerFlash(entry) {
+  const on = (entry?.powers ?? []).find((c) => c.on);
+  if (!on) return;
+  flash(`${P(on.id).name}: ${POWER_OF[on.id].name}!`, 'power');
+  L3.flashT = performance.now() + 2600;
+  sfx('power');
 }
 
 // The result hold is over: the players get up and walk to the next spot.
@@ -303,7 +315,7 @@ export function afterLivePlay(entry) {
   render();
   if (!entry || !g) { autoAdvance(); return; }
   // No live play follows to clear it, so the card leaves once the result beat is over.
-  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); }
+  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); powerFlash(entry); }
   autoAdvance();
 }
 
@@ -352,7 +364,10 @@ function resultBanner(e, lp, before) {
     tone = e.highlight === 'miss' ? 'to' : e.kind === 'score' ? 'td' : e.highlight === 'turnover' ? 'to' : e.kind === 'quarter' || e.kind === 'info' || e.kind === 'timeout' ? 'muted' : e.highlight === 'flag' ? 'flag' : '';
   }
   // Why it happened, when a Pokémon's type, ability or size, or the weather, decided part of the play.
-  const notes = (lp?.notes ?? []).filter((n) => ['type', 'ability', 'size', 'weather'].includes(n.kind)).slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
+  // Powers: a Pokémon zoning in or losing its power on this play leads; then what a power,
+  // type, ability, size or the weather decided.
+  const changes = (e.powers ?? []).map((c) => ({ kind: c.on ? 'power' : 'powerOff', text: powerLine(c) }));
+  const notes = [...changes, ...(lp?.notes ?? []).filter((n) => ['power', 'type', 'ability', 'size', 'weather'].includes(n.kind)).map((n) => ({ kind: n.kind, text: n.text }))].slice(0, 3);
   const next = g.final ? 'Final' : g.phase === 'penalty' ? 'Accept or decline the penalty' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
   const clock = !g.final && g.phase === 'play' && !changed && !td && e.down ? (g.clockRunning ? '' : 'Clock stopped') : '';
   return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed };
@@ -364,7 +379,7 @@ function showBanner(B) {
   L3.banner = B;
   el.className = `lower3 on ${B.tone}${B.possession ? ' poss' : ''}`;
   el.innerHTML = `<div class="l3-head"><b>${esc(B.head)}</b>${B.yds ? `<span class="l3-yds">${esc(B.yds)}</span>` : ''}${B.clock ? `<span class="l3-clock">${B.clock}</span>` : ''}</div>
-    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size', weather: 'Weather' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}<p class="l3-next">${esc(B.next)}</p>`;
+    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size', weather: 'Weather', power: 'Power', powerOff: 'Power lost' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}<p class="l3-next">${esc(B.next)}</p>`;
 }
 function hideBanner(after = 0) {
   clearTimeout(timers.banner);
