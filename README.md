@@ -99,7 +99,9 @@ The simulation (`src/live.js`) owns everything that is drawn. It steps at a fixe
 - **Pursuit.** The man with outside leverage keeps it, the rest come inside-out, and deep help stays over the top.
 - **Movement.** A body has a speed and a heading, not a velocity it can set at will. Acceleration falls off near top speed; a turn costs speed in proportion to how sharp it is (a hard plant brakes almost to a stop before the new direction, a gentle bend keeps most of it), and the heading can swing only as fast as the player's grip allows at his speed, so a fast player rounds his turns and a quick one cuts sharper. Agility and weight set the grip, the weather lowers it, and ball carriers and pass rushers bend a little harder. When two bodies meet, the one sliding along the other loses speed rather than being pushed sideways, so nobody skates around a pile.
 - **Reaction time.** Defenders play what they saw a moment ago, not where a player is this instant (`perceive` in `src/live.js` keeps a short history of every body). A cover man answers a receiver's cut about a third of a second late, a great one sooner; pursuers read a juke the same way, and the difficulty level scales the delay against you. A zone defender reads the quarterback and drives on the throw as the arm starts forward; a pass rusher has his eyes on the passer the whole way.
-- **Receivers after the route.** A receiver whose route has ended works to open grass away from the nearest defenders instead of standing still, and a deep route keeps running. When the quarterback leaves the pocket, receivers break off into the scramble drill: deep men go long on his side, short men come back toward him along the line of sight.
+- **Running the route.** A receiver runs each leg of his route along the line the play art draws: a step off it (a release around a press corner, a defender in his path) is worked back onto the line, he sinks his hips into a break so he cuts at the spot shown rather than rounding it off, and a back who checks the blitz first runs the same shape from wherever the block left him.
+- **Receivers after the route.** A receiver whose route has ended works to open grass away from the nearest defenders instead of standing still, and a deep route keeps running. When the quarterback leaves the pocket, receivers break off into the scramble drill: deep men go long on his side, short men come back toward him along the line of sight. A quarterback sliding a few yards in the pocket doesn't trigger it: the routes run as called until he has been outside for a beat.
+- **Leading the receiver.** The passer leads a man to where he will really be (sitting down at the end of a curl, pulling up after an out at the sideline), never past the sideline or the end line, and keeps a miss near the boundary on the field side of his man, so the ball rarely sails out where the receiver would be if the field kept going.
 - **Hand fighting.** An engaged rusher works one side of his blocker and switches, and the blocker mirrors him, so a pass block is always moving; run blocks drive.
 - **Hits.** Whether a tackle sticks depends on the tackler's angle, closing speed, strength and weight against the carrier's; arriving from behind is weaker, and a tackler with far more momentum than the carrier lands a big hit that drives him back and shakes the camera. A tackled carrier goes down within about a yard of the hit.
 - **Ball state.** Every play tracks who has the ball as a state machine (`POSSESSION_FLOW` and `possessionOf` in `src/live.js`): `PRE_SNAP`, `SNAP`, `LIVE_PLAY`, `PASS_IN_AIR`, `KICK_IN_AIR`, `BALL_CARRIED`, `LOOSE` and `PLAY_DEAD`. A transition the flow does not allow is recorded and fails the tests, and nothing changes after the whistle. A throw that comes down out of bounds is its own result ("sails out of bounds").
@@ -144,7 +146,31 @@ The live field knows exactly where every play ended; the officials don't (`src/r
 
 The reel holds the last 80 plays of the game in memory (starred ones are kept) and is cleared when the game ends; save a clip to keep one.
 
-Three modes are in the menu: **Play** (you control the quarterback and then the ball carrier, or a defender), **Coach** (you call every play and watch the AI run it) and **Auto** (the AI calls and plays routine downs, and hands you 3rd and 4th downs and the last two minutes to call).
+Four modes are in the menu: **Play** (you control the quarterback and then the ball carrier, or a defender), **Coach** (you call every play and watch the AI run it), **Auto** (the AI calls and plays routine downs, and hands you 3rd and 4th downs and the last two minutes to call) and **Watch** (the AI calls and plays both sides, kicks and flags included). Watch is the spectator and streamer mode: the broadcast scoreboard grows, the menu fades back and the only other overlay is a small "Watching" chip. `O` or the chip's "Call next play" button hands you the next down your side has to call; once you call it the AI takes over again. "Watch a game" on the home screen starts a quick game in Watch mode without changing your mode, and opening the game with `?watch` in the address (add `&seed=N` for a fixed first game) goes straight into one and rolls each final into the next game after 15 seconds, for a stream or a TV.
+
+### Broadcast and franchise kits
+
+Every game is presented like a TV broadcast (`src/broadcast.js` for the words and numbers, `src/screens/broadcast.js` for the graphics, checked by `test/broadcast.mjs`).
+
+- **The open.** The first call of a game opens on an aerial shot circling the stadium, with a card naming the venue ("Live from Cerulean Shoreline Park"), the time of day, both teams (with their records in a league) and the weather, over a brass fanfare. The aerial comes back after each quarter break and at halftime.
+- **The scorebug.** Both teams in their kit colors (the second color as a stripe under each abbreviation), their records in a league, timeouts, possession, the quarter and clock, down and distance, the play clock and the spot, plus a tag for a flag, a timeout or the red zone. A strip under it carries the booth's line for the moment: the two-minute situation, the team's third-down rate, fourth-down decisions, the red zone, the drive so far, or the player to watch. `scorebugHtml(g, { big: true })` draws the larger bug for watching rather than playing.
+- **Stingers.** Touchdowns, takeaways, field goals, safeties, quarter breaks and the final get a full-width wipe in the team's two colors and a stinger from the PA (brass for scores and the open, the stadium organ for takeaways, a chime for the end of a quarter); the video board above the end stands (a center-hung cube in a dome) shows the same graphic.
+- **Lower-thirds.** Before a drive's first snap a lower-third puts up the offense's player to watch: the Pokémon, its position and types and its line for the game. After every play the result card adds a line from the booth when there is something to say: the lead changing late, a long march, a takeaway count, a 100-yard day, a third-and-long conversion, the longest play of the game, a type matchup winning the rep.
+- **Drive charts.** When a drive ends, a chart shows every snap as an arrow on the field, colored run, pass, penalty, sack or turnover, and kick, with the result, plays, yards and time of possession. The Drives tab under the field has a chart for every drive.
+- **Night games.** A game kicks off in the afternoon, at dusk or in prime time. Under the lights the sky goes dark with stars and a moon, the light banks blaze, the stands and everything outside them fall into shadow while the field stays bright, phone lights and camera flashes twinkle in the crowd (more of them when it gets loud), the crowd hums louder and never quite sits down, and the city skyline's windows light up.
+- **The crowd.** The home crowd sings its team's chant (synthesized: claps, stomps, a drum, the stadium organ and a section of voices) at the open, after its team's scores and takeaways and on some third-down conversions, and chants DEE-FENSE on the other team's third and fourth downs.
+
+The **Franchise** page (in the top bar with a league open, or Franchise kit on the home screen for quick games and your next league) dresses your team:
+
+| | |
+| --- | --- |
+| Colors | The main color and a second color, used on the field, the end zones, the sidelines, the crowd's shirts, the scorebug, the stingers and the board |
+| End zone | A wordmark (your team's name unless you type one) in Block, Outline, Script or Block on stripes, with a band of the second color inside the lines; the page previews it with the field's own painter |
+| Home stadium | Open bowl (farmland and a city skyline), Dome (a roof and a ring of lights: random rain, hail and sandstorms stay outside, though a Pokémon that brings its own weather still does), Mountain (snow-capped peaks and pine forest), Seaside (the bowl on a point over the water, a lighthouse whose beam turns at night, boats in the bay) or Haunted (gravestones, dead trees, will-o'-wisps over the stands and a purple sky; never a day game) |
+| Kickoff | Let the schedule decide (about half day games, the rest at dusk or in prime time; the playoffs are always at night), day games or prime time |
+| Crowd chant | Let's go, Stomp stomp clap, War drum, Organ charge or Howl, each playable on the page |
+
+Every AI team has its own kit (the Cerulean Surf by the sea, the Pewter Boulders in the mountains, the Saffron Seers under a dome, the Lavender Haunts in the hollow, and so on), and a game is played in the home team's stadium (a neutral site is an open bowl). The venue and time of day come from the game's seed, never its random stream, so a kit changes how a game looks and sounds but not how it plays out, except that a dome keeps the sky's weather out.
 
 ### Abilities and types
 
@@ -155,6 +181,14 @@ What a Pokémon's ability or type does during a snap lives in one table, `src/tr
 **Type theater.** On the field, a tackle shows the tackler's typing when it is super effective (a burst in the type's color, a shake and "SUPER EFFECTIVE!" over the pair), and a broken tackle shows why: "not very effective..." or "NO EFFECT" when the tackler's typing barely touched the carrier, or the carrier's own super-effective hit. Each pair shows it once a play.
 
 **Weather as physics.** On top of the rating swings in `src/parity.js`, the weather changes how bodies move on the live field (`src/weather.js`), sparing the types it favors and anything with Overcoat, Air Lock or Immunity. Rain makes the turf slick: wider cuts, and a juke or spin can slip out from under the carrier. Harsh sun's glare costs receivers and defenders a little catch reach. Hail makes legs heavy late in a play and the sprint burst run out sooner. A sandstorm slows reads and every block or tackle attempt wears the players in it down.
+
+### Powers
+
+On top of abilities, about 160 Pokémon carry a power, like an X-Factor in Madden (`src/powers.js`): every Pokémon rated 88 or better at its natural position, plus 60 fan favorites with a signature move (Charizard's Blast Burn, Gengar's Phantom Force, Mewtwo's Psystrike, Snorlax's Body Slam and so on). A power belongs to a position group (quarterback; back, receiver or tight end; offensive line; pass rush; linebackers and the secondary) and is picked from the Pokémon's typing, so a Ghost receiver gets Shadow Sneak and a Steel lineman Protect. Lined up outside its group, the power is dormant.
+
+Every power starts the game dormant. The Pokémon zones in by doing its job (Future Sight: three straight completions; Outrage: two sacks; Aerial Ace: two catches of 12+ yards; Protect: eight straight dropbacks without a sack), plays boosted while it is active, and loses it to a specific setback (an interception, a sack allowed, a 20-yard play given up). The meters run off the box score after every play, so the fast simulator and the live field earn and lose powers the same way, and a play wiped by a penalty moves nothing. While active, a power adds rating points through `eff()` and, on the live field, edges read by the trait table in `src/traits.js` (pressure barely touches the passer, tacklers slide off, a far longer catch reach, blocks shed faster, a nose for the interception).
+
+The game shows it: the call sheet lists your carriers with their meters and the other side's active powers, a power switching on is called out over the field and on the result card ("Gengar is in the zone: Phantom Force!"), an active player has a spinning ring in his type's colour and a bolt over his head, and when a power decides part of a play its name bursts over him and the result card tags it Power. The draft card shows each Pokémon's power and how it is earned and lost, and the depth chart tags it on each spot (struck through where it would be dormant).
 
 ### The 3D field
 
@@ -190,17 +224,19 @@ Ball carriers have three moves, each better in a different spot: a juke beats a 
 
 ## League mode
 
-A league is eight teams: yours and seven AI teams, each with a coach style (Speed Kills, Trench Builder, Type Stacker or Best Available) that shapes how it drafts, calls plays and trades. The home screen sets the team name, the draft length (24 rounds fills the 22 starters plus a kicker and punter; 28 adds four bench Pokémon), a cap of four Pokémon of one primary type, whether legendaries are in the pool, an optional 60-second pick clock, and your scheme.
+A league is 8, 12 or 16 teams: yours and the AI teams, each with a coach style (Speed Kills, Trench Builder, Type Stacker or Best Available) that shapes how it drafts, calls plays and trades. The home screen sets the team name, the league size, the draft length (24 rounds fills the 22 starters plus a kicker and punter; 28 adds four bench Pokémon), a cap of four Pokémon of one primary type, whether legendaries are in the pool, an optional 60-second pick clock, and your scheme.
 
 **Your scheme.** Pick a coaching identity at league start: Balanced, Air Raid, Ground and Pound or 46 Defense. A scheme gives its players a small ratings edge on the plays it is built around (Air Raid passes, Ground and Pound runs, 46 Defense blitzes) at a small cost on the others, leans the AI's play calling when it calls for you, and changes what your auto-picks reach for (Air Raid takes quarterbacks and receivers early, Ground and Pound linemen and backs, 46 Defense the front seven). The call sheet tags your scheme's plays.
 
 **Draft.** A snake draft in a random order. The board sorts and filters by type and rating and shows where each Pokémon fits your open slots; "Auto-draft the rest" hands your remaining picks to the AI. After the last pick, the grades screen scores every team's pass offense, run offense, pass rush, coverage and run defense against the league, from A+ to F.
 
-**Trade offer.** One AI team may offer a one-for-one swap that improves both rosters by overall, shown with what your best lineup gains. Kickers and punters are part of the deal: an AI team can ask for yours or offer its own when it is better, and when the trade changes your kicker or punter the card says who kicks for you afterwards and his range. It stands until your first game.
+**League size.** 8 teams play a seven-week round robin with four in the playoffs. 12 and 16 teams split into divisions of four (Kanto, Johto, Hoenn, Sinnoh): everyone meets once and division rivals twice, home and away, so the season is 14 or 18 weeks. Division winners seed first, then the best of the rest: six make it in a 12-team league (the top two seeds get a first-round bye after a wild card round) and eight in a 16-team league (quarterfinals). Every round reseeds, the best seed left hosting the lowest. A 16-team league without legendaries drafts 24 rounds, since the pool can't fill 28 (`src/geometry.js`).
+
+**Trade desk.** From the end of the draft to the trade deadline (60% of the way through the regular season) the Trade desk deals with any AI team: up to three Pokémon each way plus next season's first- and second-round picks. Rosters keep their size, so a team that takes in more than it sends releases its lowest keep-values and one left short signs the best free Pokémon; the desk shows who before you propose. AI teams judge a deal by how much it changes their best lineup by overall, the Pokémon their coach likes and the picks: contenders (the top third of the power ranking) want help now and value picks less, rebuilders (the bottom third) value picks more. They won't take an injured Pokémon, a deal can't break the salary cap or the four-of-a-type limit, and "What would it take?" finds the smallest change they'd accept. A traded pick moves its slot in the rookie draft: the new owner makes it, and every team still makes as many picks as it has open spots (a team that traded picks away makes the rest at the end). One AI team brings an offer after the draft (a one-for-one swap, or a Pokémon for a pick either way) and about half the weeks before the deadline another calls; each offer stands until your next game. Kickers and punters are part of it: when a deal changes yours the card says who kicks for you afterwards (`src/trades.js`, `src/screens/trades.js`).
 
 **Depth chart.** Tap a slot, then another slot or a bench Pokémon, to swap them; overalls update for the new position, and a Pokémon playing out of position shows where it is best. "Auto-arrange" builds the best lineup by overall. The unit bar shows your kicker's rating and field goal range (the longest kick he makes at least half the time) and your punter's rating and typical punt. On a phone the field stacks into offense, defense and special teams.
 
-**Season.** A seven-week round robin. Each week you play your game live on the 3D field or simulate it, and the rest of the league simulates. The season screen carries the standings (top four make the playoffs), league leaders, every result with its box score and scoring plays, and the league's history across seasons.
+**Season.** A round robin (seven weeks with 8 teams, more with divisions). Each week you play your game live on the 3D field or simulate it, and the rest of the league simulates. The season screen carries the standings (by division in a bigger league, with each team's seed if the season ended today), league leaders, every result with its box score and scoring plays, and the league's history across seasons.
 
 **Scouting report.** Before each game the season screen scouts your opponent: their lineup, offense, defense and kickers; the kicking game (both kickers' ratings and field goal range, where each team's range starts, and both punters); your three best type edges and their three best; which weather setters will change the conditions; a one-line game plan with a pass or run lean; the opposing coach's habits; and your own injury list.
 
@@ -214,7 +250,7 @@ A league is eight teams: yours and seven AI teams, each with a coach style (Spee
 
 **Week in review.** After each week the season screen names a Player of the Week, gives every game a one-line headline (routs, comebacks, upsets by the power ranking, overtime, the star's line), and ranks every team by record, point margin, recent form and, early on, roster strength, with each team's move since the week before. Headlines and Players of the Week also go into the downloaded recap.
 
-**Playoffs and awards.** The top four seeds play semifinals (1 against 4 and 2 against 3, the higher seed at home), then a championship game; you can watch the rounds you are not in. When the season ends the champion screen shows your record and team star, the bracket and the awards: most valuable player, offensive and defensive player of the year, and from the second season on, rookie of the year. "Download recap" saves the season as text.
+**Playoffs and awards.** In an 8-team league the top four seeds play semifinals (1 against 4 and 2 against 3, the higher seed at home), then a championship game; bigger leagues add a wild card round or quarterfinals; you can watch the rounds you are not in. When the season ends the champion screen shows your record and team star, the bracket and the awards: most valuable player, offensive and defensive player of the year, and from the second season on, rookie of the year. "Download recap" saves the season as text.
 
 **Offseason and development.** Training camp rewards playing time: every 180 snaps a Pokémon played earns +2 to a rating its position uses, up to +8 a season and +16 over a career, and the growth carries into its overalls from then on. The offseason screen shows your camp report and the league's top developers.
 
@@ -225,6 +261,8 @@ A league is eight teams: yours and seven AI teams, each with a coach style (Spee
 **Saves, export and import.** The home screen has three save slots, so you can run three leagues side by side. Each league saves to the browser's local storage after every change, including a game in progress; "Your leagues" lists each slot with its team, season and phase, and Continue, Export and Delete (which asks first). A new league goes into the slot you pick (the first empty one by default). "Export save" (home and season screens) downloads a league as a JSON file; "Import a save" loads one from a file or pasted text into the slot you pick. Older saves are brought up to the current format when they load, and a save from before slots moves into the first slot. Box scores are most of a save's size, so only the current and last season keep them; older games keep their score.
 
 **Share this league.** The draft grades screen and the season screen have "Share this league": a link to the deployed game (or just the code) carrying the draft seed, your settings, your team's name and every pick of the first draft, about 450 characters for a full 24-round draft. Whoever opens the link (or pastes the code under "Import a save or a shared league") gets two choices: "Load their draft" rebuilds the league exactly as it was drafted, with the same rosters, schedule and trade offer and the sharer's team as theirs, and "Draft it yourself" starts the same draft (same order, same AI drafters) for them to pick their own team. A league keeps its first draft for sharing after the rookie drafts.
+
+**Challenge codes.** Once you have played a game, the same link is also a challenge: it carries your first season's record, points for and against, and playoff finish (the season so far while it is on), plus a check so a hand-edited record doesn't load. The friend's card reads "challenges you to beat 6-1, champions" and offers "Draft your own team" (same seed, same AI drafters) or "Play their team" (their roster, your name, the same schedule). Their league then shows a challenge card on the season screen, with their mark, yours so far and the verdict: against a whole season the better playoff finish wins, then the better record, then point differential; against a mark made mid-season you are judged on your first as many games. The verdict is kept after the season rolls over, and sharing your league sends your own mark back. A build from before challenges opens a challenge code as a plain shared draft.
 
 `test/league.mjs` plays this loop end to end and checks it (see Build).
 
@@ -244,16 +282,21 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/live/defense.js`, `src/live/passing.js` | The defensive calls (`DEF_SCHEMES`) with rush, coverage and pursuit; routes, the quarterback's reads, throws, the ball's flight and catches |
 | `src/live/kicks.js` | Punts and field goals on the live field: the kicking units, the long snap, the kick from the specialist's ratings, coverage, fair catches, bounces, returns and the posts |
 | `src/field3d.js` | The 3D stage: players, ball, play art, markers and effects, driven by the live play |
-| `src/stadium3d.js` | Field, stands, crowd, lights and weather |
+| `src/stadium3d.js` | Field, stands, crowd, lights, the video board, the time of day and weather |
+| `src/venue3d.js` | The world around each kind of stadium: farmland and a skyline, a dome, mountains, the seaside, the haunted hollow |
+| `src/kits.js`, `src/kitdraw.js` | Franchise kits (second color, wordmark, stadium, kickoff time, chant), every team's default kit and a game's venue; painting an end zone |
+| `src/broadcast.js` | The broadcast's words and numbers: drive charts, the booth's lines, the player to watch, stingers and the open |
 | `src/camera3d.js` | Gameplay, tactical, broadcast and player-focus cameras |
 | `src/model3d.js`, `src/models3d.js` | Loading the real 3D models and their animation clips; the generated index of which Pokémon have one |
 | `src/figure3d.js` | Generated figures from the pixel sprites, for Pokémon without a model |
 | `src/anim3d.js` | The animation state machine |
 | `src/body.js` | Size classes, collision capsules and model fitting from height and weight |
 | `src/formations.js` | Offensive formations, defensive fronts, alignment and footprint spacing |
-| `src/audio.js` | Synthesized crowd and game sounds |
+| `src/audio.js` | Synthesized crowd and game sounds, the broadcast's stingers and the crowd's chants |
 | `src/playbook.js` | Play art for the call sheet |
 | `src/league.js` | Snake draft, AI drafters, schedule, standings, playoffs, league leaders |
+| `src/geometry.js` | League sizes, divisions, the schedule and the playoff format |
+| `src/trades.js` | Trade desk: deal evaluation, roster settling, pick chips, the deadline and AI offers |
 | `src/coach.js` | Coaching schemes: their draft lean, play-calling lean and ratings edges |
 | `src/injuries.js` | Injury odds, who covers an injured starter, the league's injury list and healing |
 | `src/weekly.js` | Game headlines, Player of the Week and the power ranking |
@@ -261,6 +304,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/records.js` | Career stats, the Hall of Fame, franchise record books and the all-time head-to-head behind rivalries |
 | `src/ratings.js` | Base stats to football attributes, the 22 slots plus K and P, position overalls, auto depth chart |
 | `src/types.js` | Type chart, type traits, weather and every ability's football effect |
+| `src/powers.js` | Powers: who carries one, what earns and costs it, what it does while active, and the per-play meters |
 | `src/weather.js` | What each weather does to bodies on the live field |
 | `src/parity.js` | How far form, home field, types and weather can swing a game |
 | `src/difficulty.js` | Rookie, Pro and Legend: AI read speed, the user's catch radius and the luck |
@@ -268,8 +312,8 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/live/presnap.js` | Pre-snap adjustments: audibles, hot routes, motion, shading the coverage, show blitz and back out |
 | `src/app.js`, `src/index.html` | The entry point (rendering and the click, key and form handlers) and the styles |
 | `src/state.js`, `src/ui.js` | The shared UI state with save and preference storage; small view helpers such as `esc`, `sprite` and `teamBadge` |
-| `src/screens/` | One module per screen: `home`, `draft` (and grades), `depth`, `season` (and box scores), `offseason`, `freeagency`, `records`, `game`, the play-call sheet (`callsheet`), the live 3D game loop and input (`live3d`), the film room (`film`), gamepads (`pad`) and the share link and shared-league card (`share`) |
-| `src/share.js` | The league share code: encoding the draft seed, settings and picks, reading it back and rebuilding the league |
+| `src/screens/` | One module per screen: `home`, `draft` (and grades), `depth`, `season` (and box scores), `offseason`, `freeagency`, `records`, `kit` (the franchise kit), `trades` (the trade desk), `game`, the broadcast graphics (`broadcast`), the play-call sheet (`callsheet`), the live 3D game loop and input (`live3d`), the film room (`film`), gamepads (`pad`) and the share link and shared-league card (`share`) |
+| `src/share.js` | The league share code: encoding the draft seed, settings and picks (and the first season's record, as a challenge), reading it back, rebuilding the league and judging a challenge |
 | `src/data.js`, `src/sprites.js`, `src/sprites3d.js` | Generated Pokémon data, menu sprites and the index of the animated sprite strips (do not edit by hand) |
 | `dist/models3d/` | The 3D models, two Pokémon per file, loaded on demand (not in git: `npm run models` downloads them) |
 | `build/fetch_models3d.mjs`, `build/models3d.json` | Downloads the models release into `dist/models3d/`, or packs it for a new release; which release to use |
@@ -290,15 +334,18 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `test/formations.mjs` | Lines up every offensive formation against every front for eight teams at five spots on the field and runs the formation check on each (`--print` lists the positions) |
 | `src/traits.js` | Abilities and types that act during a live snap |
 | `test/top.mjs` | Lists the top Pokémon at each position |
-| `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a full season with soreness, injuries, subs and the weekly reviews, scheme edges and draft lean, the playoffs and awards, the offseason, cuts, free agency and the rookie draft, then the next season, with career records, the Hall of Fame, record books and rivalries) and checks every step, plus that an exported save plays on to the same results, that a share code rebuilds the draft, that box scores older than two seasons are trimmed, and that the scouting report and trades rate kickers and punters (exits 1 on failure) |
+| `test/league.mjs` | Plays a league the way the app does (draft, grades and the trade offer, a trade-desk deal with a pick, the deadline, a full season with soreness, injuries, subs and the weekly reviews, scheme edges and draft lean, the playoffs and awards, the offseason, cuts, free agency and the rookie draft, then the next season, with career records, the Hall of Fame, record books and rivalries) and checks every step, plus that an exported save plays on to the same results, that a share code rebuilds the draft, that a challenge code carries the record and is judged on the taker's season, that box scores older than two seasons are trimmed, that the scouting report and trades rate kickers and punters, 12- and 16-team leagues (divisions, the schedule, byes and the bracket), uneven trades settling both rosters, traded picks in the rookie draft, and saves from before the trade desk (exits 1 on failure) |
 | `test/calls.mjs` | Fast-sim yards for each run and pass against each defensive call, so plays that resolve as themselves show their own numbers |
 | `test/review.mjs` | Plays live snaps and checks the officials miss only close spots, goal-line calls and fumbles, at believable rates; that a reversed call leaves the game exactly as if it had been ruled right; the challenge and timeout bookkeeping and what the booth takes; and that the film room's tape plays a recording to the same end, seeks to the same step as playing through and round-trips through a clip file (exits 1 on failure) |
 | `test/film.mjs` | In Chromium: makes the officials miss, plays snaps until a review (yours, theirs or the booth's) and checks the verdict, then opens the film room, scrubs, steps, changes camera, stars and marks, saves a clip and loads it back, and records a video |
 | `test/controls.mjs` | Two players in one live play: each starts on their own side, both steer at once, throws and handoffs hand over the receiver or carrier, punts give the returner and a cover man, and recorded inputs replay the play exactly (exits 1 on failure) |
-| `test/twoplayer.mjs` | In Chromium: shares a league and loads it in a second browser, plays two downs of the two-player game from the keyboard, and drives a quick game with a fake gamepad |
+| `test/twoplayer.mjs` | In Chromium: shares a league and loads it in a second browser, plays two downs of the two-player game from the keyboard, drives a quick game with a fake gamepad, takes on a challenge code in a second browser through to its verdict, and watches a `?watch` game with a takeover call |
 | `test/presnap.mjs` | Audibles, hot routes, motion (and the man defender following), shading, show blitz and back out on live plays; Pro matching the game without a difficulty and the win rate falling from Rookie to Legend; the "Fits" hint following tendencies (exits 1 on failure) |
+| `test/routes.mjs` | How far receivers stray from the route drawn on the play art (also while the quarterback slides in the pocket), and how many throws come down out of bounds or past the end line (exits 1 on failure) |
 | `test/clock.mjs` | Checks the clock rules (runoff by tempo, what stops the clock, the two-minute warning, timeouts, spike and kneel, the try and onside kicks) in set situations, then plays seeded games with the rules checked after every snap (exits 1 on failure) |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
+| `test/broadcast.mjs` | Franchise kits (validation, every team's kit, venues and times of day, a dome keeping weather out without changing the random stream) and, over simulated games, the drive charts, booth lines, stingers and player lower-thirds (exits 1 on failure) |
+| `test/powers.mjs` | Checks the power table and who carries one, zoning in and losing a power from the box score, that it boosts ratings only while active and in position, that the live field reads it and still copies for replays, and whole fast and live games earning and losing powers |
 | `test/abilities.mjs` | Checks every ability has an effect the game knows, the absorbing abilities, Wonder Guard, Scrappy and Mold Breaker matchups, the situational conditions, type theater on the live field and the weather's hold on each type |
 
 ## Build
@@ -314,10 +361,12 @@ node test/scenarios.mjs             # the fifteen fixed-seed scenarios plus a st
 node test/formations.mjs            # 600 formation and front pairings through the formation check
 node test/league.mjs                # two seasons of league mode, draft to rookie draft (exits 1 on failure)
 node test/presnap.mjs               # pre-snap adjustments, difficulty and the Fits hint (exits 1 on failure)
+node test/powers.mjs                # powers: carriers, meters, effects, whole games (exits 1 on failure)
 node test/browser.mjs out 3         # three snaps in a real browser: video, screenshots, results.json
 node test/touch.mjs out             # the touch pad on a phone-sized touch screen
 node test/tiers.mjs 300             # how much ratings matter (add `live` for live plays)
 node test/calls.mjs 1500            # fast-sim yards by call and defense
+node test/routes.mjs 400 --strict   # receivers on the drawn route, throws landing in bounds
 node test/feel.mjs 300 --strict     # how the football moves: sliding, turn rates, piles, idle blocks, coverage reaction time, tackle slide, ball state
 ```
 
@@ -330,7 +379,7 @@ python3 build/build_sprites3d.py <gif_cache_dir> src dist   # downloads the GIFs
 
 Gen 1–5 use the animated Black/White GIFs; later Pokémon use the static pixel PNGs.
 
-CI (`.github/workflows/test.yml`) runs the plays, scenarios, formations, league, clock, penalties, kicks, abilities, controls, pre-snap, football IQ and feel checks on every pull request and on pushes to `main`.
+CI (`.github/workflows/test.yml`) runs the plays, scenarios, formations, league, clock, penalties, kicks, abilities, powers, controls, pre-snap, football IQ and feel checks on every pull request and on pushes to `main`.
 
 ## Balance
 

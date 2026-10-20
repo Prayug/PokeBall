@@ -14,6 +14,7 @@ import { PLAYERS } from './ratings.js';
 import { TYPE_COLORS } from './types.js';
 import { absSpot } from './engine.js';
 import { Stadium, HALF_W } from './stadium3d.js';
+import { venueOf } from './kits.js';
 import { template, upgradeTemplate, makeFigure, disposeFigure, placeholder, flies } from './figure3d.js';
 import { updateBlink } from './blink.js';
 import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs, poseLimbs, hangArms, foldWings } from './model3d.js';
@@ -223,6 +224,7 @@ export class Stage {
     if (!lp) return;
     const g = lp.g;
     this.stadium.paint(g.teams);
+    this.stadium.setVenue(venueOf(g));
     this.stadium.setWeather(g.weather, this.weatherFx);
     for (const t of g.teams) for (const id of t.roster ?? []) { const e = SPRITE_INDEX[id]; if (e) loadChunk(e[0]); template(id); }
     this.dir = lp.o === 0 ? 1 : -1;
@@ -527,6 +529,16 @@ export class Stage {
           break;
         case 'incomplete': if (a) a.act = { kind: 'miss', t0: t, dur: 0.7 }; sfx('groan'); break;
         case 'typefx': this.typeFx(a, b, e.fx, e.type); break;
+        case 'power':
+          // A power changed the play: its name bursts over the player in his type colour.
+          if (a && e.who?.power) {
+            const col = e.who.power.color;
+            this.burst(a.pos, col, 1.4); this.burst(a.pos, '#ffffff', 0.7);
+            a.flash = Math.max(a.flash ?? 0, 0.5);
+            this.floatText(a.pos, `${e.text.toUpperCase()}!`, col, 1.4);
+            sfx('power');
+          }
+          break;
         case 'slip':
           if (a) { a.flash = 0.25; this.dust(a.pos, 0.5, 0.5); this.dust(a.pos, -0.5, 0.3); }
           break;
@@ -559,7 +571,8 @@ export class Stage {
     const lp = this.lp;
     this.updateFx(t, dt);
     tickAudio(dt);
-    if (!lp) { this.stadium.update(t, dt, this.rig.look); this.renderer.render(this.scene, this.camera); return; }
+    if (lp) this.stadium.setBoard(lp.g, now);
+    if (!lp) { this.stadium.update(t, dt, this.rig.look); if (this.blimp) this.blimpShot(now); this.renderer.render(this.scene, this.camera); return; }
     const pre = lp.phase === 'pre';
     this.art.visible = pre;
     this.readEvents(lp, t);
@@ -652,10 +665,34 @@ export class Stage {
     this.rig.update(dt, fr, this.camera.aspect, obstacles, this.snapNext || reduceMotion);
     this.snapNext = false;
     this.applyInset(reduceMotion ? 1 : 1 - Math.exp(-dt * 6));
+    if (this.blimp) this.blimpShot(now);
     this.stadium.follow(this.rig.look.x, this.rig.look.z * 0.5);
     this.stadium.update(t, dt, this.rig.look);
     this.prevPhase = lp.phase;
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // The establishing shot a broadcast opens and comes back from a break on: a slow arc high
+  // over the stadium and whatever is around it, then a cut back to the game camera.
+  establish(secs = 5) {
+    if (!this.blimp) this.blimpFog = [this.scene.fog.near, this.scene.fog.far];
+    this.blimp = { t0: performance.now(), secs };
+    // From up there the haze is thinner: the far hills and the water show.
+    this.scene.fog.near = this.blimpFog[0] * 2.2; this.scene.fog.far = this.blimpFog[1] * 2.2;
+  }
+  endEstablish() {
+    if (!this.blimp) return;
+    this.blimp = null; this.snapNext = true;
+    [this.scene.fog.near, this.scene.fog.far] = this.blimpFog;
+  }
+  blimpShot(now) {
+    const k = reduceMotion ? 0.5 : (now - this.blimp.t0) / 1000 / this.blimp.secs;
+    if (k >= 1 || (reduceMotion && now - this.blimp.t0 > this.blimp.secs * 1000)) { this.endEstablish(); return; }
+    // Under a dome the shot stays inside, under the roof.
+    const roof = this.stadium.venueInfo?.roof;
+    const a = -2.35 + k * 0.7, h = roof ? 38 - k * 8 : 92 - k * 22, r = roof ? 0.42 : 1;
+    this.camera.position.set(50 + Math.cos(a) * 205 * r, h, Math.sin(a) * 160 * r);
+    this.camera.lookAt(50, 0, 0);
   }
 
   // What the animation layer needs to know about a player this frame. Everything here is read
@@ -918,6 +955,37 @@ export class Stage {
         sp.scale.set(s, s, 1);
       }
     }
+    // Powers: a spinning ring of light in his type colour under anyone in the zone.
+    const auras = this.auras ?? (this.auras = []);
+    let n = 0;
+    for (const p of lp.players) {
+      const a = p.power ? this.actorOf(p) : null;
+      if (!a?.root.visible) continue;
+      let m = auras[n];
+      if (!m) {
+        m = new THREE.Mesh(AURA_GEO, new THREE.MeshBasicMaterial({ map: auraTexture(), transparent: true, depthWrite: false, depthTest: false, fog: false }));
+        m.rotation.x = -Math.PI / 2; m.renderOrder = 4; this.scene.add(m);
+        // And a bolt badge over his head.
+        m.userData.bolt = new THREE.Sprite(new THREE.SpriteMaterial({ map: boltTexture(), depthTest: false, transparent: true, fog: false }));
+        m.userData.bolt.renderOrder = 11; this.scene.add(m.userData.bolt);
+        auras.push(m);
+      }
+      const k = reduceMotion ? 1 : 1 + 0.08 * Math.sin(now / 170 + n);
+      m.visible = true;
+      m.position.set(a.pos.x, 0.07, a.pos.z);
+      m.scale.setScalar(Math.max(1.1, a.body.r * 2.6) * k);
+      m.rotation.z = reduceMotion ? 0 : now / 650;
+      m.material.color.set(p.power.color);
+      m.material.opacity = 0.85 + 0.15 * Math.sin(now / 240 + n);
+      const b = m.userData.bolt;
+      b.visible = a !== sel;
+      b.material.color.set(p.power.color).lerp(_c.set('#ffffff'), 0.25);
+      b.position.set(a.pos.x, (a.fig?.template.height ?? a.body.height ?? 2) + 0.55 + (reduceMotion ? 0 : Math.sin(now / 260 + n) * 0.08), a.pos.z);
+      const bs = clampN(this.camera.position.distanceTo(b.position) * 0.022, 0.4, 0.9);
+      b.scale.set(bs, bs, 1);
+      n++;
+    }
+    for (; n < auras.length; n++) { auras[n].visible = false; auras[n].userData.bolt.visible = false; }
     // Name and slot over your player before the snap, and over the ball carrier you control.
     const showName = sel && (lp.phase === 'pre' || this.showNames || (c.carrier && lp.phase === 'live'));
     this.label.visible = !!showName;
@@ -1313,6 +1381,36 @@ function blobTexture() {
   x.fillStyle = g; x.fillRect(0, 0, 64, 64);
   blobTex = new THREE.CanvasTexture(c);
   return blobTex;
+}
+
+// A lightning bolt in a dark disc, drawn white so the sprite's colour tints it.
+let boltTex = null;
+function boltTexture() {
+  if (boltTex) return boltTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgba(8,16,12,0.8)'; x.beginPath(); x.arc(32, 32, 29, 0, Math.PI * 2); x.fill();
+  x.lineWidth = 3; x.strokeStyle = '#ffffff'; x.stroke();
+  x.fillStyle = '#ffffff'; x.beginPath();
+  x.moveTo(36, 8); x.lineTo(17, 36); x.lineTo(30, 36); x.lineTo(26, 56); x.lineTo(47, 26); x.lineTo(34, 26); x.closePath(); x.fill();
+  boltTex = new THREE.CanvasTexture(c); boltTex.colorSpace = THREE.SRGBColorSpace;
+  return boltTex;
+}
+
+// The power aura: six bright arcs over a soft glow, drawn white so the material tints it.
+const AURA_GEO = new THREE.PlaneGeometry(2, 2);
+let auraTex = null;
+function auraTexture() {
+  if (auraTex) return auraTex;
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(64, 64, 28, 64, 64, 62);
+  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.6, 'rgba(255,255,255,0.35)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+  x.strokeStyle = '#ffffff'; x.lineWidth = 7; x.lineCap = 'round';
+  for (let i = 0; i < 6; i++) { x.beginPath(); x.arc(64, 64, 50, (i / 6) * Math.PI * 2, (i / 6) * Math.PI * 2 + 0.7); x.stroke(); }
+  auraTex = new THREE.CanvasTexture(c); auraTex.colorSpace = THREE.SRGBColorSpace;
+  return auraTex;
 }
 
 function haloTexture() {

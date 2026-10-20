@@ -60,7 +60,18 @@ function pack(root) {
     if (ids.has(v)) return { $r: ids.get(v) };
     const id = ids.size;
     ids.set(v, id);
-    if (Array.isArray(v)) return { $a: id, v: v.map(enc) };
+    if (Array.isArray(v)) {
+      // A route is an array that also remembers where it was drawn from. Those extra fields
+      // have to ride along, or a saved clip runs a different play than the one that was taped.
+      const extra = {};
+      let any = false;
+      for (const k of Object.keys(v)) {
+        if (String(+k) === k && +k >= 0 && +k < v.length) continue;
+        extra[k] = enc(v[k]);
+        any = true;
+      }
+      return any ? { $a: id, v: v.map(enc), x: extra } : { $a: id, v: v.map(enc) };
+    }
     const o = { $o: id, v: {} };
     for (const k of Object.keys(v)) o.v[k] = enc(v[k]);
     return o;
@@ -74,7 +85,13 @@ function unpack(root) {
     if ('$n' in v) return Number(v.$n);
     if ('$u' in v) return undefined;
     if ('$r' in v) return seen[v.$r];
-    if ('$a' in v) { const a = []; seen[v.$a] = a; for (const x of v.v) a.push(dec(x)); return a; }
+    if ('$a' in v) {
+      const a = [];
+      seen[v.$a] = a;
+      for (const x of v.v) a.push(dec(x));
+      if (v.x) for (const [k, x] of Object.entries(v.x)) a[k] = dec(x);
+      return a;
+    }
     if ('$o' in v) { const o = {}; seen[v.$o] = o; for (const [k, x] of Object.entries(v.v)) o[k] = dec(x); return o; }
     throw new Error('not a clip');
   };

@@ -14,7 +14,7 @@ export const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce
 export const S = {
   screen: 'home', league: null, game: null, gameMeta: null,
   draft: { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false },
-  depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 24, legendaries: false, typeCap: true, clock: true, scheme: 'balanced' },
+  depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', teams: 8, rounds: 24, legendaries: false, typeCap: true, clock: true, scheme: 'balanced' },
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
   menuOpen: false, cam: 'gameplay', weatherFx: true, quality: 'auto',
   names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
@@ -84,7 +84,7 @@ export function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem(PREF_KEY) || 'null');
     if (p) {
-      S.coach = !!p.coach; S.watch = p.watch ?? S.coach; Object.assign(S.setup, p.setup ?? {});
+      S.coach = !!p.coach; S.watch = p.watch ?? S.coach; S.spectate = !!p.spectate; Object.assign(S.setup, p.setup ?? {});
       // Version 2 cameras: the old behind-the-offense "broadcast" is now "gameplay", the old
       // sideline shot is "broadcast" and behind-the-QB is "player focus".
       const cam = p.camV >= 2 ? p.cam : p.cam === 'broadcast' ? 'gameplay' : CAMERA_ALIASES[p.cam] ?? p.cam;
@@ -103,7 +103,7 @@ export function loadPrefs() {
   } catch { /* ignore */ }
 }
 export function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, setup: S.setup, cam: S.cam, camV: 4, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, difficulty: S.difficulty, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, spectate: !!S.spectate, setup: S.setup, cam: S.cam, camV: 4, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, seenHelp: S.seenHelp, difficulty: S.difficulty, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
 }
 export function clearTimers() {
   for (const k of Object.keys(timers)) { clearTimeout(timers[k]); clearInterval(timers[k]); timers[k] = null; }

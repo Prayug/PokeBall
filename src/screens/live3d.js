@@ -8,12 +8,16 @@ import { Stage, webglAvailable } from '../field3d.js';
 import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
 import { S, save, savePrefs, timers } from '../state.js';
-import { esc } from '../ui.js';
-import { autoAdvance, doCall, needsUser, playClockOut, setMode, twoPlayer, userSide, userTimeout } from './game.js';
+import { P, esc } from '../ui.js';
+import { sfx } from '../audio.js';
+import { POWER_OF, powerLine } from '../powers.js';
+import { autoAdvance, doCall, needsUser, playClockOut, setMode, spectating, toggleTakeOver, twoPlayer, userSide, userTimeout } from './game.js';
 import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions } from './callsheet.js';
 import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
 import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
+import { boothAfter } from '../broadcast.js';
+import { afterPlay as broadcastAfter, layersHtml, onCall as broadcastCall, onFlow as broadcastFlow, resetBroadcast } from './broadcast.js';
 
 function keysHelp() {
   return `<div class="keygrid">
@@ -35,6 +39,7 @@ function keysHelp() {
     <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
     <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
     <span><kbd>G</kbd> between plays: challenge the last call (one a half; a lost challenge costs a timeout) · <kbd>J</kbd> the film room</span>
+    <span><kbd>O</kbd> in Watch mode: call the next play yourself (press again to hand it back)</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
   </div>
   <h4>Gamepad</h4>
@@ -88,6 +93,7 @@ function setFlow(st) {
   L3.trace.push({ state: st, at: Math.round(performance.now()), clock: g?.clock, poss: g?.poss, down: g?.down, toGo: g?.toGo, spot: g?.spot, score: g ? [...g.score] : null });
   if (L3.trace.length > 400) L3.trace.shift();
   stage?.setState?.(st);
+  broadcastFlow(st, g, stage, L3.lp);
   const d = document.getElementById('dbg-state');
   if (d) d.textContent = st;
 }
@@ -114,6 +120,7 @@ export function ensureStage() {
   stageWrap.className = 'stagewrap';
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
     <div class="lower3" id="lower3" aria-live="polite"></div>
+    ${layersHtml()}
     <div class="ov-badge" id="replay-badge" hidden>Replay</div>
     <div class="hud-acts"><button class="hud-replay" id="chal-btn" data-act="challenge" hidden>Challenge <kbd>G</kbd></button>
       <button class="hud-replay" id="film-btn" data-act="film" hidden>Film room <kbd>J</kbd></button>
@@ -179,9 +186,10 @@ export function startLive(off, def, opts) {
   const g = S.game;
   // Line up from wherever the players are standing in the preview.
   const from = L3.preview?.lp ? worldSpots(L3.preview.lp) : L3.spots ?? undefined;
-  L3.before = { poss: g.poss, down: g.down, toGo: g.toGo, spot: g.spot, score: [...g.score] };
+  markBefore();
   if (FILM.open) closeFilm();
   if (L3.replay) stopReplay();
+  broadcastCall(stage);
   // The replay recording: the game as it was before the play (its random seed included) and
   // every simulation step's input, so the play can be run again exactly, step for step.
   // Officials on the field: fouls are called as the contact happens (see penalties.js).
@@ -200,6 +208,13 @@ export function startLive(off, def, opts) {
   stage.setPlay(L3.lp);
   setFlow(L3.lp.set ? 'PRE_SNAP' : 'FORMATION_SETUP');
   render();
+}
+
+// The game as it stands before a call: what the result card, the score flash and the broadcast
+// compare the result with.
+export function markBefore() {
+  const g = S.game;
+  if (g) L3.before = { poss: g.poss, down: g.down, toGo: g.toGo, spot: g.spot, score: [...g.score], quarter: g.quarter, logN: g.log.length, drives: g.drives.length };
 }
 
 export function doSnap() {
@@ -292,6 +307,17 @@ function commitPlay() {
   save();
   render();
   showBanner(resultBanner(entry, lp, b));
+  broadcastAfter(g, b, stage);
+  powerFlash(entry);
+}
+
+// A power switching on is called out over the field as well as on the result card.
+function powerFlash(entry) {
+  const on = (entry?.powers ?? []).find((c) => c.on);
+  if (!on) return;
+  flash(`${P(on.id).name}: ${POWER_OF[on.id].name}!`, 'power');
+  L3.flashT = performance.now() + 2600;
+  sfx('power');
 }
 
 // The result hold is over: the players get up and walk to the next spot.
@@ -325,7 +351,7 @@ export function afterLivePlay(entry) {
   render();
   if (!entry || !g) { autoAdvance(); return; }
   // No live play follows to clear it, so the card leaves once the result beat is over.
-  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); }
+  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); broadcastAfter(g, b, stage); powerFlash(entry); }
   autoAdvance();
 }
 
@@ -338,6 +364,8 @@ export function resetBetweenGames() {
   L3.deadT = 0; L3.hold = 0; L3.lob = null; L3.snapWant = false; L3.autoSnap = null; L3.keys.clear(); L3.edges.clear();
   if (L3.replay) stopReplay();
   hideBanner();
+  resetBroadcast();
+  L3.flow = null;
   if (stage) setFlow('PLAY_SELECTION');
 }
 
@@ -375,10 +403,14 @@ function resultBanner(e, lp, before) {
     tone = e.highlight === 'miss' ? 'to' : e.kind === 'score' ? 'td' : e.highlight === 'turnover' ? 'to' : e.kind === 'quarter' || e.kind === 'info' || e.kind === 'timeout' ? 'muted' : e.highlight === 'flag' ? 'flag' : '';
   }
   // Why it happened, when a Pokémon's type, ability or size, or the weather, decided part of the play.
-  const notes = (lp?.notes ?? []).filter((n) => ['type', 'ability', 'size', 'weather'].includes(n.kind)).slice(0, 2).map((n) => ({ kind: n.kind, text: n.text }));
+  // Powers: a Pokémon zoning in or losing its power on this play leads; then what a power,
+  // type, ability, size or the weather decided.
+  const changes = (e.powers ?? []).map((c) => ({ kind: c.on ? 'power' : 'powerOff', text: powerLine(c) }));
+  const notes = [...changes, ...(lp?.notes ?? []).filter((n) => ['power', 'type', 'ability', 'size', 'weather'].includes(n.kind)).map((n) => ({ kind: n.kind, text: n.text }))].slice(0, 3);
   const next = g.final ? 'Final' : g.phase === 'penalty' ? 'Accept or decline the penalty' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
   const clock = !g.final && g.phase === 'play' && !changed && !td && e.down ? (g.clockRunning ? '' : 'Clock stopped') : '';
-  return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed };
+  const booth = boothAfter(g, e, before, lp?.notes ?? []);
+  return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed, booth };
 }
 function showBanner(B) {
   const el = document.getElementById('lower3');
@@ -387,7 +419,7 @@ function showBanner(B) {
   L3.banner = B;
   el.className = `lower3 on ${B.tone}${B.possession ? ' poss' : ''}`;
   el.innerHTML = `<div class="l3-head"><b>${esc(B.head)}</b>${B.yds ? `<span class="l3-yds">${esc(B.yds)}</span>` : ''}${B.clock ? `<span class="l3-clock">${B.clock}</span>` : ''}</div>
-    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size', weather: 'Weather' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}<p class="l3-next">${esc(B.next)}</p>`;
+    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size', weather: 'Weather', power: 'Power', powerOff: 'Power lost' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}${B.booth ? `<p class="l3-booth"><span class="l3-mic" aria-hidden="true"></span>${esc(B.booth)}</p>` : ''}<p class="l3-next">${esc(B.next)}</p>`;
 }
 function hideBanner(after = 0) {
   clearTimeout(timers.banner);
@@ -814,6 +846,7 @@ export function onKey(e, down) {
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
     // P pauses a play on the field; between plays it falls through to the call sheet (Punt).
     if (code === 'KeyP' && L3.lp && L3.lp.phase !== 'dead') { e.preventDefault(); togglePause(); return; }
+    if (code === 'KeyO' && spectating()) { e.preventDefault(); toggleTakeOver(); return; }
     if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }

@@ -2,6 +2,7 @@
 // can hurt either body (engine.js rolls it, from the odds below); the league keeps who is hurt
 // and for how many more games (L.injuries), sits them at game time, and heals them week by week.
 import { PLAYERS, SLOT, SLOT_KEYS } from './ratings.js';
+import { roundLabel } from './geometry.js';
 
 const kg = (id) => Math.max(1, PLAYERS[id].weight / 10);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -43,7 +44,7 @@ export function recordInjuries(L, g, meta) {
   L.injuries ??= {};
   for (const inj of g.injuries ?? []) {
     L.injuries[inj.id] = { weeks: inj.weeks, team: inj.team, by: inj.by, fresh: true,
-      when: meta.playoff ? (meta.round === 0 ? 'Semifinal' : 'Championship') : `Week ${meta.week + 1}` };
+      when: meta.playoff ? roundLabel(L, meta.round) : `Week ${meta.week + 1}` };
     // Hurt is not sore: an injured Pokémon's soreness is moot until it heals.
     if (L.condition) delete L.condition[inj.id];
   }

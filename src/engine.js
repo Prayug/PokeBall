@@ -2,11 +2,13 @@
 // Deterministic for a given seed. No DOM access.
 import { PLAYERS, OFF_SLOTS, DEF_SLOTS, unitRatings } from './ratings.js';
 import { TYPE_TRAITS, ABILITIES, WEATHER, bestMatchup, matchupModifier } from './types.js';
+import { initPowers, powerBonus, tickPowers } from './powers.js';
 import { PARITY, formFor } from './parity.js';
 import { diffOf, diffUser } from './difficulty.js';
 import { schemeBonus, schemeOf } from './coach.js';
 import { coverSlot, injuryOdds, injuryWeeks } from './injuries.js';
 import { PENALTIES, announce, enforce, foul, preSnapFoul, simFouls, stateValue } from './penalties.js';
+import { cleanKit, venueFor } from './kits.js';
 
 // The playbook. Each run or pass has its kind, the fast simulator's numbers (depth, air yards,
 // target weights) and, for plays added on top of the original eleven, either `sim`: the original
@@ -139,7 +141,7 @@ function makeSide(t) {
   // (A two-way player covering for an injured starter is in the lineup twice: count him once.)
   const roster = [...new Set([...Object.values(t.lineup), ...(t.bench ?? [])])];
   return {
-    id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach ?? 'balanced',
+    id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach ?? 'balanced', kit: cleanKit(t.kit, t),
     starters: { ...t.lineup }, lineup: { ...t.lineup }, bench: [...(t.bench ?? [])], roster,
     energy: Object.fromEntries(roster.map((id) => [id, t.energy?.[id] ?? 100])),
     locks: {}, out: {},
@@ -166,7 +168,9 @@ export function createGame({ home, away, seed = Date.now(), playoff = false, wea
     // A coach's challenge per side per half (see review.js).
     challenges: [1, 1],
   };
+  g.venue = venueFor(g.teams[0], { seed, playoff, neutral });
   if (!weather) g.weather = pickWeather(g);
+  initPowers(g);
   const receiver = chance(g, 0.5) ? 0 : 1;
   g.firstReceiver = receiver;
   addLog(g, { kind: 'info', text: `${WEATHER[g.weather].name} at kickoff. ${g.teams[receiver].name} will receive.` });
@@ -182,7 +186,10 @@ function pickWeather(g) {
       if (w && chance(g, 0.6)) return w;
     }
   }
-  return pickWeighted(g, { clear: 70, rain: 12, sun: 8, sand: 5, hail: 5 });
+  // Under a dome the sky's weather stays outside (the roll is still made, so the game's random
+  // stream is the same in any stadium).
+  const w = pickWeighted(g, { clear: 70, rain: 12, sun: 8, sand: 5, hail: 5 });
+  return g.venue?.roof ? 'clear' : w;
 }
 
 // ---------- ratings in context ----------
@@ -220,6 +227,8 @@ export function eff(g, ti, id, attr, ctx = {}) {
   if (attr === 'blk' && ctx.runBlock && p.types.includes('Ground')) v += TYPE_TRAITS.Ground.runBlock;
   if (attr === 'hnd' && ctx.contested && p.types.includes('Flying')) v += TYPE_TRAITS.Flying.contested;
   v += schemeBonus(g, ti, attr);
+  // A power the Pokémon has zoned into this game (see powers.js).
+  if (g.pw) v += powerBonus(g, ti, id, attr, ctx);
   let m = 1;
   const w = WEATHER[g.weather];
   if (g.weather === 'sand') { if (w.immune.some((t) => p.types.includes(t))) m *= 1 + PARITY.sandImmune; }
@@ -288,7 +297,7 @@ export function fgDistance(g) { return 100 - g.spot + 17; }
 export function absSpot(poss, spot) { return poss === 0 ? spot : 100 - spot; }
 
 function startDrive(g) {
-  g.drive = { team: g.poss, start: g.spot, plays: 0, yards: 0, q: g.quarter, clock: g.clock, top: 0 };
+  g.drive = { team: g.poss, start: g.spot, plays: 0, yards: 0, q: g.quarter, clock: g.clock, top: 0, at: g.log.length };
   checkSubs(g, g.poss, OFF_SLOTS);
   checkSubs(g, 1 - g.poss, DEF_SLOTS);
 }
@@ -828,6 +837,12 @@ function finishPlay(g, r, base, offCall, defCall, playSecs) {
   ctx.stopped = r.oob ? oobStops(g) : !!r.clockStop;
   if (!r.noPlay && (play.kind === 'run' || play.kind === 'pass')) applyFatigue(g);
 
+  // Runs and passes count toward the players' powers (see afterPlay).
+  if (!r.noPlay && !r.special && (play?.kind === 'run' || play?.kind === 'pass') && g.phase === 'play') {
+    ctx.counts = { o, kind: r.kind === 'run' ? 'run' : 'pass', down: before.down,
+      first: (r.yards ?? 0) >= before.toGo || before.spot + (r.yards ?? 0) >= 100,
+      sack: r.kind === 'sack', int: r.turnover === 'int', comp: r.kind === 'pass' && r.qb != null && r.carrier !== r.qb && r.turnover !== 'int' };
+  }
   if (r.fouls?.length && !r.special) return flagged(g, r, before, ctx);
   const entry = resolve(g, r, before, offCall, defCall);
   if (entry && r.oob && !r.special) entry.oob = true;
@@ -839,6 +854,9 @@ function finishPlay(g, r, base, offCall, defCall, playSecs) {
 // warning when the play ran past 2:00, and the end of the quarter.
 function afterPlay(g, entry, ctx, untimed = false) {
   const { o, q, clockBefore } = ctx;
+  // Powers: the play's box score moves each carrier toward zoning in or losing it.
+  const pw = tickPowers(g, entry, entry && entry.kind !== 'penalty' ? ctx.counts : null);
+  if (entry && pw.length) entry.powers = pw;
   g.lastPlay = entry;
   g.call = null;
   g.clockRunning = !ctx.stopped && g.poss === o && g.phase === 'play' && g.quarter === q && !g.final;

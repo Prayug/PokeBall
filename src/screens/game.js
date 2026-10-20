@@ -6,14 +6,16 @@ import { DEF_PLAYS, OFF_PLAYS, absSpot, aiDefenseCall, aiOffenseCall, aiTempo, a
 import { DEF_FORMATIONS, FORMATIONS, liveKick, worldSpots } from '../live.js';
 import { CAMERA_LIMITS, CAMERA_MODES, CAMERA_SHOTS } from '../camera3d.js';
 import * as LG from '../league.js';
-import { render, setScreen } from '../app.js';
+import { quickGame, render, setScreen } from '../app.js';
 import { S, reduceMotion, save, savePrefs, timers } from '../state.js';
-import { P, edgeRow, esc, ovr, sprite, teamBadge, typeChips } from '../ui.js';
+import { P, edgeRow, esc, ovr, powersRow, sprite, teamBadge, typeChips } from '../ui.js';
 import { adjustHtml, aiFormation, aiFront, callSheet, callSheetHtml, clockRow, formFor, frontFor } from './callsheet.js';
 import { DIFFICULTY, DIFFICULTY_LEVELS, applyDifficulty } from '../difficulty.js';
 import { tendencyLines, typeEdges } from '../scout.js';
-import { L3, afterLivePlay, challengeReady, fieldBusy, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
+import { powerColor, powerLine } from '../powers.js';
+import { L3, afterLivePlay, challengeReady, fieldBusy, markBefore, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
 import { filmReady } from './film.js';
+import { driveChartSvg, scorebugHtml } from './broadcast.js';
 
 // ---------- game ----------
 // A two-player quick game: player one has the home team, player two the away team, and each
@@ -26,14 +28,22 @@ export function userSide() {
   const uid = S.gameMeta?.userTeamId ?? 0;
   return S.game.teams[0].id === uid ? 0 : 1;
 }
+// Watch mode (spectator / streamer): the AI calls and plays both sides. A quick "Watch a game"
+// sets it for that game only (gameMeta.spectate); picking Watch in the menu keeps it as the mode.
+export function spectating() { return !twoPlayer() && (S.gameMeta?.spectate ?? !!S.spectate); }
+// The AI calls downs for your side: Auto, and Watch unless you have taken the next call.
+export function aiCalls() { return S.coach || (spectating() && !S.takeOver); }
 export function needsUser(g) {
   if (g.final) return false;
   if (twoPlayer()) return true;
+  if (spectating() && !S.takeOver) return false;
+  // Taking a call in Watch mode hands you the next decision that is yours, as in Play.
+  const auto = S.coach && !S.takeOver;
   // The try and the kickoff are yours when your side kicks (in Auto, only in the 4th quarter).
   // After a flag, the call is yours when the foul was against you (in Auto, only in the 4th quarter).
-  if (g.phase === 'penalty') return g.pending?.offended != null && !!g.manual?.[g.pending.offended] && (!S.coach || g.quarter >= 4);
-  if (g.phase === 'pat' || g.phase === 'kickoff') return !!g.manual?.[g.poss] && (!S.coach || g.quarter >= 4);
-  if (!S.coach) return true;
+  if (g.phase === 'penalty') return g.pending?.offended != null && !!g.manual?.[g.pending.offended] && (!auto || g.quarter >= 4);
+  if (g.phase === 'pat' || g.phase === 'kickoff') return !!g.manual?.[g.poss] && (!auto || g.quarter >= 4);
+  if (!auto) return true;
   return g.down >= 3 || ((g.quarter === 2 || g.quarter >= 4) && g.clock <= 120) || g.quarter >= 5;
 }
 
@@ -94,7 +104,7 @@ function playCards(g, { keys = false } = {}) {
   };
   const head = onOff ? `<div class="callhead"><h3>${downText(g)} at ${spotText(g)}</h3><span class="muted">Call your offense</span></div>`
     : `<div class="callhead"><h3>${downText(g)} at ${spotText(g)}</h3><span class="muted">${esc(g.teams[g.poss].abbr)} ball · call your defense</span></div>`;
-  return `${head}${clockRow(g, onOff)}<div class="playgroups">${groups.map(([fam, label, cs]) => `<div class="pgroup"><h4>${label}</h4>
+  return `${head}${clockRow(g, onOff)}${powersRow(g, userSide())}<div class="playgroups">${groups.map(([fam, label, cs]) => `<div class="pgroup"><h4>${label}</h4>
     <div class="plays">${cs.map((c) => card(c, fam)).join('')}</div></div>`).join('')}</div>`;
 }
 
@@ -125,9 +135,10 @@ export function renderGame() {
   let controls, dock = 'call';
   if (g.final) {
     dock = 'final';
-    const verdict = g.winner == null ? 'Tie game' : twoPlayer() ? `Player ${g.winner + 1} wins: ${esc(g.teams[g.winner].name)}` : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose';
+    const verdict = g.winner == null ? 'Tie game' : spectating() && S.gameMeta?.spectate ? `${esc(g.teams[g.winner].name)} win` : twoPlayer() ? `Player ${g.winner + 1} wins: ${esc(g.teams[g.winner].name)}` : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose';
     controls = `<div class="card final callcard"><h2>${verdict}, ${Math.max(...g.score)} to ${Math.min(...g.score)}</h2>
-      <div class="actions">${S.gameMeta?.quick ? `<button class="btn primary" data-act="${twoPlayer() ? 'quick2' : 'quick'}">Play another ${twoPlayer() ? 'two-player game' : 'quick game'}</button><button class="btn" data-act="home">Home</button>`
+      ${S.streamer && S.gameMeta?.quick ? '<p class="small muted">The next game kicks off shortly.</p>' : ''}
+      <div class="actions">${S.gameMeta?.quick ? `<button class="btn primary" data-act="${twoPlayer() ? 'quick2' : S.gameMeta.spectate ? 'watchgame' : 'quick'}">${twoPlayer() ? 'Play another two-player game' : S.gameMeta.spectate ? 'Watch another game' : 'Play another quick game'}</button><button class="btn" data-act="home">Home</button>`
         : '<button class="btn primary" data-act="finishgame">Back to the season</button>'}</div></div>`;
   } else {
     let head;
@@ -141,7 +152,7 @@ export function renderGame() {
     } else if (decide) head = playCards(g, { keys: live3d }) + (live3d ? '' : presnapHtml(g) + tendenciesHtml(g));
     else {
       dock = 'wait';
-      head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">Auto mode hands you 3rd and 4th downs and the last two minutes</span></div>`;
+      head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">${spectating() ? `Watch mode: the AI calls both sides. <button class="btn tiny" data-act="takeover">${S.takeOver ? 'Hand it back' : 'Call next play'}</button>` : 'Auto mode hands you 3rd and 4th downs and the last two minutes'}</span></div>`;
     }
     controls = `<div class="card callcard">${head}${simrow}</div>`;
   }
@@ -156,13 +167,15 @@ export function renderGame() {
       // Two players: each sees only the other's formation, not the call.
       const mine = lp.p2 ? `${g.teams[lp.o].abbr} ${offTxt}` : lp.user === lp.o ? `${offTxt} · ${OFF_PLAYS[L3.off].name}` : `${defTxt} · ${DEF_PLAYS[L3.def].name}`;
       const theirs = lp.p2 ? `vs ${g.teams[lp.d].abbr} ${defTxt}` : lp.user === lp.o ? `vs ${defTxt}` : `vs ${offTxt}`;
-      if (lp.phase === 'pre') overlay = `<div class="lined3">${S.coachDown || lp.p2 ? '' : adjustHtml(lp)}<div class="pill lined"><span class="pl-play">${esc(mine)}<small>${esc(theirs)}</small></span>
+      if (spectating() && (S.coachDown || lp.user == null)) overlay = watchChip();
+      else if (lp.phase === 'pre') overlay = `<div class="lined3">${S.coachDown || lp.p2 ? '' : adjustHtml(lp)}<div class="pill lined"><span class="pl-play">${esc(mine)}<small>${esc(theirs)}</small></span>
         <button class="btn primary" data-act="snap">${lp.p2 || lp.user === lp.o ? 'Snap' : 'Start'} <kbd>${lp.p2 && lp.o === 1 ? 'Enter' : 'Space'}</kbd></button>
         ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change <kbd>Esc</kbd></button>'}</div></div>`;
     } else if (decide) overlay = callSheetHtml(g);
+    else if (spectating()) overlay = watchChip();
     else if (L3.resultUntil > performance.now()) overlay = '';
     else overlay = `<div class="pill wait"><span>${S.busy ? 'Play in progress' : 'AI calling this down'}</span></div>`;
-    return `<section class="game g3d">
+    return `<section class="game g3d ${spectating() ? 'spectate' : ''}">
     <div class="stage-slot" id="stage-slot">
       ${broadcastBar(g)}
       <button class="menubtn" data-act="menu" aria-expanded="${!!S.menuOpen}" aria-label="Game menu"><span aria-hidden="true">☰</span> Menu <kbd>M</kbd></button>
@@ -175,7 +188,7 @@ export function renderGame() {
       ${decide ? `<div class="card scoutpanel">${presnapHtml(g)}${tendenciesHtml(g)}</div>` : ''}
       <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
       <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>
-      <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
+      <p class="small muted">${spectating() ? `Watching ${esc(g.teams[1].name)} at ${esc(g.teams[0].name)}` : `You coach ${esc(g.teams[us].name)}`}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
     </div>
   </section>`;
   }
@@ -190,16 +203,15 @@ export function renderGame() {
   </section>`;
 }
 
-// Broadcast scoreboard: both teams, possession, quarter, clock, down and distance, the play
-// clock and the ball spot, in one strip.
+// Watch mode's thin HUD: one chip in the corner, with the key that takes the next call.
+function watchChip() {
+  return `<div class="pill wait spec"><span class="live-dot" aria-hidden="true"></span><span>${S.takeOver ? 'Your call is next' : 'Watching'}</span>
+    <button class="btn tiny" data-act="takeover" aria-pressed="${!!S.takeOver}">${S.takeOver ? 'Hand it back' : 'Call next play'} <kbd>O</kbd></button></div>`;
+}
+
+// Broadcast scoreboard: the scorebug from the broadcast package (screens/broadcast.js).
 function broadcastBar(g) {
-  const [H, A] = g.teams;
-  const scored = (i) => (L3.scoreFlash?.[i] ?? 0) > performance.now() ? 'scored' : '';
-  const team = (t, i) => `<div class="bc-team ${g.poss === i && !g.final ? 'has' : ''} ${scored(i)}" style="--team:${t.color}"><span class="bc-abbr">${esc(t.abbr)}</span><span class="bc-score">${g.score[i]}</span>${g.final ? '' : timeoutPips(g, i)}${g.poss === i && !g.final ? '<span class="bc-poss" title="Has the ball" aria-label="Has the ball"></span>' : ''}</div>`;
-  const info = g.final ? `<div class="bc-cell bc-down">FINAL</div>` : `<div class="bc-cell bc-q" title="Quarter">${g.quarter <= 4 ? `${['1st', '2nd', '3rd', '4th'][g.quarter - 1].toUpperCase()}<small>QTR</small>` : quarterText(g.quarter)}</div><div class="bc-cell bc-clock ${g.clockRunning ? 'run' : ''}" id="gclock" title="${g.clockRunning ? 'Clock running' : 'Clock stopped'}">${clockText(g.clock)}</div>
-    <div class="bc-cell bc-down">${downText(g)}</div><div class="bc-cell bc-pc" id="pclock" title="Play clock">:${String(Math.ceil(L3.pclock ?? 40)).padStart(2, '0')}</div>
-    <div class="bc-cell bc-spot">${spotText(g)}</div>`;
-  return `<div class="bcast" id="bcast">${team(A, 1)}${team(H, 0)}${info}</div>`;
+  return scorebugHtml(g, { pclock: L3.pclock, scored: L3.scoreFlash, live: !!L3.lp && L3.lp.phase !== 'pre', big: !!S.bigBug });
 }
 
 function tickerHtml(g) {
@@ -212,8 +224,9 @@ function tickerHtml(g) {
 // Who runs the game: Play (you call every play and control your Pokémon), Coach (you call
 // every play and the AI plays it out) or Auto (the AI also calls routine downs; 3rd and 4th
 // downs and the last two minutes of a half are yours).
-const MODES = [['play', 'Play', 'You call the plays and control your Pokémon'], ['coach', 'Coach', 'You call the plays, the AI plays them'], ['auto', 'Auto', 'The AI calls routine downs too; you call 3rd and 4th downs and the last two minutes']];
-const modeOf = () => (S.coach ? 'auto' : S.watch ? 'coach' : 'play');
+const MODES = [['play', 'Play', 'You call the plays and control your Pokémon'], ['coach', 'Coach', 'You call the plays, the AI plays them'], ['auto', 'Auto', 'The AI calls routine downs too; you call 3rd and 4th downs and the last two minutes'],
+  ['watch', 'Watch', 'The AI calls and plays both sides. Call next play (O) takes the next down']];
+const modeOf = () => (spectating() ? 'watch' : S.coach ? 'auto' : S.watch ? 'coach' : 'play');
 function modeHtml() {
   if (twoPlayer()) return '<p class="small muted mode-note">Two players: each of you calls and plays your own side.</p>';
   const cur = modeOf();
@@ -234,8 +247,17 @@ export function setDifficulty(k) {
   savePrefs(); save(); render();
 }
 export function setMode(k) {
-  S.coach = k === 'auto'; S.watch = k !== 'play';
+  S.coach = k === 'auto'; S.watch = k !== 'play'; S.spectate = k === 'watch'; S.takeOver = false;
+  if (S.gameMeta && 'spectate' in S.gameMeta) S.gameMeta.spectate = S.spectate;
   savePrefs(); render(); autoAdvance();
+}
+// Watch mode: take (or hand back) the next call. The call sheet comes up at the next down your
+// side has to call, and the AI takes over again once you have called it.
+export function toggleTakeOver() {
+  if (!spectating() || !S.game || S.game.final) return;
+  S.takeOver = !S.takeOver;
+  clearTimeout(timers.auto);
+  render(); autoAdvance();
 }
 
 function menuHtml(g, simBtns, coachBox) {
@@ -341,7 +363,7 @@ function logHtml(g) {
     const t = g.teams[e.poss];
     const sit = e.down ? `${['', '1st', '2nd', '3rd', '4th'][e.down]} & ${e.spotBefore + e.toGo >= 100 ? 'Goal' : e.toGo}` : '';
     return `<li class="k-${e.kind} ${e.highlight ? `h-${e.highlight}` : ''}"><span class="when">${quarterText(e.q)} ${clockText(e.clock)}</span>
-      ${e.down ? `<span class="sit">${teamBadge(t)} ${sit}</span>` : ''}<span class="txt">${esc(e.text).replace('It&#39;s super effective!', '<mark>It&#39;s super effective!</mark>')}</span></li>`;
+      ${e.down ? `<span class="sit">${teamBadge(t)} ${sit}</span>` : ''}<span class="txt">${esc(e.text).replace('It&#39;s super effective!', '<mark>It&#39;s super effective!</mark>')}${(e.powers ?? []).map((c) => ` <span class="pw-log ${c.on ? 'on' : ''}" style="--pw:${powerColor(c.id)}">${esc(powerLine(c))}</span>`).join('')}</span></li>`;
   }).join('')}</ol>`;
 }
 
@@ -379,8 +401,9 @@ export function boxHtml(g) {
 function drivesHtml(g) {
   const ds = [...g.drives].reverse();
   if (!ds.length) return '<p class="muted">No completed drives yet.</p>';
-  return `<div class="tablewrap"><table class="drives"><thead><tr><th>Team</th><th>Start</th><th class="num">Plays</th><th class="num">Yards</th><th>Result</th></tr></thead>
-    <tbody>${ds.map((d) => `<tr><td>${teamBadge(g.teams[d.team])}</td><td>${quarterText(d.q)} ${clockText(d.clock)}</td><td class="num">${d.plays}</td><td class="num">${d.yards}</td><td>${d.result}</td></tr>`).join('')}</tbody></table></div>`;
+  // Each drive with its chart: every snap an arrow on the field, colored by what it was.
+  return `<div class="tablewrap"><table class="drives"><thead><tr><th>Team</th><th>Start</th><th class="num">Plays</th><th class="num">Yards</th><th>Result</th><th>Chart</th></tr></thead>
+    <tbody>${ds.map((d) => `<tr><td>${teamBadge(g.teams[d.team])}</td><td>${quarterText(d.q)} ${clockText(d.clock)}</td><td class="num">${d.plays}</td><td class="num">${d.yards}</td><td>${d.result}</td><td class="dchart">${d.at != null ? driveChartSvg(g, d, { w: 220 }) : ''}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 // Animate the ball carrier to the play's end spot, then redraw.
@@ -411,14 +434,15 @@ export function doCall(call) {
   // kickoff are offense calls for the side that kicks.
   const mine = g.phase === 'penalty' ? (g.pending?.offended === us ? OFF_PLAYS : {}) : g.phase !== 'play' ? (g.poss === us ? OFF_PLAYS : {}) : g.poss === us ? OFF_PLAYS : DEF_PLAYS;
   if (!mine[call] || (g.phase === 'penalty') !== (OFF_PLAYS[call]?.kind === 'penalty')) return;
-  if (g.phase === 'penalty') { S.csTab = null; playCall(call, 'base', null, {}); return; }
+  if (g.phase === 'penalty') { S.csTab = null; S.takeOver = false; playCall(call, 'base', null, {}); return; }
   // The AI side may stop the clock before the snap.
   if (aiTimeouts(g) != null) flashTimeout(g);
   const off = g.poss === us ? call : aiOffenseCall(g);
   const def = g.poss === us ? aiDefenseCall(g) : call;
-  S.coachDown = false;
+  S.coachDown = false; S.takeOver = false;
   S.csTab = null; S.csPage = 0;
-  playCall(off, def, g.poss === us ? S.tempo : null, { userSide: us, watch: !!S.watch, autoQB: !!S.watch, autoSnap: S.watch || g.poss !== us ? 1.6 : null,
+  const watch = !!S.watch || spectating();
+  playCall(off, def, g.poss === us ? S.tempo : null, { userSide: us, watch, autoQB: watch, autoSnap: watch || g.poss !== us ? 1.6 : null,
     formation: g.poss === us ? formFor(off) : aiFormation(off), defFormation: g.poss === us ? aiFront(def) : frontFor(def) });
 }
 
@@ -427,6 +451,7 @@ export function doCall(call) {
 // instead and the next call is made in the new situation.
 function playCall(off, def, tempo, opts) {
   const g = S.game;
+  markBefore();
   const pace = tempo && tempo !== 'auto' ? tempo : aiTempo(g);
   if (!snapClock(g, pace, off)) {
     if (stage) { if (L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; } afterLivePlay(g.log[g.log.length - 1]); return; }
@@ -453,6 +478,7 @@ function twoPlayerCall(g, call) {
   }
   const { off, formation } = S.p2Call, def = call;
   S.p2Call = null;
+  markBefore();
   if (stage && (['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]))) {
     startLive(off, def, { userSide: 0, user2: 1, formation, defFormation: frontFor(def) });
     return;
@@ -471,6 +497,7 @@ export function playClockOut() {
   const g = S.game;
   if (!g || g.final || S.busy || L3.lp) return;
   if (g.phase === 'play' && g.poss === userSide()) {
+    markBefore();
     if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
     const e = delayOfGame(g) ?? g.log[g.log.length - 1];
     S.csTab = null;
@@ -492,22 +519,26 @@ function flashTimeout(g) {
   if (stage) L3.tickerUntil = performance.now() + 4000;
 }
 
+export const STREAM_NEXT_MS = 15000;
+
 // Auto mode: the AI calls downs until a decision is yours, and plays them out. In either mode
 // the other side's own kickoffs and tries are played out on the field the same way.
 export function autoAdvance() {
   clearTimeout(timers.auto);
   const g = S.game;
   const kicks = g && (g.phase === 'pat' || g.phase === 'kickoff');
-  if (!g || g.final || S.screen !== 'game' || twoPlayer() || !(S.coach || kicks) || needsUser(g) || L3.lp) return;
+  // Streamer mode (?watch in the address): a finished game rolls into the next one.
+  if (g?.final && S.streamer && S.gameMeta?.quick && S.screen === 'game') { timers.auto = setTimeout(() => quickGame({ spectate: true }), STREAM_NEXT_MS); return; }
+  if (!g || g.final || S.screen !== 'game' || twoPlayer() || !(aiCalls() || kicks) || needsUser(g) || L3.lp) return;
   timers.auto = setTimeout(() => {
     if (!S.game || S.game.final || S.screen !== 'game' || L3.lp) return;
     if (stage && (L3.flow !== 'PLAY_SELECTION' || fieldBusy())) { autoAdvance(); return; }
     aiTimeouts(g);
     const off = aiOffenseCall(g), def = aiDefenseCall(g);
     const ours = ['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]);
-    if (stage && ours && S.coach) S.coachDown = true;
+    if (stage && ours && aiCalls()) S.coachDown = true;
     else render();
-    playCall(off, def, null, { userSide: userSide(), watch: S.coach || !!S.watch, autoQB: true, autoSnap: 1.4, formation: aiFormation(off), defFormation: aiFront(def) });
+    playCall(off, def, null, { userSide: userSide(), watch: aiCalls() || !!S.watch, autoQB: true, autoSnap: 1.4, formation: aiFormation(off), defFormation: aiFront(def) });
   }, stage ? 700 : 650);
 }
 
@@ -520,7 +551,8 @@ export function startGame(game, meta) {
   game.manual = [us === 0, us === 1]; game.liveKicks = true; S.gameTab = 'log'; S.busy = false; S.subSel = null; S.p2Call = null;
   resetBetweenGames();
   // The first game shows the controls once, and so does the first two-player game.
-  if (!S.seenHelp || (meta.twoPlayer && !S.seen2p)) { S.helpOpen = true; if (meta.twoPlayer) S.seen2p = true; }
+  S.takeOver = false;
+  if (!spectating() && (!S.seenHelp || (meta.twoPlayer && !S.seen2p))) { S.helpOpen = true; if (meta.twoPlayer) S.seen2p = true; }
   setScreen('game');
   autoAdvance();
 }
