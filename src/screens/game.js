@@ -8,10 +8,11 @@ import { CAMERA_LIMITS, CAMERA_MODES, CAMERA_SHOTS } from '../camera3d.js';
 import * as LG from '../league.js';
 import { quickGame, render, setScreen } from '../app.js';
 import { S, reduceMotion, save, savePrefs, timers } from '../state.js';
-import { P, edgeRow, esc, ovr, sprite, teamBadge, typeChips } from '../ui.js';
+import { P, edgeRow, esc, ovr, powersRow, sprite, teamBadge, typeChips } from '../ui.js';
 import { adjustHtml, aiFormation, aiFront, callSheet, callSheetHtml, clockRow, formFor, frontFor } from './callsheet.js';
 import { DIFFICULTY, DIFFICULTY_LEVELS, applyDifficulty } from '../difficulty.js';
 import { tendencyLines, typeEdges } from '../scout.js';
+import { powerColor, powerLine } from '../powers.js';
 import { L3, afterLivePlay, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
 
 // ---------- game ----------
@@ -101,7 +102,7 @@ function playCards(g, { keys = false } = {}) {
   };
   const head = onOff ? `<div class="callhead"><h3>${downText(g)} at ${spotText(g)}</h3><span class="muted">Call your offense</span></div>`
     : `<div class="callhead"><h3>${downText(g)} at ${spotText(g)}</h3><span class="muted">${esc(g.teams[g.poss].abbr)} ball · call your defense</span></div>`;
-  return `${head}${clockRow(g, onOff)}<div class="playgroups">${groups.map(([fam, label, cs]) => `<div class="pgroup"><h4>${label}</h4>
+  return `${head}${clockRow(g, onOff)}${powersRow(g, userSide())}<div class="playgroups">${groups.map(([fam, label, cs]) => `<div class="pgroup"><h4>${label}</h4>
     <div class="plays">${cs.map((c) => card(c, fam)).join('')}</div></div>`).join('')}</div>`;
 }
 
@@ -360,7 +361,7 @@ function logHtml(g) {
     const t = g.teams[e.poss];
     const sit = e.down ? `${['', '1st', '2nd', '3rd', '4th'][e.down]} & ${e.spotBefore + e.toGo >= 100 ? 'Goal' : e.toGo}` : '';
     return `<li class="k-${e.kind} ${e.highlight ? `h-${e.highlight}` : ''}"><span class="when">${quarterText(e.q)} ${clockText(e.clock)}</span>
-      ${e.down ? `<span class="sit">${teamBadge(t)} ${sit}</span>` : ''}<span class="txt">${esc(e.text).replace('It&#39;s super effective!', '<mark>It&#39;s super effective!</mark>')}</span></li>`;
+      ${e.down ? `<span class="sit">${teamBadge(t)} ${sit}</span>` : ''}<span class="txt">${esc(e.text).replace('It&#39;s super effective!', '<mark>It&#39;s super effective!</mark>')}${(e.powers ?? []).map((c) => ` <span class="pw-log ${c.on ? 'on' : ''}" style="--pw:${powerColor(c.id)}">${esc(powerLine(c))}</span>`).join('')}</span></li>`;
   }).join('')}</ol>`;
 }
 

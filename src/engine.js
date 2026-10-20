@@ -2,6 +2,7 @@
 // Deterministic for a given seed. No DOM access.
 import { PLAYERS, OFF_SLOTS, DEF_SLOTS, unitRatings } from './ratings.js';
 import { TYPE_TRAITS, ABILITIES, WEATHER, bestMatchup, matchupModifier } from './types.js';
+import { initPowers, powerBonus, tickPowers } from './powers.js';
 import { PARITY, formFor } from './parity.js';
 import { diffOf, diffUser } from './difficulty.js';
 import { schemeBonus, schemeOf } from './coach.js';
@@ -165,6 +166,7 @@ export function createGame({ home, away, seed = Date.now(), playoff = false, wea
     timeouts: [3, 3], clockRunning: false, warned: {}, manual: [false, false],
   };
   if (!weather) g.weather = pickWeather(g);
+  initPowers(g);
   const receiver = chance(g, 0.5) ? 0 : 1;
   g.firstReceiver = receiver;
   addLog(g, { kind: 'info', text: `${WEATHER[g.weather].name} at kickoff. ${g.teams[receiver].name} will receive.` });
@@ -218,6 +220,8 @@ export function eff(g, ti, id, attr, ctx = {}) {
   if (attr === 'blk' && ctx.runBlock && p.types.includes('Ground')) v += TYPE_TRAITS.Ground.runBlock;
   if (attr === 'hnd' && ctx.contested && p.types.includes('Flying')) v += TYPE_TRAITS.Flying.contested;
   v += schemeBonus(g, ti, attr);
+  // A power the Pokémon has zoned into this game (see powers.js).
+  if (g.pw) v += powerBonus(g, ti, id, attr, ctx);
   let m = 1;
   const w = WEATHER[g.weather];
   if (g.weather === 'sand') { if (w.immune.some((t) => p.types.includes(t))) m *= 1 + PARITY.sandImmune; }
@@ -826,6 +830,12 @@ function finishPlay(g, r, base, offCall, defCall, playSecs) {
   ctx.stopped = r.oob ? oobStops(g) : !!r.clockStop;
   if (!r.noPlay && (play.kind === 'run' || play.kind === 'pass')) applyFatigue(g);
 
+  // Runs and passes count toward the players' powers (see afterPlay).
+  if (!r.noPlay && !r.special && (play?.kind === 'run' || play?.kind === 'pass') && g.phase === 'play') {
+    ctx.counts = { o, kind: r.kind === 'run' ? 'run' : 'pass', down: before.down,
+      first: (r.yards ?? 0) >= before.toGo || before.spot + (r.yards ?? 0) >= 100,
+      sack: r.kind === 'sack', int: r.turnover === 'int', comp: r.kind === 'pass' && r.qb != null && r.carrier !== r.qb && r.turnover !== 'int' };
+  }
   if (r.fouls?.length && !r.special) return flagged(g, r, before, ctx);
   const entry = resolve(g, r, before, offCall, defCall);
   if (entry && r.oob && !r.special) entry.oob = true;
@@ -837,6 +847,9 @@ function finishPlay(g, r, base, offCall, defCall, playSecs) {
 // warning when the play ran past 2:00, and the end of the quarter.
 function afterPlay(g, entry, ctx, untimed = false) {
   const { o, q, clockBefore } = ctx;
+  // Powers: the play's box score moves each carrier toward zoning in or losing it.
+  const pw = tickPowers(g, entry, entry && entry.kind !== 'penalty' ? ctx.counts : null);
+  if (entry && pw.length) entry.powers = pw;
   g.lastPlay = entry;
   g.call = null;
   g.clockRunning = !ctx.stopped && g.poss === o && g.phase === 'play' && g.quarter === q && !g.final;

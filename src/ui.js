@@ -3,6 +3,7 @@ import { PLAYERS } from './ratings.js';
 import { SPRITES } from './sprites.js';
 import { ABILITIES, TYPE_COLORS, effectLabel } from './types.js';
 import { S } from './state.js';
+import { POWER_OF, powerColor, powerText, sidePowers, worksAt } from './powers.js';
 
 // ---------- small view helpers ----------
 export const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -47,4 +48,34 @@ export function download(name, text, type) {
   a.href = url; a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ---------- powers ----------
+// A Pokémon's power on its scouting card: what it does, where it works, and how it is earned and lost.
+export function powerHtml(id) {
+  const w = powerText(id);
+  if (!w) return '<p class="small muted">No power.</p>';
+  return `<div class="pw-desc" style="--pw:${powerColor(id)}"><p class="small"><b>Power: ${esc(w.name)}</b>${w.signature ? ' <em class="pw-sig">Signature</em>' : ''} <span class="muted">(at ${esc(w.group)})</span></p>
+    <p class="small">${esc(w.text)}</p><p class="small muted">Zones in after ${esc(w.zone)}; lost on ${esc(w.lose)}.</p></div>`;
+}
+// A small tag for a lineup spot: the power's name, dimmed where it does not work.
+export function powerTag(id, slot) {
+  const w = POWER_OF[id];
+  if (!w) return '';
+  const on = worksAt(id, slot);
+  return `<span class="pw-tag ${on ? '' : 'dormant'}" style="--pw:${powerColor(id)}" title="${esc(on ? `${w.name}: ${w.text}` : `${w.name} only works at ${powerText(id).group}`)}">${esc(w.name)}</span>`;
+}
+// The powers between plays: your carriers with their meters, and the other side's that are active.
+export function powersRow(g, us) {
+  if (!g.pw) return '';
+  const chip = (ti, r) => {
+    const m = r.meter;
+    const pips = m.need <= 8 ? Array.from({ length: m.need }, (_, i) => `<i class="${i < m.have ? 'on' : ''}"></i>`).join('') : `<i class="num">${m.have}/${m.need}</i>`;
+    return `<span class="pw-chip ${r.active ? 'on' : ''} ${ti === us ? 'mine' : 'theirs'}" style="--pw:${powerColor(r.id)}" title="${esc(`${PLAYERS[r.id].name}, ${r.power.name}: ${r.power.text} ${m.label}.`)}">
+      <b>${esc(PLAYERS[r.id].name)}</b> ${esc(r.power.name)}${r.active ? '' : `<span class="pw-pips" aria-label="${esc(m.label)}">${pips}</span>`}</span>`;
+  };
+  const mine = sidePowers(g, us).filter((r) => !r.dormant).slice(0, 5).map((r) => chip(us, r));
+  const theirs = sidePowers(g, 1 - us).filter((r) => r.active).slice(0, 3).map((r) => chip(1 - us, r));
+  if (!mine.length && !theirs.length) return '';
+  return `<div class="cs-powers"><span class="pw-label">Powers</span>${mine.join('')}${theirs.length ? `<span class="pw-vs">${esc(g.teams[1 - us].abbr)}</span>${theirs.join('')}` : ''}</div>`;
 }

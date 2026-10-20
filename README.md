@@ -97,7 +97,9 @@ The simulation (`src/live.js`) owns everything that is drawn. It steps at a fixe
 - **Pursuit.** The man with outside leverage keeps it, the rest come inside-out, and deep help stays over the top.
 - **Movement.** A body has a speed and a heading, not a velocity it can set at will. Acceleration falls off near top speed; a turn costs speed in proportion to how sharp it is (a hard plant brakes almost to a stop before the new direction, a gentle bend keeps most of it), and the heading can swing only as fast as the player's grip allows at his speed, so a fast player rounds his turns and a quick one cuts sharper. Agility and weight set the grip, the weather lowers it, and ball carriers and pass rushers bend a little harder. When two bodies meet, the one sliding along the other loses speed rather than being pushed sideways, so nobody skates around a pile.
 - **Reaction time.** Defenders play what they saw a moment ago, not where a player is this instant (`perceive` in `src/live.js` keeps a short history of every body). A cover man answers a receiver's cut about a third of a second late, a great one sooner; pursuers read a juke the same way, and the difficulty level scales the delay against you. A zone defender reads the quarterback and drives on the throw as the arm starts forward; a pass rusher has his eyes on the passer the whole way.
-- **Receivers after the route.** A receiver whose route has ended works to open grass away from the nearest defenders instead of standing still, and a deep route keeps running. When the quarterback leaves the pocket, receivers break off into the scramble drill: deep men go long on his side, short men come back toward him along the line of sight.
+- **Running the route.** A receiver runs each leg of his route along the line the play art draws: a step off it (a release around a press corner, a defender in his path) is worked back onto the line, he sinks his hips into a break so he cuts at the spot shown rather than rounding it off, and a back who checks the blitz first runs the same shape from wherever the block left him.
+- **Receivers after the route.** A receiver whose route has ended works to open grass away from the nearest defenders instead of standing still, and a deep route keeps running. When the quarterback leaves the pocket, receivers break off into the scramble drill: deep men go long on his side, short men come back toward him along the line of sight. A quarterback sliding a few yards in the pocket doesn't trigger it: the routes run as called until he has been outside for a beat.
+- **Leading the receiver.** The passer leads a man to where he will really be (sitting down at the end of a curl, pulling up after an out at the sideline), never past the sideline or the end line, and keeps a miss near the boundary on the field side of his man, so the ball rarely sails out where the receiver would be if the field kept going.
 - **Hand fighting.** An engaged rusher works one side of his blocker and switches, and the blocker mirrors him, so a pass block is always moving; run blocks drive.
 - **Hits.** Whether a tackle sticks depends on the tackler's angle, closing speed, strength and weight against the carrier's; arriving from behind is weaker, and a tackler with far more momentum than the carrier lands a big hit that drives him back and shakes the camera. A tackled carrier goes down within about a yard of the hit.
 - **Ball state.** Every play tracks who has the ball as a state machine (`POSSESSION_FLOW` and `possessionOf` in `src/live.js`): `PRE_SNAP`, `SNAP`, `LIVE_PLAY`, `PASS_IN_AIR`, `KICK_IN_AIR`, `BALL_CARRIED`, `LOOSE` and `PLAY_DEAD`. A transition the flow does not allow is recorded and fails the tests, and nothing changes after the whistle. A throw that comes down out of bounds is its own result ("sails out of bounds").
@@ -133,6 +135,14 @@ What a Pokémon's ability or type does during a snap lives in one table, `src/tr
 **Type theater.** On the field, a tackle shows the tackler's typing when it is super effective (a burst in the type's color, a shake and "SUPER EFFECTIVE!" over the pair), and a broken tackle shows why: "not very effective..." or "NO EFFECT" when the tackler's typing barely touched the carrier, or the carrier's own super-effective hit. Each pair shows it once a play.
 
 **Weather as physics.** On top of the rating swings in `src/parity.js`, the weather changes how bodies move on the live field (`src/weather.js`), sparing the types it favors and anything with Overcoat, Air Lock or Immunity. Rain makes the turf slick: wider cuts, and a juke or spin can slip out from under the carrier. Harsh sun's glare costs receivers and defenders a little catch reach. Hail makes legs heavy late in a play and the sprint burst run out sooner. A sandstorm slows reads and every block or tackle attempt wears the players in it down.
+
+### Powers
+
+On top of abilities, about 160 Pokémon carry a power, like an X-Factor in Madden (`src/powers.js`): every Pokémon rated 88 or better at its natural position, plus 60 fan favorites with a signature move (Charizard's Blast Burn, Gengar's Phantom Force, Mewtwo's Psystrike, Snorlax's Body Slam and so on). A power belongs to a position group (quarterback; back, receiver or tight end; offensive line; pass rush; linebackers and the secondary) and is picked from the Pokémon's typing, so a Ghost receiver gets Shadow Sneak and a Steel lineman Protect. Lined up outside its group, the power is dormant.
+
+Every power starts the game dormant. The Pokémon zones in by doing its job (Future Sight: three straight completions; Outrage: two sacks; Aerial Ace: two catches of 12+ yards; Protect: eight straight dropbacks without a sack), plays boosted while it is active, and loses it to a specific setback (an interception, a sack allowed, a 20-yard play given up). The meters run off the box score after every play, so the fast simulator and the live field earn and lose powers the same way, and a play wiped by a penalty moves nothing. While active, a power adds rating points through `eff()` and, on the live field, edges read by the trait table in `src/traits.js` (pressure barely touches the passer, tacklers slide off, a far longer catch reach, blocks shed faster, a nose for the interception).
+
+The game shows it: the call sheet lists your carriers with their meters and the other side's active powers, a power switching on is called out over the field and on the result card ("Gengar is in the zone: Phantom Force!"), an active player has a spinning ring in his type's colour and a bolt over his head, and when a power decides part of a play its name bursts over him and the result card tags it Power. The draft card shows each Pokémon's power and how it is earned and lost, and the depth chart tags it on each spot (struck through where it would be dormant).
 
 ### The 3D field
 
@@ -240,6 +250,7 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `src/records.js` | Career stats, the Hall of Fame, franchise record books and the all-time head-to-head behind rivalries |
 | `src/ratings.js` | Base stats to football attributes, the 22 slots plus K and P, position overalls, auto depth chart |
 | `src/types.js` | Type chart, type traits, weather and every ability's football effect |
+| `src/powers.js` | Powers: who carries one, what earns and costs it, what it does while active, and the per-play meters |
 | `src/weather.js` | What each weather does to bodies on the live field |
 | `src/parity.js` | How far form, home field, types and weather can swing a game |
 | `src/difficulty.js` | Rookie, Pro and Legend: AI read speed, the user's catch radius and the luck |
@@ -274,8 +285,10 @@ Ratings decide most games, not all of them. Each team rolls a form for the day (
 | `test/controls.mjs` | Two players in one live play: each starts on their own side, both steer at once, throws and handoffs hand over the receiver or carrier, punts give the returner and a cover man, and recorded inputs replay the play exactly (exits 1 on failure) |
 | `test/twoplayer.mjs` | In Chromium: shares a league and loads it in a second browser, plays two downs of the two-player game from the keyboard, drives a quick game with a fake gamepad, takes on a challenge code in a second browser through to its verdict, and watches a `?watch` game with a takeover call |
 | `test/presnap.mjs` | Audibles, hot routes, motion (and the man defender following), shading, show blitz and back out on live plays; Pro matching the game without a difficulty and the win rate falling from Rookie to Legend; the "Fits" hint following tendencies (exits 1 on failure) |
+| `test/routes.mjs` | How far receivers stray from the route drawn on the play art (also while the quarterback slides in the pocket), and how many throws come down out of bounds or past the end line (exits 1 on failure) |
 | `test/clock.mjs` | Checks the clock rules (runoff by tempo, what stops the clock, the two-minute warning, timeouts, spike and kneel, the try and onside kicks) in set situations, then plays seeded games with the rules checked after every snap (exits 1 on failure) |
 | `test/tiers.mjs` | Plays teams from different tiers of the pool against each other to show how much ratings matter |
+| `test/powers.mjs` | Checks the power table and who carries one, zoning in and losing a power from the box score, that it boosts ratings only while active and in position, that the live field reads it and still copies for replays, and whole fast and live games earning and losing powers |
 | `test/abilities.mjs` | Checks every ability has an effect the game knows, the absorbing abilities, Wonder Guard, Scrappy and Mold Breaker matchups, the situational conditions, type theater on the live field and the weather's hold on each type |
 
 ## Build
@@ -291,10 +304,12 @@ node test/scenarios.mjs             # the fifteen fixed-seed scenarios plus a st
 node test/formations.mjs            # 600 formation and front pairings through the formation check
 node test/league.mjs                # two seasons of league mode, draft to rookie draft (exits 1 on failure)
 node test/presnap.mjs               # pre-snap adjustments, difficulty and the Fits hint (exits 1 on failure)
+node test/powers.mjs                # powers: carriers, meters, effects, whole games (exits 1 on failure)
 node test/browser.mjs out 3         # three snaps in a real browser: video, screenshots, results.json
 node test/touch.mjs out             # the touch pad on a phone-sized touch screen
 node test/tiers.mjs 300             # how much ratings matter (add `live` for live plays)
 node test/calls.mjs 1500            # fast-sim yards by call and defense
+node test/routes.mjs 400 --strict   # receivers on the drawn route, throws landing in bounds
 node test/feel.mjs 300 --strict     # how the football moves: sliding, turn rates, piles, idle blocks, coverage reaction time, tackle slide, ball state
 ```
 
@@ -307,7 +322,7 @@ python3 build/build_sprites3d.py <gif_cache_dir> src dist   # downloads the GIFs
 
 Gen 1–5 use the animated Black/White GIFs; later Pokémon use the static pixel PNGs.
 
-CI (`.github/workflows/test.yml`) runs the plays, scenarios, formations, league, clock, penalties, kicks, abilities, controls, pre-snap, football IQ and feel checks on every pull request and on pushes to `main`.
+CI (`.github/workflows/test.yml`) runs the plays, scenarios, formations, league, clock, penalties, kicks, abilities, powers, controls, pre-snap, football IQ and feel checks on every pull request and on pushes to `main`.
 
 ## Balance
 
