@@ -3,6 +3,7 @@
 // L.weekly so the movement from one week to the next can be shown).
 import { PLAYERS, unitRatings } from './ratings.js';
 import { impact } from './league.js';
+import { isFinalRound, roundLabel } from './geometry.js';
 
 const n = (v) => v ?? 0;
 const nm = (id) => PLAYERS[id].name;
@@ -62,8 +63,8 @@ export function gameHeadline(L, r) {
   const ot = (r.quarters?.[0]?.length ?? 4) > 4;
   const prev = latestPower(L);
   const rank = (id) => (prev ? prev.indexOf(id) + 1 : 0);
-  const stage = r.playoff ? (r.round === 0 ? ' in the semifinal' : ' for the championship') : '';
-  if (r.playoff && r.round === 1) return `${by}${T(W)} win the championship, ${sc} over ${T(Lo)}${ot ? ' in overtime' : ''}.`;
+  const stage = r.playoff ? (isFinalRound(L, r.round) ? ' for the championship' : ` in the ${roundLabel(L, r.round).toLowerCase()}`) : '';
+  if (r.playoff && isFinalRound(L, r.round)) return `${by}${T(W)} win the championship, ${sc} over ${T(Lo)}${ot ? ' in overtime' : ''}.`;
   if (ot) return `${by}${T(W)} outlast ${T(Lo)} in overtime${stage}, ${sc}.`;
   if (ls === 0) return `${by}${T(W)} shut out ${T(Lo)}${stage}, ${sc}.`;
   const back = biggestComeback(r, wi);
@@ -134,7 +135,7 @@ export function weekInReview(L, { week = null, playoff = false, round = null }) 
     if (t && (!potw || t.score > potw.score)) potw = t;
   }
   const entry = {
-    label: playoff ? (round === 0 ? 'Semifinals' : 'Championship') : `Week ${week + 1}`,
+    label: playoff ? roundLabel(L, round, true) : `Week ${week + 1}`,
     playoff, week, round, games: games.map((x) => x.i),
     potw: potw ? { id: potw.id, team: potw.team, line: gamePhrase(potw.s) } : null,
   };

@@ -91,6 +91,7 @@ export function enforce(before, f) {
     moved = -Math.min(P.yards, Math.floor(spot / 2));
     spot += moved; toGo -= moved;
   } else {
+    // From the 1 there is nowhere left to go: interference there is a first down at the 1.
     moved = P.spot ? Math.min(Math.max(1, f.x), 99 - spot) : Math.min(P.yards, Math.floor((100 - spot) / 2));
     spot += moved;
     if (P.auto || moved >= toGo) { first = true; down = 1; toGo = Math.min(10, 100 - spot); } else toGo -= moved;
@@ -120,7 +121,7 @@ export function announce(g, f, acc, before, accepted = true) {
   const yd = Math.abs(acc.moved);
   const ord = ['', '1st', '2nd', '3rd', '4th'];
   const what = !accepted ? 'The penalty is declined.' : P.side === 'off' ? `${yd}-yard penalty, repeat ${ord[before.down]} down.`
-    : `${P.spot ? `Spot foul, ${yd} yard${yd === 1 ? '' : 's'}` : `${yd}-yard penalty`}${acc.first ? ', automatic first down' : `, repeat ${ord[before.down]} down`}.`;
+    : `${P.spot ? (yd ? `Spot foul, ${yd} yard${yd === 1 ? '' : 's'}` : 'Spot foul, the ball stays at the 1') : `${yd}-yard penalty`}${acc.first ? ', automatic first down' : `, repeat ${ord[before.down]} down`}.`;
   return `Flag: ${P.name}, ${side}, ${who}. ${what}`;
 }
 

@@ -39,6 +39,8 @@ jobs:
         run: node test/abilities.mjs
       - name: Franchise kits and the broadcast package
         run: node test/broadcast.mjs
+      - name: Powers
+        run: node test/powers.mjs
       - name: Two players in one play
         run: node test/controls.mjs
       - name: Pre-snap adjustments and difficulty

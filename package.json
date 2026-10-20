@@ -8,13 +8,14 @@
     "balance": "node test/balance.mjs",
     "live": "node test/live.mjs",
     "iq": "node test/iq.mjs",
-    "test": "node test/plays.mjs && node test/scenarios.mjs && node test/formations.mjs && node test/league.mjs && node test/kicks.mjs && node test/clock.mjs && node test/penalties.mjs && node test/presnap.mjs && node test/controls.mjs && node test/abilities.mjs && node test/broadcast.mjs && node test/iq.mjs 300 --strict && node test/feel.mjs 300 --strict",
+    "test": "node test/plays.mjs && node test/scenarios.mjs && node test/formations.mjs && node test/league.mjs && node test/kicks.mjs && node test/clock.mjs && node test/penalties.mjs && node test/presnap.mjs && node test/controls.mjs && node test/abilities.mjs && node test/broadcast.mjs && node test/powers.mjs && node test/iq.mjs 300 --strict && node test/feel.mjs 300 --strict && node test/routes.mjs 400 --strict",
     "league": "node test/league.mjs",
     "clock": "node test/clock.mjs",
     "penalties": "node test/penalties.mjs",
     "kicks": "node test/kicks.mjs",
     "presnap": "node test/presnap.mjs",
-    "broadcast": "node test/broadcast.mjs"
+    "broadcast": "node test/broadcast.mjs",
+    "powers": "node test/powers.mjs"
   },
   "dependencies": {
     "three": "0.160.0"

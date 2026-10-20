@@ -1,0 +1,173 @@
+// Trade desk: the AI's offer on the table, a deal builder for any team (up to three Pokémon
+// each way and next season's first- and second-round picks) with the other side's answer as
+// the deal takes shape, the picks you hold, where each team stands, and the season's trades.
+import * as LG from '../league.js';
+import * as TR from '../trades.js';
+import { SLOT_KEYS } from '../ratings.js';
+import { render } from '../app.js';
+import { S, save } from '../state.js';
+import { P, esc, ovr, sprite, teamBadge, user } from '../ui.js';
+import { dealSideHtml, tradeCardHtml, tradeKickingHtml, tradeMovesHtml } from './draft.js';
+import { latestPower } from '../weekly.js';
+
+const STANCE = { contend: 'Contending', middle: 'In the middle', rebuild: 'Rebuilding' };
+
+function desk() {
+  const L = S.league;
+  const ai = L.teams.filter((t) => !t.user);
+  if (!S.desk || !L.teams[S.desk.team] || L.teams[S.desk.team].user) S.desk = { team: ai[0].id, send: [], get: [], sendPicks: [], getPicks: [], msg: '', ok: false, counter: null };
+  return S.desk;
+}
+
+export function renderTrades() {
+  const L = S.league, me = user(), D = desk();
+  const open = TR.tradeWindow(L);
+  const deadline = TR.tradeDeadline(L);
+  const when = L.phase === 'grades' ? `Open until the deadline, before week ${deadline + 1}`
+    : open ? `Week ${L.week + 1} · Deadline before week ${deadline + 1}` : 'The deadline has passed';
+  const st = LG.standings(L);
+  const order = latestPower(L) ?? st.map((r) => r.id);
+  return `<section class="trades">
+    <p class="eyebrow">Season ${L.season ?? 1} · ${when}</p>
+    <h1>Trade desk</h1>
+    <p class="lede">Trade up to ${TR.MAX_PLAYERS} Pokémon each way, plus next season's first- and second-round picks. Rosters stay at ${L.settings.rounds}: take in more than you send and your lowest keep-value goes; send more and you sign the best Pokémon nobody has. A pick moves its slot in the rookie draft, so a first-rounder from a bad team is worth the most.</p>
+    <div class="season-grid">
+      <div class="col">
+        ${D.msg ? `<div class="card verdict ${D.ok ? 'yes' : 'no'}" role="status"><p>${esc(D.msg)}</p>${D.ok && D.entry ? tradeMovesHtml(L, D.entry) : ''}</div>` : ''}
+        ${tradeCardHtml(L)}
+        ${open ? builderHtml(L, me, D) : '<div class="card"><h3>Trades are closed</h3><p class="muted">The trade deadline has passed. The desk opens again after next season\'s draft.</p></div>'}
+      </div>
+      <div class="col">
+        ${picksHtml(L, me)}
+        <div class="card"><h3>Around the league</h3><ul class="tradelog">${order.filter((id) => !L.teams[id].user).map((id) => {
+          const t = L.teams[id], s = TR.teamStance(L, id, order), rec = st.find((r) => r.id === id);
+          return `<li>${teamBadge(t)} ${esc(t.name)} <span class="small muted">${rec.w}-${rec.l}${rec.t ? `-${rec.t}` : ''} · ${STANCE[s]}</span>${open ? ` <button class="btn tiny" data-act="deskteam" data-team="${id}">Talk</button>` : ''}</li>`;
+        }).join('')}</ul>
+          <p class="small muted">Contenders want help now and value picks less; rebuilders take picks over Pokémon.</p></div>
+        ${logHtml(L)}
+      </div>
+    </div>
+  </section>`;
+}
+
+function builderHtml(L, me, D) {
+  const ai = L.teams[D.team];
+  const deal = { team: D.team, send: D.send, get: D.get, sendPicks: D.sendPicks, getPicks: D.getPicks };
+  const empty = !D.send.length && !D.get.length && !D.sendPicks.length && !D.getPicks.length;
+  const ev = empty ? null : TR.evaluateTrade(L, deal);
+  return `<div class="card"><h3>Build a deal</h3>
+    <label>Trade with <select id="desk-team">${L.teams.filter((t) => !t.user).map((t) => `<option value="${t.id}" ${t.id === D.team ? 'selected' : ''}>${esc(t.name)} (${esc(t.coachName)})</option>`).join('')}</select></label>
+    <div class="desk-cols">
+      <div><h4>You send</h4>${rosterList(L, me, 'send', D.send)}${pickChips(L, TR.picksOwned(L, me.id), 'send', D.sendPicks)}</div>
+      <div><h4>${esc(ai.abbr)} send</h4>${rosterList(L, ai, 'get', D.get)}${pickChips(L, TR.picksOwned(L, ai.id), 'get', D.getPicks)}</div>
+    </div>
+    ${ev ? verdictHtml(L, ev, D) : '<p class="small muted">Tick Pokémon or picks on either side to see what they think.</p>'}
+  </div>`;
+}
+
+// A roster with a tick box per Pokémon: starters by slot first, then the bench.
+function rosterList(L, team, side, chosen) {
+  const slotOf = (id) => SLOT_KEYS.find((k) => team.lineup[k] === id);
+  const ids = [...SLOT_KEYS.map((k) => team.lineup[k]).filter((id) => id != null), ...team.bench];
+  const full = chosen.length >= TR.MAX_PLAYERS;
+  return `<ul class="desk-list">${[...new Set(ids)].map((id) => {
+    const on = chosen.includes(id), k = slotOf(id) ?? P(id).best[0];
+    const hurt = L.injuries?.[id];
+    const dis = !on && full;
+    return `<li><label class="${on ? 'on' : ''} ${dis ? 'dis' : ''}"><input type="checkbox" data-desk="${side}" value="${id}" ${on ? 'checked' : ''} ${dis ? 'disabled' : ''}>
+      ${sprite(id, 'xs')}<span class="pn">${esc(P(id).name)}</span><span class="tag">${slotOf(id) ?? 'BN'}</span>${ovr(P(id).ovr[k])}${hurt ? ' <span class="cond hurt">Hurt</span>' : ''}</label></li>`;
+  }).join('')}</ul>`;
+}
+
+function pickChips(L, keys, side, chosen) {
+  if (!keys.length) return '<p class="small muted">No picks to trade.</p>';
+  return `<div class="desk-picks">${keys.map((k) => `<button class="pickchip ${chosen.includes(k) ? 'on' : ''}" data-act="deskpick" data-side="${side}" data-key="${k}" aria-pressed="${chosen.includes(k)}">${esc(TR.pickLabel(L, k))}</button>`).join('')}</div>`;
+}
+
+function verdictHtml(L, ev, D) {
+  if (!ev.you) return `<div class="verdict no"><p>${esc(TR.verdictText(L, ev))}</p></div>`;
+  const moves = tradeMovesHtml(L, { team: ev.deal.team, released: { you: ev.you.released, them: ev.them.released }, signed: { you: ev.you.signed, them: ev.them.signed } });
+  const g = ev.you.gain;
+  const C = D.counter;
+  return `<div class="trade"><div class="tswap">${dealSideHtml(L, ev.deal.get, ev.deal.getPicks, 'You get')}<span class="at">for</span>${dealSideHtml(L, ev.deal.send, ev.deal.sendPicks, 'You send')}</div></div>
+    <div class="verdict ${ev.verdict}"><p><b>${esc(TR.verdictText(L, ev))}</b></p>
+      <p class="small">Your best lineup ${g > 0 ? `improves by ${g}` : g < 0 ? `drops by ${-g}` : 'stays the same'} points${ev.deal.getPicks.length || ev.deal.sendPicks.length ? ', before the picks' : ''}.</p>
+      ${moves}${tradeKickingHtml(L, ev.deal)}</div>
+    ${C ? `<div class="verdict yes"><p class="small">${esc(L.teams[C.deal.team].name)} would take it like this:</p>
+      <div class="trade"><div class="tswap">${dealSideHtml(L, C.deal.get, C.deal.getPicks, 'You get')}<span class="at">for</span>${dealSideHtml(L, C.deal.send, C.deal.sendPicks, 'You send')}</div></div>
+      <div class="actions"><button class="btn" data-act="deskusecounter">Use this deal</button></div></div>` : ''}
+    <div class="actions">
+      <button class="btn primary" data-act="deskpropose" ${ev.problems.length ? 'disabled' : ''}>Propose the trade</button>
+      ${ev.verdict !== 'yes' && !ev.problems.length && !C ? '<button class="btn" data-act="deskcounter">What would it take?</button>' : ''}
+      <button class="btn ghost" data-act="deskclear">Clear</button>
+    </div>`;
+}
+
+function picksHtml(L, me) {
+  const mine = TR.picksOwned(L, me.id);
+  const gone = Array.from({ length: TR.PICK_ROUNDS }, (_, i) => TR.pickKey((L.season ?? 1) + 1, i + 1, me.id)).filter((k) => !mine.includes(k));
+  return `<div class="card"><h3>Your picks <span class="muted small">Season ${(L.season ?? 1) + 1} rookie draft</span></h3>
+    ${mine.length ? `<div class="desk-picks">${mine.map((k) => `<span class="pickchip">${esc(TR.pickLabel(L, k))}</span>`).join('')}</div>` : '<p class="muted small">You have traded all your picks.</p>'}
+    ${gone.length ? `<p class="small muted">Traded away: ${gone.map((k) => `${esc(TR.pickLabel(L, k))} to ${esc(L.teams[L.pickOwners[k]].abbr)}`).join(', ')}. You still fill your roster in the rookie draft, at the end of it.</p>` : ''}</div>`;
+}
+
+function logHtml(L) {
+  const log = (L.tradeLog ?? []).slice().reverse();
+  if (!log.length) return '<div class="card"><h3>Trades</h3><p class="muted small">No trades yet.</p></div>';
+  const part = (ids, picks) => [...ids.map((id) => esc(P(id).name)), ...picks.map((k) => esc(TR.pickLabel(L, k)))].join(', ') || 'nothing';
+  return `<div class="card"><h3>Trades</h3><ul class="tradelog">${log.map((e) => `<li><span class="small muted">Season ${e.season}${e.week != null ? `, week ${e.week + 1}` : ', after the draft'}</span><br>
+    You sent ${part(e.send, e.sendPicks)} to ${teamBadge(L.teams[e.team])} for ${part(e.get, e.getPicks)}.</li>`).join('')}</ul></div>`;
+}
+
+// ---------- events ----------
+
+export function deskToggle(side, id, on) {
+  const D = desk();
+  const list = side === 'send' ? D.send : D.get;
+  const i = list.indexOf(id);
+  if (on && i < 0 && list.length < TR.MAX_PLAYERS) list.push(id);
+  if (!on && i >= 0) list.splice(i, 1);
+  D.counter = null; D.msg = '';
+  render();
+}
+export function deskPick(side, key) {
+  const D = desk();
+  const list = side === 'send' ? D.sendPicks : D.getPicks;
+  const i = list.indexOf(key);
+  if (i < 0) list.push(key); else list.splice(i, 1);
+  D.counter = null; D.msg = '';
+  render();
+}
+export function deskTeam(id) {
+  const D = desk();
+  S.desk = { ...D, team: id, get: [], getPicks: [], counter: null, msg: '' };
+  render();
+}
+export function deskClear() {
+  const D = desk();
+  S.desk = { ...D, send: [], get: [], sendPicks: [], getPicks: [], counter: null, msg: '' };
+  render();
+}
+export function deskCounter() {
+  const D = desk();
+  const c = TR.counterOffer(S.league, D);
+  D.counter = c;
+  D.msg = c ? '' : `${S.league.teams[D.team].name} don't see a simple way to make that work.`;
+  D.ok = false;
+  render();
+}
+export function deskUseCounter() {
+  const D = desk();
+  if (!D.counter) return;
+  const d = D.counter.deal;
+  S.desk = { ...D, send: d.send, get: d.get, sendPicks: d.sendPicks, getPicks: d.getPicks, counter: null, msg: '' };
+  render();
+}
+export function deskPropose() {
+  const D = desk();
+  const res = TR.proposeTrade(S.league, D);
+  S.desk = res.ok ? { team: D.team, send: [], get: [], sendPicks: [], getPicks: [], msg: res.text, ok: true, entry: res.entry, counter: null }
+    : { ...D, msg: res.text, ok: false };
+  if (res.ok) save();
+  render();
+}

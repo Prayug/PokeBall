@@ -14,7 +14,9 @@ import { powerRanking } from '../weekly.js';
 import { rivalryCardHtml } from './records.js';
 import { signingsHtml } from './freeagency.js';
 import { boxHtml } from './game.js';
-import { shareCardHtml } from './share.js';
+import { challengeCardHtml, shareCardHtml } from './share.js';
+import { isFinalRound, playoffField, playoffSeeds, roundLabel } from '../geometry.js';
+import { tradeDeadline, tradeWindow } from '../trades.js';
 
 // ---------- season ----------
 export function renderSeason() {
@@ -31,15 +33,15 @@ export function renderSeason() {
       <div class="vs">${teamBlock(L.teams[gm.away])}<span class="at">at</span>${teamBlock(L.teams[gm.home])}</div>
       <p class="muted">${esc(opp.name)} coach: ${esc(opp.coachName)}${SCHEMES[me.coach] && me.coach !== 'balanced' ? ` · You: ${esc(SCHEMES[me.coach].name)}` : ''}</p>
       <div class="actions"><button class="btn primary" data-act="playweek">Play the game</button><button class="btn" data-act="simweek">Simulate it</button></div>
-    </div>${reviewHtml(L)}${scoutHtml(L, me.id, opp.id)}${tradeCardHtml(L)}`;
+    </div>${reviewHtml(L)}${tradeCardHtml(L)}${deskLinkHtml(L)}${scoutHtml(L, me.id, opp.id)}`;
   } else if (L.phase === 'playoffs') {
     const P_ = L.playoffs;
     const mine = P_.games.find((g) => g.home === me.id || g.away === me.id);
-    main = `<div class="card matchup"><p class="eyebrow">${P_.round === 0 ? 'Semifinals' : 'Championship'}</p>
+    main = `<div class="card matchup"><p class="eyebrow">${roundLabel(L, P_.round, true)}</p>
       ${bracketHtml(L)}
       <div class="actions">${mine ? '<button class="btn primary" data-act="playweek">Play your playoff game</button><button class="btn" data-act="simweek">Simulate it</button>'
-        : '<p class="muted">You missed this round. Watch it play out.</p><button class="btn primary" data-act="simweek">Simulate the round</button>'}</div></div>
-      ${P_.games.map((g) => (g === mine || (!mine && P_.round === 1) ? rivalryCardHtml(L, g.home, g.away, P_.round) : '')).join('')}
+        : `<p class="muted">${P_.round === 0 && P_.byes?.includes(me.id) ? 'You have a bye this round: rest up and watch who you get.' : 'You missed this round. Watch it play out.'}</p><button class="btn primary" data-act="simweek">Simulate the round</button>`}</div></div>
+      ${P_.games.map((g) => (g === mine || (!mine && isFinalRound(L, P_.round)) ? rivalryCardHtml(L, g.home, g.away, P_.round) : '')).join('')}
       ${mine ? scoutHtml(L, me.id, mine.home === me.id ? mine.away : mine.home) : ''}`;
   } else if (L.phase === 'done') {
     main = championHtml(L, st);
@@ -52,15 +54,14 @@ export function renderSeason() {
     <h1>${esc(me.name)} · ${record(st.find((r) => r.id === me.id))}</h1>
     <div class="season-grid">
       <div class="col">${main}
+        ${challengeCardHtml(L)}
         ${L.phase === 'season' ? '' : reviewHtml(L)}
         <div class="card"><h3>Results ${results.length ? '<span class="muted small">Open a game for its box score</span>' : ''}</h3>${results.length ? `<ul class="results scroll">${results.map(({ r, i }) => resultLine(r, i)).join('')}</ul>` : '<p class="muted">No games played yet.</p>'}</div>
         ${historyHtml(L)}
         ${L.fa?.log?.length && L.phase !== 'offseason' ? signingsHtml(L, `Season ${L.season} free agency`) : ''}
       </div>
       <div class="col">
-        <div class="card"><h3>Standings</h3><div class="tablewrap"><table class="stand"><thead><tr><th>Team</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">PF</th><th class="num">PA</th><th class="num">Diff</th></tr></thead>
-          <tbody>${st.map((r, i) => { const t = L.teams[r.id]; return `<tr class="${t.user ? 'me' : ''} ${i === 3 ? 'cut' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="num">${r.w}</td><td class="num">${r.l}</td><td class="num">${r.t}</td><td class="num">${r.pf}</td><td class="num">${r.pa}</td><td class="num">${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`; }).join('')}</tbody></table></div>
-          <p class="small muted">Top 4 make the playoffs.</p></div>
+        ${standingsHtml(L, st)}
         ${powerHtml(L)}
         ${injuryHtml(L)}
         <div class="card"><h3>League leaders</h3><div class="leaders">${Object.entries(lead).map(([k, rows]) => `<div><h4>${k}</h4><ol>${rows.slice(0, 3).map((r) => `<li>${sprite(r.id, 'xs')}<span>${esc(P(r.id).name)}</span><em>${L.teams[r.team].abbr}</em><b>${statFor(k, r)}</b></li>`).join('') || '<li class="muted">None yet</li>'}</ol></div>`).join('')}</div></div>
@@ -116,18 +117,45 @@ function bracketHtml(L) {
   const side = (id, seed, score, winner) => id == null ? '<div class="bteam tbd">To be decided</div>'
     : `<div class="bteam ${winner === id ? 'won' : winner != null ? 'lost' : ''} ${L.teams[id].user ? 'me' : ''}"><em>${seed}</em>${teamBadge(L.teams[id])}<span>${esc(L.teams[id].name)}</span><b>${score ?? ''}</b></div>`;
   const game = (g) => `<div class="bgame">${side(g.home, g.seeds[0], g.homeScore, g.winner)}${side(g.away, g.seeds[1], g.awayScore, g.winner)}</div>`;
-  return `<div class="bracket"><div class="bround"><h4>Semifinals</h4>${B.semis.map(game).join('')}</div>
-    <div class="bround"><h4>Championship</h4>${game(B.final)}</div>
+  const bye = (id) => `<div class="bgame bye">${side(id, L.playoffs.seeds.indexOf(id) + 1, null, null)}<div class="bteam tbd">Bye</div></div>`;
+  return `<div class="bracket">${B.rounds.map((r) => `<div class="bround"><h4>${r.name}</h4>${r.byes.map(bye).join('')}${r.games.map(game).join('')}</div>`).join('')}
     <div class="bround champcol"><h4>Champion</h4>${B.champion != null ? `<div class="bteam won">${teamBadge(L.teams[B.champion])}<span>${esc(L.teams[B.champion].name)}</span></div>` : '<div class="bteam tbd">To be decided</div>'}</div></div>`;
 }
 
 function seasonFinish(L, id) {
-  if (L.champion === id) return 'Won the championship';
-  const B = LG.bracket(L);
-  if (!B) return 'Missed the playoffs';
-  if (B.final.home === id || B.final.away === id) return 'Lost in the championship';
-  if (B.semis.some((g) => g.home === id || g.away === id)) return 'Lost in the semifinals';
-  return 'Missed the playoffs';
+  const x = LG.playoffExit(L, id);
+  if (x === 'champion') return 'Won the championship';
+  if (x == null) return 'Missed the playoffs';
+  if (typeof x === 'number') return `Lost in the ${roundLabel(L, x, true).toLowerCase()}`;
+  return 'Still alive in the playoffs';
+}
+
+// Standings: one table, or one per division with the leader marked. The seed column shows
+// where each team would land in the playoffs if the season ended today.
+function standingsHtml(L, st) {
+  const seeds = playoffSeeds(L, st);
+  const head = '<thead><tr><th>Team</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">PF</th><th class="num">PA</th><th class="num">Diff</th></tr></thead>';
+  const row = (r, i, cut) => {
+    const t = L.teams[r.id], seed = seeds.indexOf(r.id) + 1;
+    return `<tr class="${t.user ? 'me' : ''} ${cut ? 'cut' : ''}"><td>${seed ? `<em class="seed" title="Seed ${seed}">${seed}</em>` : ''}${teamBadge(t)} ${esc(t.name)}</td><td class="num">${r.w}</td><td class="num">${r.l}</td><td class="num">${r.t}</td><td class="num">${r.pf}</td><td class="num">${r.pa}</td><td class="num">${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`;
+  };
+  const field = playoffField(L);
+  if (!L.divisions) {
+    return `<div class="card"><h3>Standings</h3><div class="tablewrap"><table class="stand">${head}
+      <tbody>${st.map((r, i) => row(r, i, i === field - 1)).join('')}</tbody></table></div>
+      <p class="small muted">Top ${field} make the playoffs.</p></div>`;
+  }
+  const byes = field === 6 ? ' The top two seeds get a first-round bye.' : '';
+  return `<div class="card"><h3>Standings</h3>${L.divisions.map((d) => `<h4>${esc(d.name)}</h4><div class="tablewrap"><table class="stand">${head}
+      <tbody>${st.filter((r) => d.teams.includes(r.id)).map((r, i) => row(r, i, i === 0)).join('')}</tbody></table></div>`).join('')}
+    <p class="small muted">Each division winner makes the playoffs and seeds first, with the ${field - L.divisions.length} best of the rest.${byes} Division rivals meet twice, everyone else once.</p></div>`;
+}
+
+// Points the season hub at the trade desk while it is open.
+function deskLinkHtml(L) {
+  if (!tradeWindow(L)) return '';
+  return `<div class="card deskline"><p class="small">The trade desk is open until the deadline, before week ${tradeDeadline(L) + 1}: build a deal with any team, Pokémon and next season's picks.</p>
+    <div class="actions"><button class="btn" data-act="go" data-to="trades">Open the trade desk</button></div></div>`;
 }
 
 function awardsHtml(L, list) {
@@ -148,7 +176,7 @@ function championHtml(L, st) {
     <h4>Awards</h4>${awardsHtml(L, LG.awards(L))}
     <h4>Playoff bracket</h4>${bracketHtml(L)}
     <div class="actions"><button class="btn primary" data-act="offseason">Start the offseason</button><button class="btn" data-act="recap">Download recap</button><button class="btn" data-act="newleague">Start a new league</button></div>
-    <p class="small muted">The offseason keeps all eight rosters. Pokémon who played a lot of snaps develop, every team cuts ${LG.CUTS}, free agents sign by bidding under the cap, and a rookie draft fills the rest, worst record first.</p></div>`;
+    <p class="small muted">The offseason keeps every roster. Pokémon who played a lot of snaps develop, every team cuts ${LG.CUTS}, free agents sign by bidding under the cap, and a rookie draft fills the rest, worst record first.</p></div>`;
 }
 
 function historyHtml(L) {
@@ -169,7 +197,7 @@ export function recapText(L) {
   const B = LG.bracket(L);
   if (B) {
     lines.push('', 'Playoffs');
-    for (const g of [...B.semis, B.final]) {
+    for (const g of B.rounds.flatMap((x) => x.games)) {
       if (g.home == null) continue;
       lines.push(`${L.teams[g.away].name} ${g.awayScore ?? '-'} at ${L.teams[g.home].name} ${g.homeScore ?? '-'}`);
     }
@@ -206,7 +234,7 @@ export function renderResult() {
   };
   const winner = r.winner == null ? 'Tie game' : `${L.teams[r.winner].name} win`;
   return `<section class="result">
-    <p class="eyebrow">${r.playoff ? (r.round === 0 ? 'Semifinal' : 'Championship') : `Week ${r.week + 1}`} · ${WEATHER[r.weather].name}</p>
+    <p class="eyebrow">${r.playoff ? roundLabel(L, r.round) : `Week ${r.week + 1}`} · ${WEATHER[r.weather].name}</p>
     <h1>${esc(teams[1].abbr)} ${r.score[1]}, ${esc(teams[0].abbr)} ${r.score[0]}</h1>
     <p class="lede">${esc(r.headline ?? `${winner}. ${teams[1].name} at ${teams[0].name}.`)}</p>
     ${r.injuries?.length ? `<p class="small">${r.injuries.map((x) => `<span class="cond hurt">Injured</span> ${esc(P(x.id).name)} (${esc(L.teams[x.team].abbr)}), out ${x.weeks} games`).join(' · ')}</p>` : ''}
