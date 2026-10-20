@@ -3,7 +3,7 @@ import { SLOT, unitRatings } from '../ratings.js';
 import { kickingUnit } from '../engine.js';
 import { render } from '../app.js';
 import { S, save } from '../state.js';
-import { P, esc, ovr, rangeLine, sprite, user } from '../ui.js';
+import { P, esc, ovr, powerTag, rangeLine, sprite, user } from '../ui.js';
 
 function conditionTag(id) {
   const inj = S.league?.injuries?.[id];
@@ -34,7 +34,7 @@ export function renderDepth() {
     const misfit = p.best[0] !== k && p.ovr[p.best[0]] - p.ovr[k] >= 6;
     return `<button class="dslot ${SLOT[k].side} ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}">
       <span class="slot">${k}</span>${sprite(id, 'md')}<span class="dn">${esc(p.name)}</span>${ovr(p.ovr[k])}
-      ${misfit ? `<span class="fitnote">Best at ${p.best[0]} ${p.ovr[p.best[0]]}</span>` : ''}${conditionTag(id)}</button>`;
+      ${misfit ? `<span class="fitnote">Best at ${p.best[0]} ${p.ovr[p.best[0]]}</span>` : ''}${powerTag(id, k)}${conditionTag(id)}</button>`;
   };
   return `<section class="depth">
     <p class="eyebrow">${esc(me.name)}</p>

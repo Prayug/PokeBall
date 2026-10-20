@@ -4,6 +4,7 @@
 // Coordinates are yards in the offense's frame: x runs downfield from the line of scrimmage,
 // y runs across the field (sidelines at ±SIDE). No DOM access, so tests can run it headless.
 import { traitMod } from './traits.js';
+import { livePower } from './powers.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
 import { bestMatchup } from './types.js';
 import { weatherPhys } from './weather.js';
@@ -171,6 +172,9 @@ function makePlayer(g, ti, side, slot, id, lp) {
     // Authoritative state the renderer, the HUD and the tests read: the action this player is
     // doing (see classify()), its contact state in a block, its target, and its acceleration.
     act: 'SET', contact: null, tgt: null, acl: 0, turnRate: 0,
+    // His power, when he has zoned into it (see powers.js): the traits read its live edges and
+    // the field draws its aura.
+    power: livePower(g, ti, id),
   };
 }
 
@@ -1456,7 +1460,13 @@ export function unengage(p) { const q = p.eng; if (q) { q.eng = null; q.shed = n
 
 // Notes for the traits that acted at a hook (quiet ones only when the caller says so).
 export function traitNotes(lp, T, ctx, who, decided = false) {
-  for (const t of T.used) if (!t.quiet || decided) note(lp, t.kind, t.note(ctx), who);
+  for (const t of T.used) {
+    if (t.quiet && !decided) continue;
+    const by = t.who?.(ctx) ?? who;
+    // A power that changed the play flashes its name over the player.
+    if (t.kind === 'power' && !lp.notes.some((n) => n.kind === 'power' && n.who === by)) event(lp, 'power', by.power.name, by);
+    note(lp, t.kind, t.note(ctx), by);
+  }
 }
 
 // Something about a Pokémon (its type, its ability, its build) changed this play.

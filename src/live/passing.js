@@ -576,9 +576,9 @@ function arrival(lp) {
   // Defender plays the ball first if he is closer.
   const dUp = dfd && upNow(dfd), rUp = upNow(r);
   if (dfd && dd < (dUp ? 1.75 : 1.5) && (dd < dr + (dUp ? 0.5 : 0.25) || dr > rReach - 0.05)) {
-    const tInt = traitMod('intChance', { d: dfd, r });
+    const tInt = traitMod('intChance', { d: dfd, r, qb: lp.off.QB });
     const hawk = tInt.v;
-    traitNotes(lp, tInt, { d: dfd, r }, dfd);
+    traitNotes(lp, tInt, { d: dfd, r, qb: lp.off.QB }, dfd);
     const R = rep(dfd.id, dfd.a.cov, r.id, r.a.hndC);
     const pI = (diff) => clamp(0.11 + hawk + diff * 0.006 + (T.pressured ? 0.04 : 0) + (dr > rReach ? 0.12 : 0) - dd * 0.05, 0.03, 0.42)
       * (lp.offCall === 'screen' ? 0.4 : 1) + (userPlay && dfd === userDef ? 0.18 : 0);
