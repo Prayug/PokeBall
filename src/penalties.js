@@ -121,7 +121,7 @@ export function announce(g, f, acc, before, accepted = true) {
   const yd = Math.abs(acc.moved);
   const ord = ['', '1st', '2nd', '3rd', '4th'];
   const what = !accepted ? 'The penalty is declined.' : P.side === 'off' ? `${yd}-yard penalty, repeat ${ord[before.down]} down.`
-    : `${P.spot ? `Spot foul, ${yd} yard${yd === 1 ? '' : 's'}` : `${yd}-yard penalty`}${acc.first ? ', automatic first down' : `, repeat ${ord[before.down]} down`}.`;
+    : `${P.spot ? (yd ? `Spot foul, ${yd} yard${yd === 1 ? '' : 's'}` : 'Spot foul, the ball stays at the 1') : `${yd}-yard penalty`}${acc.first ? ', automatic first down' : `, repeat ${ord[before.down]} down`}.`;
   return `Flag: ${P.name}, ${side}, ${who}. ${what}`;
 }
 
