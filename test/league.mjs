@@ -498,6 +498,29 @@ check(firstSeason(L) === again.champion, 'dynasty: the same seed crowns the same
   const code = encodeLeague(huge);
   const D = decodeLeague(code);
   check(D?.numTeams === 16 && leagueFromShare(D).teams.length === 16, 'big leagues: a 16-team league shares and rebuilds');
+  check(same(leagueFromShare(D).schedule, huge.schedule) && same(leagueFromShare(D).divisions, huge.divisions), 'big leagues: the shared 16-team league has the same divisions and schedule');
+  // Playoff finishes for the challenge codes: every team in a bigger bracket gets the right one,
+  // and the code carries it.
+  for (const X of [big, huge]) {
+    const B = LG.bracket(X), n = X.teams.length;
+    const lostIn = (id) => B.rounds.find((r) => r.games.some((g) => (g.home === id || g.away === id) && g.winner !== id))?.round;
+    for (const t of X.teams) {
+      const f = LG.teamSeason(X, t.id).finish, r = lostIn(t.id);
+      const want = X.champion === t.id ? 4 : r == null ? 1 : GEO.isFinalRound(X, r) ? 3 : GEO.playoffRounds(X) - 1 - r === 1 ? 2 : 5;
+      check(f === want, `big leagues: ${n} teams, ${t.abbr} finish ${f} (want ${want})`);
+    }
+  }
+  check(huge.teams.some((t) => LG.teamSeason(huge, t.id).finish === 5), 'big leagues: quarterfinal losers have their own finish');
+  const C16 = decodeLeague(encodeLeague(huge)).challenge;
+  check(C16 && C16.finish === LG.teamSeason(huge, 0).finish && C16.gp === GEO.gamesPerTeam(huge), `big leagues: a 16-team challenge code carries the season (finish ${C16?.finish})`);
+  // Finishes rank champion, final, semifinal, first round, missed.
+  check([4, 3, 2, 5, 1].every((f, i, a) => i === 0 || LG.FINISH_RANK[a[i - 1]] > LG.FINISH_RANK[f]), 'big leagues: playoff finishes rank in order of merit');
+  const vs = (mine, theirs) => {
+    const T = attachChallenge(leagueFromShare(D), { ...D, challenge: { gp: 18, w: 9, l: 9, t: 0, pf: 300, pa: 300, finish: theirs } }, 'own');
+    T.firstSeason = { gp: 18, w: 9, l: 9, t: 0, pf: 300, pa: 300, finish: mine }; T.season = 2;
+    return challengeStatus(T).state;
+  };
+  check(vs(2, 5) === 'won' && vs(5, 2) === 'lost' && vs(5, 1) === 'won', 'big leagues: a semifinal beats a first-round exit, which beats missing out');
 }
 
 // ---------- saves from before trade desk 2.0 and the bigger leagues ----------

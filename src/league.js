@@ -433,7 +433,9 @@ export function standings(L) {
 
 // A team's season so far: its regular-season record and points, and how far it went (finish 0
 // while that is still open, 1 missed the playoffs, 2 lost a semifinal, 3 lost the championship,
-// 4 champions). With upTo, only its first upTo regular-season games count.
+// 4 champions, 5 lost in the first round of a bigger league's bracket: a wild card game or a
+// quarterfinal). The numbers aren't in order of merit (5 came later); FINISH_RANK orders them.
+// With upTo, only its first upTo regular-season games count.
 export function teamSeason(L, id, upTo = Infinity) {
   const s = { gp: 0, w: 0, l: 0, t: 0, pf: 0, pa: 0, finish: 0 };
   for (const r of L.results) {
@@ -445,10 +447,12 @@ export function teamSeason(L, id, upTo = Infinity) {
   if (upTo < Infinity) return s;
   const lost = L.results.find((r) => r.playoff && (r.home === id || r.away === id) && r.winner !== id);
   if (L.champion === id) s.finish = 4;
-  else if (lost) s.finish = lost.round ? 3 : 2;
+  else if (lost) s.finish = isFinalRound(L, lost.round) ? 3 : playoffRounds(L) - 1 - lost.round === 1 ? 2 : 5;
   else if (L.playoffs && !L.playoffs.seeds.includes(id)) s.finish = 1;
   return s;
 }
+
+export const FINISH_RANK = [0, 1, 3, 4, 5, 2];
 
 export function advanceWeek(L) {
   weekInReview(L, { week: L.week });
