@@ -158,7 +158,7 @@ function rushLane(lp, p, c) {
 // answers a cut about a quarter second after it, a great one in about half that.
 export function readDelay(lp, p, carrier = false) {
   const skill = carrier ? p.a.awr * 0.5 + p.a.tkl * 0.2 + p.a.spd * 0.3 : p.a.cov * 0.6 + p.a.awr * 0.4;
-  const base = carrier ? 0.07 + (100 - skill) * 0.0022 : 0.1 + (100 - skill) * 0.004;
+  const base = carrier ? 0.09 + (100 - skill) * 0.0022 : 0.1 + (100 - skill) * 0.004;
   return clamp(base, 0.05, 0.45) * (lp.user != null && lp.user !== lp.d ? lp.aiRead ?? 1 : 1);
 }
 

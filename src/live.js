@@ -1087,7 +1087,7 @@ function move(lp, p, dt) {
   // Routes and pursuit bend along the sideline instead of running out over it.
   if (!p.carrier && Math.abs(p.y) > SIDE - 1.5 && vy * p.y > 0) vy *= clamp((SIDE + 0.5 - Math.abs(p.y)) / 2, 0, 1);
   // A ball carrier and a pass rusher with a lane are all feet: they cut a little harder.
-  kin(p, vx, vy, top, dt, boost, p.carrier ? 1.3 : p.role === 'rush' && !p.eng ? 1.3 : 1);
+  kin(p, vx, vy, top, dt, boost, p.carrier ? 1.45 : p.role === 'rush' && !p.eng ? 1.3 : 1);
 }
 
 // Steering around bodies in the way: anyone (but the player this one is going after) a little
@@ -1530,7 +1530,7 @@ function contacts(lp) {
     const ux = (c.x - q.x) / (dd || 1), uy = (c.y - q.y) / (dd || 1);
     const closing = (q.vx - c.vx) * ux + (q.vy - c.vy) * uy;
     const behind = (c.vx * ux + c.vy * uy) > 0.6 * cs && cs > 3;
-    p += clamp((closing - 3) * 0.02, -0.08, 0.08) - (behind ? 0.07 : 0);
+    p += clamp((closing - 5) * 0.02, -0.08, 0.06) - (behind ? 0.07 : 0);
     const tTk = traitMod('tackleOdds', { c, q });
     p += tTk.v;
     if (tTk.used.length) traitNotes(lp, tTk, { c, q }, c);
@@ -1607,7 +1607,7 @@ function tackleStep(lp) {
   for (const o of lp.players) if (o !== q && o.side === q.side && !o.eng && dist(o, c) < o.r + c.r + 0.25) help++;
   // Friction on the pile: the pair is brought to a stop over the sequence (faster on a big
   // hit and with help arriving), not left to skate across the turf.
-  const f = Math.exp(-DT * ((T.big ? 7 : 4.6) + help * 2.5));
+  const f = Math.exp(-DT * ((T.big ? 7 : 3.9) + help * 2.2));
   T.vx *= f; T.vy *= f;
   c.vx = T.vx; c.vy = T.vy; c.x += c.vx * DT; c.y += c.vy * DT;
   if (T.lean && e < T.T) { const k = (T.lean * DT) / T.T; c.x += T.fwd * k; q.x += T.fwd * k; }
