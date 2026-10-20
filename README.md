@@ -34,7 +34,7 @@ Games are played on a 3D field, Madden style: pick a play from the playbook, sna
 | `P` | Pause or resume the play (opening the menu during a play pauses it too) |
 | `Y` | Between plays, replay the last play at half speed from the broadcast camera |
 | `G` | Between plays, challenge the last call (one challenge a half; it needs a timeout, and a lost one costs it) |
-| `O` | Open the film room: every play of this game, to scrub, step, watch from any camera, star, save as a clip or record as a video |
+| `J` | Open the film room: every play of this game, to scrub, step, watch from any camera, star, save as a clip or record as a video |
 | `?` | Show the controls (they also show once at the start of your first game) |
 | `C` | Cycle the camera: Gameplay, Tactical, Broadcast, Player focus |
 | `M` | Open the game menu (Play / Coach / Auto mode, sim controls, camera, graphics, sound, weather, controls, replay, box score) |
@@ -135,7 +135,7 @@ The live field knows exactly where every play ended; the officials don't (`src/r
 
 ### Film room
 
-`O` (or Film room in the menu, or the button between plays) opens every live play of this game on a reel, from the same recordings as the replay (`src/film.js`, `src/screens/film.js`):
+`J` (or Film room in the menu, or the button between plays) opens every live play of this game on a reel, from the same recordings as the replay (`src/film.js`, `src/screens/film.js`):
 
 - **Play it back** at ¼, ½ or full speed, drag the scrubber anywhere in the play, or step a frame at a time with `←` `→` (`Shift` for 15 frames). `[` and `]` go to the previous and next play, `Space` plays and pauses.
 - **Any camera**: Gameplay, Tactical, Broadcast and Player focus, switched as the tape runs (`C` cycles them).

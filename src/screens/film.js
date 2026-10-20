@@ -207,7 +207,7 @@ function onClick(e) {
 
 // Keys while the film room is open (it takes them all, so nothing reaches the call sheet).
 export function filmKey(e) {
-  const k = { Escape: 'close', KeyO: 'close', Space: 'play', KeyK: 'mark', KeyS: 'star', BracketLeft: 'prev', BracketRight: 'next' }[e.code]
+  const k = { Escape: 'close', KeyJ: 'close', Space: 'play', KeyK: 'mark', KeyS: 'star', BracketLeft: 'prev', BracketRight: 'next' }[e.code]
     ?? (e.code === 'ArrowLeft' ? (e.shiftKey ? 'back10' : 'back') : e.code === 'ArrowRight' ? (e.shiftKey ? 'fwd10' : 'fwd') : null);
   if (e.code === 'KeyC') {
     const i = CAMERA_MODES.findIndex(([c]) => c === FILM.cam);

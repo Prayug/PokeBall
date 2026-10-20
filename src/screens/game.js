@@ -252,7 +252,7 @@ function menuHtml(g, simBtns, coachBox) {
     <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}> Team markers under every player</label>
     <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}> Debug view: position labels, formation check, camera calibration <kbd>\`</kbd></label>
     <div class="gm-row"><button class="btn tiny" data-act="help">Controls <kbd>?</kbd></button><button class="btn tiny" data-act="replay" ${replayReady() ? '' : 'disabled'}>Replay last play <kbd>Y</kbd></button></div>
-    <div class="gm-row"><button class="btn tiny" data-act="film" ${filmReady() ? '' : 'disabled'}>Film room <kbd>O</kbd></button><button class="btn tiny" data-act="challenge" ${challengeReady() ? '' : 'disabled'}>${challengeText(g)}</button></div>
+    <div class="gm-row"><button class="btn tiny" data-act="film" ${filmReady() ? '' : 'disabled'}>Film room <kbd>J</kbd></button><button class="btn tiny" data-act="challenge" ${challengeReady() ? '' : 'disabled'}>${challengeText(g)}</button></div>
     <button class="btn tiny" data-act="details">Box score and play-by-play</button>
   </div>`;
 }

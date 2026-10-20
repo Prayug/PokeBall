@@ -34,7 +34,7 @@ function keysHelp() {
     <span><kbd>I</kbd> on the play sheet: type edges and their tendencies</span>
     <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
     <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
-    <span><kbd>G</kbd> between plays: challenge the last call (one a half; a lost challenge costs a timeout) · <kbd>O</kbd> the film room</span>
+    <span><kbd>G</kbd> between plays: challenge the last call (one a half; a lost challenge costs a timeout) · <kbd>J</kbd> the film room</span>
     <span>Leave the keys alone and your player runs on autopilot.</span>
   </div>
   <h4>Gamepad</h4>
@@ -116,7 +116,7 @@ export function ensureStage() {
     <div class="lower3" id="lower3" aria-live="polite"></div>
     <div class="ov-badge" id="replay-badge" hidden>Replay</div>
     <div class="hud-acts"><button class="hud-replay" id="chal-btn" data-act="challenge" hidden>Challenge <kbd>G</kbd></button>
-      <button class="hud-replay" id="film-btn" data-act="film" hidden>Film room <kbd>O</kbd></button>
+      <button class="hud-replay" id="film-btn" data-act="film" hidden>Film room <kbd>J</kbd></button>
       <button class="hud-replay" id="replay-btn" data-act="replay" hidden>Replay <kbd>Y</kbd></button></div>
     <div class="ov-pause" id="pause-ov" hidden><div><b>Paused</b><span>Press <kbd>P</kbd> or <kbd>Esc</kbd> to resume</span><button class="btn" data-act="resume">Resume</button></div></div>
     <div class="ov-help" id="help-ov" hidden><div class="card"><h3>Controls</h3>${keysHelp()}<button class="btn primary" data-act="helpok">Got it</button></div></div>
@@ -809,7 +809,7 @@ export function onKey(e, down) {
     if (code === 'KeyI' && !L3.lp) { e.preventDefault(); S.csScout = !S.csScout; S.csFold = false; render(); return; }
     if (FILM.open) { filmKey(e); return; }
     if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
-    if (code === 'KeyO' && filmReady() && !L3.replay) { e.preventDefault(); openFilm(); return; }
+    if (code === 'KeyJ' && filmReady() && !L3.replay) { e.preventDefault(); openFilm(); return; }
     if (code === 'KeyG' && !L3.lp && !L3.replay) { e.preventDefault(); userChallenge(); return; }
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
     // P pauses a play on the field; between plays it falls through to the call sheet (Punt).

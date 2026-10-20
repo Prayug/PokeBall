@@ -88,7 +88,7 @@ if (!mine) notes.push(`your own challenge did not come up in ${plays} plays`);
 await page.waitForFunction(() => window.__pb.L3.flow === 'PLAY_SELECTION' && !window.__pb.L3.replay && !window.__pb.L3.lp, null, { timeout: 180000 });
 await page.waitForTimeout(400);
 if (await pb(() => document.getElementById('film-btn').hidden)) problems.push('no Film room button between plays');
-await page.keyboard.press('KeyO');
+await page.keyboard.press('KeyJ');
 await page.waitForTimeout(500);
 const f0 = await pb(() => { const F = window.__pb.FILM; return { open: F.open, n: F.tape?.n ?? 0, reel: F.reel.length, panel: !document.getElementById('film').hidden, drawn: window.__pb.stage.lp === F.lp }; });
 if (!f0.open || !f0.panel) problems.push('O did not open the film room');
