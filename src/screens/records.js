@@ -4,8 +4,9 @@
 import * as RC from '../records.js';
 import { S } from '../state.js';
 import { P, esc, sprite, teamBadge, user } from '../ui.js';
+import { roundLabel } from '../geometry.js';
 
-const ROUND = ['Semifinal', 'Championship'];
+const ROUND = (round) => roundLabel(S.league, round);
 
 export function renderRecords() {
   const L = S.league, me = user();
@@ -48,7 +49,7 @@ function hofHtml(L) {
 }
 
 function when(r) {
-  if (r.playoff) return `S${r.season} ${ROUND[r.round] ?? 'playoffs'}`;
+  if (r.playoff) return `S${r.season} ${ROUND(r.round)}`;
   return r.week != null ? `S${r.season} wk ${r.week + 1}` : `Season ${r.season}`;
 }
 
@@ -83,10 +84,10 @@ export function rivalryCardHtml(L, a, b, round) {
   if (r.biggest && r.played > 1) facts.push(`Biggest win: ${score(r.biggest)} in season ${r.biggest.season}.`);
   if (r.titles[0] || r.titles[1]) facts.push(`Titles: ${A.abbr} ${r.titles[0]}, ${B.abbr} ${r.titles[1]}.`);
   return `<div class="card rivalry" style="--ta:${A.color};--tb:${B.color}">
-    <h3>Rivalry <span class="muted small">${ROUND[round] ?? 'Playoffs'}</span></h3>
+    <h3>Rivalry <span class="muted small">${ROUND(round)}</span></h3>
     <div class="rv-head">${teamBadge(A)}<b class="num">${r.aWins}</b><span class="muted">series</span><b class="num">${r.bWins}</b>${teamBadge(B)}</div>
     <p>${series} ${po}</p>
     ${facts.length ? `<ul class="rv-facts">${facts.map((f) => `<li>${f}</li>`).join('')}</ul>` : ''}
-    ${r.playoffs.length ? `<p class="small muted">${r.playoffs.map((g) => `Season ${g.season} ${ROUND[g.round].toLowerCase()}: ${score(g)}`).join(' · ')}</p>` : ''}
+    ${r.playoffs.length ? `<p class="small muted">${r.playoffs.map((g) => `Season ${g.season} ${ROUND(g.round).toLowerCase()}: ${score(g)}`).join(' · ')}</p>` : ''}
   </div>`;
 }

@@ -85,7 +85,7 @@ export function decodeLeague(text) {
       const s = get(1) ? get(5) : -1;
       picks.push([id, s < 0 ? null : s === SLOT_KEYS.length ? 'BENCH' : SLOT_KEYS[s] ?? null]);
     }
-    if (!rounds || numTeams < 2 || numTeams > 10 || n > rounds * numTeams) return null;
+    if (!rounds || numTeams < 2 || numTeams > LG.MAX_TEAMS || n > rounds * numTeams) return null;
     return { code: m[1], seed, rounds, numTeams, legendaries: !!(flags & 1), typeCap: !!(flags & 2), rng, name, abbr, picks };
   } catch { return null; }
 }

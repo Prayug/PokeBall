@@ -4,6 +4,9 @@
 // of Fame, the record books and the playoff rivalries are checked as they build up. Every step is checked against the
 // rules the league screens rely on, and a save exported mid-season (a JSON round trip, as the
 // Export and Import buttons do) must play on to exactly the same results as the original.
+// Trade desk 2.0 (multi-player deals, pick chips, the deadline, traded picks in the rookie
+// draft) and the bigger leagues (12 and 16 teams: divisions, the longer schedule, byes and an
+// eight-team bracket) are checked after the dynasty.
 // Exits non-zero on any failure.
 // Usage: node test/league.mjs [seasons, default 2] [seed, default 11]
 import * as LG from '../src/league.js';
@@ -16,6 +19,8 @@ import { injuryOdds } from '../src/injuries.js';
 import * as FA from '../src/freeagency.js';
 import * as RC from '../src/records.js';
 import { decodeLeague, encodeLeague, leagueFromShare } from '../src/share.js';
+import * as TR from '../src/trades.js';
+import * as GEO from '../src/geometry.js';
 
 const SEASONS = Number(process.argv[2] ?? 2);
 const SEED = Number(process.argv[3] ?? 11);
@@ -81,26 +86,84 @@ function checkDraft(L, rosterSize) {
     if (!L.settings.legendaries) check(t.roster.every((id) => !PLAYERS[id].legendary), `${s}: ${t.abbr} has no legendaries`);
   }
   const n = L.teams.length;
-  check(L.schedule.length === n - 1 + (n % 2), `${s}: ${L.schedule.length} weeks scheduled for ${n} teams`);
-  const pairs = L.schedule.flat().map((gm) => [gm.home, gm.away].sort().join('-'));
-  check(pairs.length === n * (n - 1) / 2 && new Set(pairs).size === pairs.length, `${s}: every pair meets exactly once`);
+  checkSchedule(L, s);
   const grades = LG.draftGrades(L);
   check(grades.length === n && grades.every((g) => Object.values(g).every((u) => /^[A-DF][+]?$/.test(u.grade))), `${s}: every unit gets a letter grade`);
+}
+
+// Every team plays once a week; every pair meets once, division rivals twice with home and away
+// swapped.
+function checkSchedule(L, s) {
+  const n = L.teams.length;
+  const gpt = GEO.gamesPerTeam(L);
+  check(L.schedule.length === gpt + (n % 2), `${s}: ${L.schedule.length} weeks scheduled for ${n} teams`);
+  check(L.schedule.every((wk) => new Set(wk.flatMap((gm) => [gm.home, gm.away])).size === wk.length * 2), `${s}: nobody plays twice in a week`);
+  const meets = {};
+  for (const gm of L.schedule.flat()) (meets[[gm.home, gm.away].sort((a, b) => a - b).join('-')] ??= []).push(gm.home);
+  const pairs = Object.entries(meets);
+  check(pairs.length === n * (n - 1) / 2, `${s}: every pair meets`);
+  for (const [k, homes] of pairs) {
+    const [a, b] = k.split('-').map(Number);
+    const rivals = GEO.divisionOf(L, a) && GEO.divisionOf(L, a) === GEO.divisionOf(L, b);
+    check(homes.length === (rivals ? 2 : 1), `${s}: ${L.teams[a].abbr}-${L.teams[b].abbr} meet ${homes.length} times`);
+    if (rivals) check(homes[0] !== homes[1], `${s}: ${L.teams[a].abbr} and ${L.teams[b].abbr} each host once`);
+  }
 }
 
 function checkTrade(L) {
   const T = L.trade;
   if (!T) { console.log(`     season ${L.season}: no trade offer this time`); return; }
   const me = L.teams.find((t) => t.user), ai = L.teams[T.team];
-  check(me.roster.includes(T.youSend) && ai.roster.includes(T.youGet), `season ${L.season} trade: offers Pokémon each side owns`);
-  check(LG.tradeOpen(L), `season ${L.season} trade: open before the season`);
+  check(T.send.every((id) => me.roster.includes(id)) && T.get.every((id) => ai.roster.includes(id)), `season ${L.season} trade: offers Pokémon each side owns`);
+  check(T.sendPicks.every((k) => TR.picksOwned(L, me.id).includes(k)) && T.getPicks.every((k) => TR.picksOwned(L, ai.id).includes(k)), `season ${L.season} trade: offers picks each side owns`);
+  check(TR.tradeOpen(L), `season ${L.season} trade: open before the season`);
+  check(TR.evaluateTrade(L, T).verdict === 'yes', `season ${L.season} trade: the team making the offer would say yes to it`);
   const before = [me.roster.length, ai.roster.length];
-  check(LG.acceptTrade(L), `season ${L.season} trade: accepted`);
-  check(me.roster.includes(T.youGet) && !me.roster.includes(T.youSend), `season ${L.season} trade: you get ${PLAYERS[T.youGet].name}`);
-  check(ai.roster.includes(T.youSend) && !ai.roster.includes(T.youGet), `season ${L.season} trade: they get ${PLAYERS[T.youSend].name}`);
+  check(TR.acceptTrade(L), `season ${L.season} trade: accepted`);
+  check(T.get.every((id) => me.roster.includes(id)) && T.send.every((id) => !me.roster.includes(id)), `season ${L.season} trade: you get ${T.get.map((id) => PLAYERS[id].name).join(', ') || 'a pick'}`);
+  check(T.send.every((id) => ai.roster.includes(id)), `season ${L.season} trade: they get ${T.send.map((id) => PLAYERS[id].name).join(', ') || 'a pick'}`);
   check(same(before, [me.roster.length, ai.roster.length]), `season ${L.season} trade: roster sizes unchanged`);
-  check(!Object.values(me.lineup).includes(T.youSend) && !me.bench.includes(T.youSend), `season ${L.season} trade: the traded Pokémon leaves your depth chart`);
-  check(!LG.acceptTrade(L), `season ${L.season} trade: cannot be accepted twice`);
+  check(T.send.every((id) => !Object.values(me.lineup).includes(id) && !me.bench.includes(id)), `season ${L.season} trade: the traded Pokémon leaves your depth chart`);
+  check(SLOT_KEYS.every((k) => me.lineup[k] != null && me.roster.includes(me.lineup[k])), `season ${L.season} trade: your lineup stays full`);
+  check(!TR.acceptTrade(L), `season ${L.season} trade: cannot be accepted twice`);
+  check(L.tradeLog[L.tradeLog.length - 1]?.by === 'them', `season ${L.season} trade: in the trade log`);
+}
+
+// A deal the user builds on the trade desk, mid-season: a pick for a Pokémon off the bench of
+// whichever AI team says yes first. Returns the pick traded, or null.
+function deskTrade(L) {
+  const s = `season ${L.season} week ${L.week + 1} trade desk`;
+  const me = L.teams.find((t) => t.user);
+  // Your own second-rounder, or the first-rounder if the offer after the draft took it.
+  const own = TR.picksOwned(L, me.id).filter((k) => TR.parsePick(k).from === me.id);
+  check(own.length > 0, `${s}: you hold one of your own picks`);
+  const myR2 = own[own.length - 1];
+  let done = null;
+  for (const t of L.teams.filter((x) => !x.user)) {
+    for (const id of t.bench) {
+      const ev = TR.evaluateTrade(L, { team: t.id, send: [], get: [id], sendPicks: [myR2], getPicks: [] });
+      if (ev.verdict !== 'yes') continue;
+      const res = TR.proposeTrade(L, ev.deal);
+      check(res.ok, `${s}: a deal they said yes to goes through`);
+      done = { key: myR2, to: t.id, from: me.id, id };
+      break;
+    }
+    if (done) break;
+  }
+  if (!done) { console.log(`     ${s}: nobody wanted a second-rounder for a bench Pokémon`); return null; }
+  check(L.pickOwners[myR2] === done.to && !TR.picksOwned(L, me.id).includes(myR2) && TR.picksOwned(L, done.to).includes(myR2), `${s}: the pick changes hands`);
+  check(me.roster.includes(done.id) && !L.teams[done.to].roster.includes(done.id), `${s}: the Pokémon changes hands`);
+  // One in, nothing out: you release one to stay at the roster size; they sign one.
+  const e = L.tradeLog[L.tradeLog.length - 1];
+  check(e.released.you.length === 1 && e.signed.them.length === 1, `${s}: you release one and they sign one`);
+  check(L.teams.every((t) => t.roster.length === L.settings.rounds), `${s}: every roster stays at ${L.settings.rounds}`);
+  const all = L.teams.flatMap((t) => t.roster);
+  check(new Set(all).size === all.length, `${s}: nobody on two rosters`);
+  check(e.released.you.every((id) => LG.available(L).includes(id)), `${s}: the released Pokémon go back to the pool`);
+  for (const t of L.teams) check(SLOT_KEYS.every((k) => t.lineup[k] != null && t.roster.includes(t.lineup[k])), `${s}: ${t.abbr} lineup stays full`);
+  check(TR.evaluateTrade(L, { team: done.to, send: [], get: [], sendPicks: [myR2], getPicks: [] }).problems.length > 0, `${s}: a pick you no longer hold can't be traded`);
+  console.log(`     ${s}: ${PLAYERS[done.id].name} from ${L.teams[done.to].abbr} for your second-rounder`);
+  return done;
 }
 
 // Injured Pokémon never play; who is out sore sits when the bench can cover (what is left of it
@@ -148,9 +211,10 @@ function checkSeason(L) {
   const s = `season ${L.season}`;
   const n = L.teams.length;
   const reg = L.results.filter((r) => !r.playoff);
-  check(reg.length === n * (n - 1) / 2, `${s}: ${reg.length} regular-season games recorded`);
+  const gpt = GEO.gamesPerTeam(L);
+  check(reg.length === n * gpt / 2, `${s}: ${reg.length} regular-season games recorded`);
   const st = LG.standings(L);
-  for (const row of st) check(row.w + row.l + row.t === n - 1, `${s}: ${L.teams[row.id].abbr} played ${row.w + row.l + row.t} games`);
+  for (const row of st) check(row.w + row.l + row.t === gpt, `${s}: ${L.teams[row.id].abbr} played ${row.w + row.l + row.t} games`);
   check(st.reduce((a, r) => a + r.w, 0) === st.reduce((a, r) => a + r.l, 0), `${s}: wins equal losses league-wide`);
   check(st.reduce((a, r) => a + r.pf, 0) === st.reduce((a, r) => a + r.pa, 0), `${s}: points for equal points against`);
   for (const r of reg) {
@@ -162,9 +226,18 @@ function checkSeason(L) {
   const ld = LG.leaders(L);
   check(Object.values(ld).every((list) => list.length > 0), `${s}: every leader board has entries`);
   const totals = Object.values(L.seasonStats);
-  check(totals.every((x) => x.gp >= 1 && x.gp <= n - 1 + 2), `${s}: games played per Pokémon within the schedule`);
-  // Playoff seeding is the top four of the standings.
-  check(L.phase === 'playoffs' && same(L.playoffs.seeds, st.slice(0, 4).map((r) => r.id)), `${s}: top four seeded`);
+  check(totals.every((x) => x.gp >= 1 && x.gp <= gpt + GEO.playoffRounds(L)), `${s}: games played per Pokémon within the schedule`);
+  // Playoff seeding: the top of the standings, division winners first.
+  const field = GEO.playoffField(L);
+  check(L.phase === 'playoffs' && L.playoffs.seeds.length === field && new Set(L.playoffs.seeds).size === field, `${s}: ${field} teams seeded`);
+  if (!L.divisions) check(same(L.playoffs.seeds, st.slice(0, field).map((r) => r.id)), `${s}: the top ${field} seeded`);
+  else {
+    const winners = L.divisions.map((d) => st.find((r) => d.teams.includes(r.id)).id);
+    check(same(L.playoffs.seeds.slice(0, winners.length).sort(), winners.slice().sort()), `${s}: division winners take the top seeds`);
+    const rest = st.map((r) => r.id).filter((id) => !winners.includes(id)).slice(0, field - winners.length);
+    check(same(L.playoffs.seeds.slice(winners.length), rest), `${s}: the best of the rest fill the field`);
+  }
+  check(same(L.playoffs.byes, L.playoffs.seeds.slice(0, GEO.playoffByes(L))), `${s}: the top ${GEO.playoffByes(L)} seeds get byes`);
   const sc = LG.scoutReport(L, 0, L.playoffs.seeds.find((id) => id !== 0));
   check(typeof sc.plan === 'string' && typeof sc.lean === 'string' && Array.isArray(sc.best) && Array.isArray(sc.worst), `${s}: scouting report builds`);
 }
@@ -173,8 +246,13 @@ function checkPlayoffs(L) {
   const s = `season ${L.season} playoffs`;
   check(L.phase === 'done' && L.champion != null, `${s}: a champion is crowned`);
   const b = LG.bracket(L);
-  check(b.semis.every((g) => g.winner != null && g.homeScore != null), `${s}: both semifinals played`);
-  check(same([b.final.home, b.final.away].sort(), b.semis.map((g) => g.winner).sort()), `${s}: the semifinal winners meet in the final`);
+  check(b.rounds.length === GEO.playoffRounds(L) && b.rounds.every((r) => r.games.every((g) => g.winner != null && g.homeScore != null)), `${s}: every round played`);
+  for (let i = 1; i < b.rounds.length; i++) {
+    const through = [...b.rounds[i - 1].byes, ...b.rounds[i - 1].games.map((g) => g.winner)].sort();
+    check(same(b.rounds[i].games.flatMap((g) => [g.home, g.away]).sort(), through), `${s}: ${b.rounds[i].name} is the ${b.rounds[i - 1].name.toLowerCase()} winners${b.rounds[i - 1].byes.length ? ' and the byes' : ''}`);
+    check(b.rounds[i].games.every((g) => g.seeds[0] < g.seeds[1]), `${s}: the better seed hosts in the ${b.rounds[i].name.toLowerCase()}`);
+  }
+  check(b.final.home != null && b.semis.length === 2, `${s}: two semifinals and a final`);
   check(b.final.winner === L.champion && b.champion === L.champion, `${s}: the final's winner is champion`);
   check(L.results.filter((r) => r.playoff).every((r) => r.winner != null), `${s}: no playoff game ends tied`);
   const aw = LG.awards(L);
@@ -240,13 +318,25 @@ function runFreeAgency(L, rosterSize) {
   console.log(`     season ${L.season} free agency: ${L.fa.log.length} signed, cap $${L.cap}M; you ${won ? 'won' : 'lost'} ${PLAYERS[target.id].name} at $${amount}M`);
 }
 
-function checkRookieDraft(L, rosterSize, last) {
+function checkRookieDraft(L, rosterSize, last, traded = null) {
   const s = `season ${L.season} rookie draft`;
   check(L.phase === 'draft', `${s}: opens`);
   const need = L.teams.map((t) => rosterSize - t.roster.length);
   check(L.picks.length === need.reduce((a, b) => a + b, 0), `${s}: one pick per open roster spot`);
+  check(L.teams.every((t) => L.picks.filter((p) => p.team === t.id).length === need[t.id]), `${s}: every team picks once per open spot, traded picks or not`);
+  if (traded) {
+    // The second-rounder you traded: its new owner makes it (unless that team had its fill
+    // by then), and you make up the pick at the end of the draft.
+    const round = TR.parsePick(traded.key).round;
+    const inRound = L.picks.filter((p) => p.round === round);
+    const slot = inRound.find((p) => p.from === traded.from);
+    check(slot ? slot.team === traded.to : need[traded.to] <= round, `${s}: ${L.teams[traded.to].abbr} make the round ${round} pick they traded for`);
+    check(!inRound.some((p) => p.team === traded.from && p.from == null), `${s}: you don't pick in your traded round ${round} slot`);
+    check(!Object.keys(L.pickOwners).some((k) => k.startsWith(`${L.season}:`)), `${s}: this draft's traded picks are used up`);
+  }
   check(need.every((k) => k >= LG.CUTS - FA.FA_ROUNDS), `${s}: every team keeps at least ${LG.CUTS - FA.FA_ROUNDS} picks`);
-  const first = L.picks.slice(0, L.teams.length).map((p) => p.team);
+  // By slot: a traded pick keeps its place in the order under its new owner.
+  const first = L.picks.slice(0, L.teams.length).map((p) => p.from ?? p.team);
   check(first[first.length - 1] === last.champion, `${s}: the champion picks last`);
   const others = last.records.map((r) => r.id).filter((id) => id !== last.champion).reverse();
   check(same(first.slice(0, -1), others), `${s}: worst record picks first`);
@@ -288,15 +378,15 @@ function checkRecords(L, seasonStats) {
   for (const r of rv) {
     check(r.aWins + r.bWins + r.ties === r.played && r.playoffs.length >= 1, `${s}: ${L.teams[r.a].abbr}-${L.teams[r.b].abbr} series adds up`);
   }
-  const final = L.meetings.filter((m) => m.s === L.season && m.r === 1);
+  const final = L.meetings.filter((m) => m.s === L.season && GEO.isFinalRound(L, m.r));
   check(final.length === 1, `${s}: the final is in the head-to-head book`);
 }
 
 // ---------- the dynasty ----------
 
 let totalInjuries = 0, totalGames = 0;
-function runDynasty(seed, seasons, { exportAt = null } = {}) {
-  const L = LG.createLeague({ seed, rounds: 26, scheme: 'airraid' });
+function runDynasty(seed, seasons, { exportAt = null, numTeams = 8 } = {}) {
+  const L = LG.createLeague({ seed, rounds: 26, scheme: 'airraid', numTeams });
   check(L.teams[0].coach === 'airraid', 'league: your scheme is set');
   const rosterSize = L.settings.rounds;
   let exported = null;
@@ -308,7 +398,12 @@ function runDynasty(seed, seasons, { exportAt = null } = {}) {
     checkDraft(L, rosterSize);
     checkTrade(L);
     L.phase = 'season';
+    let traded = null;
     while (L.phase === 'season') {
+      if (L.season === 1 && L.week === 1) traded = deskTrade(L) ?? traded;
+      if (L.week === TR.tradeDeadline(L)) {
+        check(!TR.tradeWindow(L) && !TR.proposeTrade(L, { team: 1, send: [], get: [], sendPicks: TR.picksOwned(L, 0), getPicks: [] }).ok, `season ${L.season} week ${L.week + 1}: trades close at the deadline`);
+      }
       if (exportAt && L.season === exportAt.season && L.week === exportAt.week) exported = JSON.stringify({ league: L, game: null, gameMeta: null, screen: 'season' });
       checkCondition(L);
       const label = `season ${L.season} week ${L.week + 1}`, wk = `Week ${L.week + 1}`;
@@ -322,7 +417,7 @@ function runDynasty(seed, seasons, { exportAt = null } = {}) {
     totalInjuries += hurt.length; totalGames += L.results.length;
     check(hurt.every((x) => x.weeks >= 2 && x.weeks <= 5), `season ${L.season}: injuries last 2 to 5 games`);
     checkSeason(L);
-    while (L.phase === 'playoffs') { const lab = L.playoffs.round === 0 ? 'Semifinals' : 'Championship'; playPlayoffRound(L); checkWeekly(L, lab); }
+    while (L.phase === 'playoffs') { const lab = GEO.roundLabel(L, L.playoffs.round, true); playPlayoffRound(L); checkWeekly(L, lab); }
     checkPlayoffs(L);
     const champ = L.teams[L.champion];
     console.log(`ok   season ${L.season}: ${LG.standings(L).map((r) => `${L.teams[r.id].abbr} ${r.w}-${r.l}${r.t ? `-${r.t}` : ''}`).join(', ')}; champion ${champ.abbr}`);
@@ -332,7 +427,7 @@ function runDynasty(seed, seasons, { exportAt = null } = {}) {
     // A rivalry card is ready for the final before it is archived.
     const fin = LG.bracket(L).final;
     const card = RC.rivalry(L, fin.home, fin.away);
-    check(card.playoffs.some((g) => g.season === L.season && g.round === 1), `season ${L.season}: the rivalry card shows the final`);
+    check(card.playoffs.some((g) => g.season === L.season && GEO.isFinalRound(L, g.round)), `season ${L.season}: the rivalry card shows the final`);
     LG.startOffseason(L);
     L.history[L.history.length - 1].totals = Object.fromEntries(['py', 'ry', 'tk'].map((k) => [k, Object.values(seasonStats).reduce((a, x) => a + (x[k] ?? 0), 0)]));
     checkRecords(L, seasonStats);
@@ -349,7 +444,7 @@ function runDynasty(seed, seasons, { exportAt = null } = {}) {
     check(L.teams.every((t) => t.roster.length === rosterSize - LG.CUTS), `season ${L.season} cuts: every team is down ${LG.CUTS}`);
     runFreeAgency(L, rosterSize);
     const picks = L.picks.length;
-    checkRookieDraft(L, rosterSize, last);
+    checkRookieDraft(L, rosterSize, last, traded);
     draftAll(L);
     check(L.rookies.length === picks, `season ${L.season}: ${L.rookies.length} rookies drafted`);
   }
@@ -380,6 +475,101 @@ check(firstSeason(L) === again.champion, 'dynasty: the same seed crowns the same
   delete v1.version;
   LG.migrateLeague(v1);
   check(v1.version === 2 && v1.season === 1 && Array.isArray(v1.history) && v1.growth && v1.condition && Array.isArray(v1.rookies), 'save: a version 1 save migrates');
+}
+
+// ---------- bigger leagues ----------
+// 12 teams (three divisions, 14 weeks, six in the playoffs with two byes) through an offseason
+// into season 2, and 16 teams (four divisions, 18 weeks, an eight-team bracket) for a season.
+{
+  const big = runDynasty(SEED + 1, 2, { numTeams: 12 }).L;
+  check(big.teams.length === 12 && big.divisions.length === 3 && big.divisions.every((d) => d.teams.length === 4), 'big leagues: 12 teams in three divisions of four');
+  check(big.history[0] && GEO.playoffField(big) === 6 && GEO.playoffByes(big) === 2, 'big leagues: 12 teams send six to the playoffs, two on a bye');
+  check(new Set(big.teams.map((t) => t.abbr)).size === 12, 'big leagues: twelve different franchises');
+  const huge = runDynasty(SEED + 2, 1, { numTeams: 16 }).L;
+  check(huge.settings.rounds === SLOT_KEYS.length, `big leagues: 16 teams without legendaries draft ${SLOT_KEYS.length} rounds, not 26 (${huge.settings.rounds})`);
+  check(huge.divisions.length === 4 && huge.schedule.length === 18 && GEO.playoffField(huge) === 8, 'big leagues: 16 teams, four divisions, 18 weeks, eight in the playoffs');
+  check(['Quarterfinals', 'Semifinals', 'Championship'].every((n, i) => GEO.roundLabel(huge, i, true) === n), 'big leagues: the 16-team rounds are named');
+  check(['Wild card round', 'Semifinals', 'Championship'].every((n, i) => GEO.roundLabel(big, i, true) === n), 'big leagues: the 12-team rounds are named');
+  check(LG.createLeague({ seed: 3, numTeams: 16, rounds: 28, legendaries: true }).settings.rounds === 28, 'big leagues: with legendaries, 16 teams can draft 28 rounds');
+  // An 8-team league is the league it always was: same franchises for the same seed.
+  const eight = LG.createLeague({ seed: 41 });
+  check(eight.divisions === null && eight.teams.every((t) => LG.AI_TEAMS.slice(0, 9).some((a) => a.abbr === t.abbr) || t.user), 'big leagues: 8 teams have no divisions and the classic franchises');
+  // Share codes carry the league size.
+  const code = encodeLeague(huge);
+  const D = decodeLeague(code);
+  check(D?.numTeams === 16 && leagueFromShare(D).teams.length === 16, 'big leagues: a 16-team league shares and rebuilds');
+}
+
+// ---------- saves from before trade desk 2.0 and the bigger leagues ----------
+{
+  const X = LG.createLeague({ seed: 61 });
+  draftAll(X);
+  const old = JSON.parse(JSON.stringify(X));
+  delete old.divisions; delete old.pickOwners; delete old.tradeLog;
+  old.trade = { team: 2, youGet: X.teams[2].roster[0], youSend: X.teams[0].roster[0], gain: 3, season: 1, status: 'open' };
+  LG.migrateLeague(old);
+  check(old.divisions === null && same(old.pickOwners, {}) && same(old.tradeLog, []), 'old saves: trade books and divisions filled in');
+  check(same(old.trade.send, [X.teams[0].roster[0]]) && same(old.trade.get, [X.teams[2].roster[0]]) && old.trade.status === 'open', 'old saves: a one-for-one offer becomes a deal');
+  // Playoffs in progress, in the old shape: semifinals done, final to play.
+  const P = LG.createLeague({ seed: 62 });
+  draftAll(P); P.phase = 'season';
+  while (P.phase === 'season') playWeek(P);
+  playPlayoffRound(P);
+  const saved = JSON.parse(JSON.stringify(P));
+  const s = saved.playoffs.seeds;
+  saved.playoffs = { round: 1, games: saved.playoffs.games, seeds: s, final: null };
+  LG.migrateLeague(saved);
+  check(saved.playoffs.rounds.length === 2 && same(saved.playoffs.rounds[0], [{ home: s[0], away: s[3] }, { home: s[1], away: s[2] }]), 'old saves: a bracket in progress is rebuilt');
+  playPlayoffRound(saved);
+  check(saved.phase === 'done' && saved.champion != null && LG.bracket(saved).final.winner === saved.champion, 'old saves: and plays on to a champion');
+}
+
+// ---------- the trade desk ----------
+// Uneven deals settle both rosters; the counter offer is one they accept; injured Pokémon and
+// over-the-limit types are refused.
+{
+  const X = LG.createLeague({ seed: 71, rounds: 26 });
+  draftAll(X);
+  const me = X.teams[0], them = X.teams[3];
+  const ovr = (id) => PLAYERS[id].ovr[PLAYERS[id].best[0]];
+  const myBench = me.bench.slice().sort((a, b) => ovr(b) - ovr(a));
+  // Two of yours for one of theirs: you sign one to fill the roster, they release one.
+  const ev = TR.evaluateTrade(X, { team: them.id, send: myBench.slice(0, 2), get: [them.bench[0]] });
+  check(ev.you.signed.length === 1 && ev.them.released.length === 1 && ev.you.released.length === 0 && ev.them.signed.length === 0, 'desk: two for one signs one for you, releases one for them');
+  check(!ev.them.released.some((id) => myBench.includes(id)), 'desk: they never release the Pokémon they just got');
+  const free = LG.available(X);
+  check(ev.you.signed.every((id) => free.includes(id)), 'desk: the signing comes from the free pool');
+  TR.executeTrade(X, ev, 'you');
+  check(X.teams.every((t) => t.roster.length === 26), 'desk: rosters stay at 26 after a two-for-one');
+  const all = X.teams.flatMap((t) => t.roster);
+  check(new Set(all).size === all.length, 'desk: nobody on two rosters after a two-for-one');
+  check(X.teams.every((t) => SLOT_KEYS.every((k) => t.lineup[k] != null && t.roster.includes(t.lineup[k]))), 'desk: every lineup stays full');
+  check(same([...Object.values(me.lineup), ...me.bench].sort(), me.roster.slice().sort()) && new Set(Object.values(me.lineup)).size === SLOT_KEYS.length, 'desk: your depth chart is your roster, nobody twice');
+  // Three's the limit, and something has to go each way.
+  const many = TR.evaluateTrade(X, { team: them.id, send: me.roster.slice(0, 4), get: [them.roster[0]] });
+  check(many.verdict === 'no' && many.problems.length, 'desk: four Pokémon one way is refused');
+  check(TR.evaluateTrade(X, { team: them.id, send: [me.bench[0]], get: [] }).problems.length > 0, 'desk: a deal needs something coming back');
+  // Injured Pokémon: they won't take one.
+  const hurtId = me.bench[0];
+  X.injuries[hurtId] = { weeks: 3, team: me.id };
+  check(TR.evaluateTrade(X, { team: them.id, send: [hurtId], get: [them.bench[0]] }).problems.some((p) => /injured/.test(p)), 'desk: an injured Pokémon is refused');
+  delete X.injuries[hurtId];
+  // A lopsided ask: no, and the counter is a deal they'd take.
+  const star = Object.values(them.lineup).sort((a, b) => ovr(b) - ovr(a))[0];
+  const ask = { team: them.id, send: [me.bench[0]], get: [star] };
+  const no = TR.evaluateTrade(X, ask);
+  check(no.verdict !== 'yes', 'desk: a bench Pokémon for their best starter is not a yes');
+  const c = TR.counterOffer(X, ask);
+  if (c) check(TR.evaluateTrade(X, c.deal).verdict === 'yes', 'desk: the counter offer is one they accept');
+  // Rebuilders value picks more than contenders do.
+  const order = LG.standings(X).map((r) => r.id);
+  const key = TR.pickKey(2, 1, me.id);
+  check(TR.pickValue(X, TR.pickKey(2, 1, order[order.length - 1]), order) > TR.pickValue(X, TR.pickKey(2, 1, order[0]), order), 'desk: the worst team\'s first-rounder is worth more');
+  check(TR.pickValue(X, key, order) > TR.pickValue(X, TR.pickKey(2, 2, me.id), order), 'desk: a first-rounder is worth more than a second');
+  // The window: open after the draft, shut once the deadline week is reached.
+  check(TR.tradeWindow(X), 'desk: open after the draft');
+  X.phase = 'season'; X.week = TR.tradeDeadline(X);
+  check(!TR.tradeWindow(X) && !TR.proposeTrade(X, ask).ok, 'desk: closed from the deadline week on');
 }
 
 // ---------- sharing a league (share.js) ----------
@@ -456,11 +646,11 @@ check(firstSeason(L) === again.champion, 'dynasty: the same seed crowns the same
   for (let seed = 1; seed <= 24; seed++) {
     const M = LG.createLeague({ seed });
     draftAll(M);
-    const K = LG.tradeKicking(M);
+    const K = TR.tradeKicking(M);
     if (!K) continue;
     kp++;
     const T = M.trade;
-    check([K.before.k?.id, K.after.k?.id, K.before.p?.id, K.after.p?.id].some((id) => id === T.youSend || id === T.youGet), `trades: seed ${seed} kicking line involves the traded Pokémon`);
+    check([K.before.k?.id, K.after.k?.id, K.before.p?.id, K.after.p?.id].some((id) => [...T.send, ...T.get].includes(id)), `trades: seed ${seed} kicking line involves the traded Pokémon`);
   }
   check(kp > 0, `trades: ${kp} of 24 offers change your kicker or punter`);
 }

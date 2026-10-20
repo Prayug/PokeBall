@@ -17,6 +17,8 @@ import { initPads } from './screens/pad.js';
 import { copyShare, loadShared, openSharedText, readShareFromUrl } from './screens/share.js';
 import { renderFreeAgency } from './screens/freeagency.js';
 import { renderRecords } from './screens/records.js';
+import { deskClear, deskCounter, deskPick, deskPropose, deskTeam, deskToggle, deskUseCounter, renderTrades } from './screens/trades.js';
+import * as TR from './trades.js';
 import * as FA from './freeagency.js';
 import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, userSide, userTimeout } from './screens/game.js';
 import { applyDifficulty } from './difficulty.js';
@@ -42,7 +44,7 @@ function renderTop() {
     if (L.phase === 'draft') items.push(['draft', 'Draft room']);
     else if (L.phase === 'offseason') items.push(['offseason', 'Offseason'], ['season', 'Last season']);
     else if (L.phase === 'freeagency') items.push(['freeagency', 'Free agency']);
-    else items.push(['grades', 'Draft grades'], ['depth', 'Depth chart'], ['season', 'Season']);
+    else items.push(['grades', 'Draft grades'], ['depth', 'Depth chart'], ['season', 'Season'], ['trades', 'Trade desk']);
     items.push(['records', 'Records']);
   }
   if (S.game && !S.game.final) items.push(['game', 'Live game']);
@@ -95,8 +97,14 @@ function onClick(e) {
     case 'sharedismiss': S.shareIn = null; S.shareErr = ''; render(); break;
     case 'recap': if (L) download(`pokeball-season${L.season ?? 1}-recap.txt`, recapText(L), 'text/plain'); break;
     case 'openresult': S.resultIdx = Number(el.dataset.i); setScreen('result'); break;
-    case 'tradeyes': if (LG.acceptTrade(L)) { save(); render(); } break;
-    case 'tradeno': if (L.trade) { L.trade.status = 'declined'; save(); render(); } break;
+    case 'tradeyes': TR.acceptTrade(L); save(); render(); break;
+    case 'tradeno': TR.declineTrade(L); save(); render(); break;
+    case 'deskpick': deskPick(el.dataset.side, el.dataset.key); break;
+    case 'deskteam': deskTeam(Number(el.dataset.team)); window.scrollTo(0, 0); break;
+    case 'deskclear': deskClear(); break;
+    case 'deskcounter': deskCounter(); break;
+    case 'deskusecounter': deskUseCounter(); break;
+    case 'deskpropose': deskPropose(); break;
     case 'offseason': LG.startOffseason(L); S.offCuts = null; setScreen('offseason'); break;
     case 'suggestcuts': S.offCuts = new Set(L.offseason.cuts[user().id]); render(); break;
     case 'finishoffseason': {
@@ -234,6 +242,8 @@ function onInput(e) {
 function onChange(e) {
   const t = e.target;
   if (t.id === 'fa-release') { S.faRelease = Number(t.value); render(); }
+  if (t.id === 'desk-team') deskTeam(Number(t.value));
+  if (t.dataset?.desk) deskToggle(t.dataset.desk, Number(t.value), t.checked);
   if (t.id === 'rec-team') { S.recTeam = t.value === 'league' ? 'league' : Number(t.value); render(); }
   if (t.id === 'd-type') { S.draft.type = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
@@ -264,6 +274,7 @@ function onSubmit(e) {
     name: f.querySelector('#f-name').value.trim() || 'Pallet Starters',
     abbr: (f.querySelector('#f-abbr').value.trim() || 'PAL').toUpperCase().slice(0, 3),
     rounds: Number(f.querySelector('input[name="rounds"]:checked')?.value ?? 24),
+    teams: Number(f.querySelector('input[name="teams"]:checked')?.value ?? 8),
     typeCap: f.querySelector('#f-typecap').checked,
     legendaries: f.querySelector('#f-legend').checked,
     clock: f.querySelector('#f-clock').checked,
@@ -271,8 +282,8 @@ function onSubmit(e) {
   };
   S.slot = Number(f.querySelector('#f-slot')?.value ?? S.slot); S.confirmDelete = null;
   S.league = LG.createLeague({ teamName: S.setup.name, abbr: S.setup.abbr, rounds: S.setup.rounds, legendaries: S.setup.legendaries,
-    typeCap: S.setup.typeCap, scheme: S.setup.scheme, seed: Math.floor(Math.random() * 2 ** 31) });
-  S.game = null; S.gameMeta = null;
+    typeCap: S.setup.typeCap, scheme: S.setup.scheme, numTeams: S.setup.teams, seed: Math.floor(Math.random() * 2 ** 31) });
+  S.game = null; S.gameMeta = null; S.desk = null;
   S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false };
   setScreen('draft');
 }
@@ -291,6 +302,7 @@ export function render() {
     case 'offseason': body = L?.phase === 'offseason' ? renderOffseason() : renderHome(); break;
     case 'freeagency': body = L?.phase === 'freeagency' ? renderFreeAgency() : renderHome(); break;
     case 'records': body = L ? renderRecords() : renderHome(); break;
+    case 'trades': body = L && L.schedule.length ? renderTrades() : renderHome(); break;
     case 'game': ensureStage(); body = renderGame(); break;
     default: body = renderHome();
   }

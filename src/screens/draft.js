@@ -1,4 +1,4 @@
-// Draft room and draft grades, with the post-draft trade offer.
+// Draft room and draft grades, with the post-draft trade offer (and the deal cards the trade desk shares).
 import { ATTRS, BASELINE, DEF_SLOTS, OFF_SLOTS, PLAYERS, SLOT, SLOT_KEYS, ST_SLOTS } from '../ratings.js';
 import { TYPE_COLORS, TYPE_TRAITS } from '../types.js';
 import * as LG from '../league.js';
@@ -7,6 +7,7 @@ import { render, setScreen } from '../app.js';
 import { S, clearTimers, save, timers } from '../state.js';
 import { ATTR_SHORT, P, abilityText, bar, esc, ovr, sprite, teamBadge, typeChips, user } from '../ui.js';
 import { shareCardHtml } from './share.js';
+import * as TR from '../trades.js';
 
 // ---------- draft ----------
 function boardIds() {
@@ -56,7 +57,7 @@ export function renderDraft() {
   return `<section class="draft">
     <div class="draft-head">
       <div>
-        <p class="eyebrow">${(L.season ?? 1) > 1 ? `Season ${L.season} rookie draft · ` : ''}Round ${pk?.round ?? '-'} of ${L.picks[L.picks.length - 1].round} · Pick ${L.pickIndex + 1} of ${L.picks.length}</p>
+        <p class="eyebrow">${(L.season ?? 1) > 1 ? `Season ${L.season} rookie draft · ` : ''}Round ${pk?.round ?? '-'} of ${L.picks[L.picks.length - 1].round} · Pick ${L.pickIndex + 1} of ${L.picks.length}${pk?.from != null ? ` · ${esc(L.teams[pk.from].abbr)}'s pick, traded` : ''}</p>
         <h1>${myTurn ? 'You are on the clock' : `${esc(onClock?.name ?? '')} are picking`}</h1>
         ${me.coach !== 'balanced' && SCHEMES[me.coach] ? `<p class="small muted">${esc(SCHEMES[me.coach].name)}: auto-picks reach for ${schemeGroups(me.coach)}.</p>` : ''}
       </div>
@@ -140,11 +141,12 @@ export function draftTick() {
   const pk = LG.currentPick(L);
   const mine = L.teams[pk.team].user;
   if (!mine || S.draft.autoAll) {
+    // AI picks come quicker in a bigger league, so the wait between your picks stays about the same.
     timers.draft = setTimeout(() => {
       const c = LG.aiChoosePick(L, pk.team);
       LG.makePick(L, c.id, c.slot);
       afterPick();
-    }, mine ? 120 : 260);
+    }, mine ? 120 : Math.max(90, Math.round(260 * 8 / L.teams.length)));
     return;
   }
   S.draft.clock = 60;
@@ -179,7 +181,7 @@ export function renderGrades() {
   return `<section class="grades">
     <p class="eyebrow">Draft complete</p>
     <h1>Draft grades</h1>
-    <p class="lede">Each unit is graded against the other seven teams. Starters only; your bench subs in as starters tire.</p>
+    <p class="lede">Each unit is graded against the other ${L.teams.length - 1} teams. Starters only; your bench subs in as starters tire.</p>
     <div class="tablewrap card"><table class="gtable">
       <thead><tr><th>Team</th><th>Coach</th>${units.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead>
       <tbody>${order.map(({ t, g }) => `<tr class="${t.user ? 'me' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="muted">${esc(coachLabel(t))}${t.favTypes ? ` (${t.favTypes.join(', ')})` : ''}</td>
@@ -198,28 +200,47 @@ export function tradeCardHtml(L) {
   const T = L.trade;
   if (!T) return '';
   const from = L.teams[T.team];
+  const names = (ids) => ids.map((id) => esc(P(id).name)).join(', ');
   if (T.status === 'accepted') {
-    const me = user(), slot = Object.keys(me.lineup).find((k) => me.lineup[k] === T.youGet);
-    const fit = slot && P(T.youGet).best[0] !== slot;
-    return `<div class="card trade done"><h3>Trade</h3><p>You sent ${esc(P(T.youSend).name)} to ${esc(from.name)} for ${esc(P(T.youGet).name)}.</p>
-      ${fit ? `<p class="small muted">${esc(P(T.youGet).name)} took ${esc(P(T.youSend).name)}'s spot at ${slot}. Auto-arrange the depth chart to get the full gain.</p>
-      <div class="actions"><button class="btn" data-act="go" data-to="depth">Open the depth chart</button></div>` : ''}</div>`;
+    const entry = L.tradeLog?.[L.tradeLog.length - 1];
+    const parts = (ids, picks) => [names(ids), ...picks.map((k) => esc(TR.pickLabel(L, k)))].filter(Boolean).join(' and ');
+    return `<div class="card trade done"><h3>Trade</h3><p>You sent ${parts(T.send, T.sendPicks)} to ${esc(from.name)} for ${parts(T.get, T.getPicks)}.</p>
+      ${entry ? tradeMovesHtml(L, entry) : ''}
+      <div class="actions"><button class="btn" data-act="go" data-to="depth">Open the depth chart</button></div></div>`;
   }
-  if (!LG.tradeOpen(L)) return '';
-  const card = (id, label) => {
-    const p = P(id), k = p.best[0];
-    return `<div class="tside"><span class="muted small">${label}</span>${sprite(id, 'md')}<b>${esc(p.name)}</b><span class="types">${typeChips(p.types)}</span><span><span class="slot">${k}</span>${ovr(p.ovr[k])}</span></div>`;
-  };
+  if (!TR.tradeOpen(L)) return '';
+  const note = T.week != null ? 'The offer stands until your next game.' : 'The offer stands until your first game.';
   return `<div class="card trade"><h3>Trade offer <span class="muted">${teamBadge(from)} ${esc(from.coachName)}</span></h3>
-    <div class="tswap">${card(T.youGet, 'You get')}<span class="at">for</span>${card(T.youSend, 'You send')}</div>
-    <p class="small muted">${esc(from.name)} want ${esc(P(T.youSend).name)}. By overall, your best lineup improves by ${T.gain} points. The offer stands until your first game.</p>
+    <div class="tswap">${dealSideHtml(L, T.get, T.getPicks, 'You get')}<span class="at">for</span>${dealSideHtml(L, T.send, T.sendPicks, 'You send')}</div>
+    <p class="small muted">${esc(from.name)} want ${[names(T.send), ...T.sendPicks.map((k) => esc(TR.pickLabel(L, k)))].filter(Boolean).join(' and ')}. By overall, your best lineup ${T.gain >= 0 ? `improves by ${T.gain}` : `drops by ${-T.gain}`} points. ${note}</p>
     ${tradeKickingHtml(L)}
-    <div class="actions"><button class="btn primary" data-act="tradeyes">Accept</button><button class="btn" data-act="tradeno">Decline</button></div></div>`;
+    <div class="actions"><button class="btn primary" data-act="tradeyes">Accept</button><button class="btn" data-act="tradeno">Decline</button><button class="btn ghost" data-act="go" data-to="trades">Trade desk</button></div></div>`;
+}
+
+// One side of a deal: each Pokémon with its best slot and overall, then any picks.
+export function dealSideHtml(L, ids, picks, label) {
+  const card = (id) => {
+    const p = P(id), k = p.best[0];
+    return `<span class="tp">${sprite(id, 'md')}<b>${esc(p.name)}</b><span class="types">${typeChips(p.types)}</span><span><span class="slot">${k}</span>${ovr(p.ovr[k])}</span></span>`;
+  };
+  return `<div class="tside"><span class="muted small">${label}</span>${ids.map(card).join('')}${picks.map((k) => `<span class="pickchip">${esc(TR.pickLabel(L, k))}</span>`).join('')}</div>`;
+}
+
+// Who a trade made each side release or sign to keep its roster size.
+export function tradeMovesHtml(L, entry) {
+  const ai = L.teams[entry.team];
+  const list = (ids) => ids.map((id) => esc(P(id).name)).join(', ');
+  const lines = [];
+  if (entry.released.you.length) lines.push(`You released ${list(entry.released.you)} to make room.`);
+  if (entry.signed.you.length) lines.push(`You signed ${list(entry.signed.you)} to fill the roster.`);
+  if (entry.released.them.length) lines.push(`${esc(ai.name)} released ${list(entry.released.them)}.`);
+  if (entry.signed.them.length) lines.push(`${esc(ai.name)} signed ${list(entry.signed.them)}.`);
+  return lines.length ? `<p class="small muted">${lines.join(' ')}</p>` : '';
 }
 
 // When the trade moves your kicker or punter: who kicks for you afterwards, and his range.
-function tradeKickingHtml(L) {
-  const K = LG.tradeKicking(L);
+export function tradeKickingHtml(L, deal = L.trade) {
+  const K = TR.tradeKicking(L, deal);
   if (!K) return '';
   const who = (x, what) => `${esc(P(x.id).name)} (${x.ovr}, ${what(x)})`;
   const line = (role, b, a, what) => `<p class="small">Your ${role} after the trade: ${a ? who(a, what) : 'nobody'}${b ? `, replacing ${who(b, what)}` : ''}.</p>`;
