@@ -5,7 +5,7 @@ import * as LG from '../league.js';
 import { SCHEMES, coachLabel } from '../coach.js';
 import { render, setScreen } from '../app.js';
 import { S, clearTimers, save, timers } from '../state.js';
-import { ATTR_SHORT, P, abilityText, bar, esc, ovr, sprite, teamBadge, typeChips, user } from '../ui.js';
+import { ATTR_SHORT, P, abilityText, bar, esc, ovr, powerHtml, sprite, teamBadge, typeChips, user } from '../ui.js';
 import { shareCardHtml } from './share.js';
 
 // ---------- draft ----------
@@ -110,7 +110,7 @@ function rosterSlotsHtml(team) {
 
 export function detailHtml() {
   const id = S.draft.sel;
-  if (id == null || !PLAYERS[id]) return `<p class="muted">Select a Pokémon on the board to see its positions, ability and type matchups.</p>`;
+  if (id == null || !PLAYERS[id]) return `<p class="muted">Select a Pokémon on the board to see its positions, ability, power and type matchups.</p>`;
   const L = S.league, me = user(), p = P(id);
   const taken = !LG.available(L).includes(id);
   const myTurn = LG.currentPick(L)?.team === me.id;
@@ -123,6 +123,7 @@ export function detailHtml() {
       <p class="small muted">Gen ${p.gen} · ${(p.height / 10).toFixed(1)} m · ${(p.weight / 10).toFixed(1)} kg</p></div></div>
     <p class="small"><b>${esc(p.ability)}.</b> ${esc(abilityText(id))}</p>
     ${p.types.map((t) => `<p class="small"><b>${t} trait.</b> ${TYPE_TRAITS[t].text}</p>`).join('')}
+    ${powerHtml(id)}
     <p class="small">Super effective against <b>${edge.n}</b> of ${edge.total} Pokémon on rival rosters.</p>
     <h4>Best positions</h4>
     <ul class="best">${p.best.slice(0, 3).map((k) => `<li><span class="slot">${k}</span>${bar(p.ovr[k])}${ovr(p.ovr[k])}</li>`).join('')}</ul>

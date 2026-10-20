@@ -501,6 +501,19 @@ export class Stage {
           this.rig.shake = Math.max(this.rig.shake, 0.12);
           sfx('hit');
           break;
+        case 'bighit':
+          // A tackler arriving with far more momentum than the carrier: a heavier jolt, the
+          // crowd reacts. Follows the contact event of the same hit.
+          if (a && b) this.burst(b.pos.clone().lerp(a.pos, 0.4), '#ffd23f', 1.2);
+          if (b) b.flash = 0.55;
+          this.rig.shake = Math.max(this.rig.shake, 0.28);
+          this.stadium.cheer(0.45);
+          sfx('bighit');
+          break;
+        case 'oob':
+          // A throw out of bounds: the ball skips off the turf past the line.
+          this.dust(this.ball.position, 0.4, 0.4);
+          break;
         case 'tackle': case 'sack':
           // The whistle: the pair is on the turf.
           if (a && b && e.kind === 'sack') this.burst(b.pos.clone().lerp(a.pos, 0.4), '#ff7a59', 1.1);
@@ -514,6 +527,16 @@ export class Stage {
           break;
         case 'incomplete': if (a) a.act = { kind: 'miss', t0: t, dur: 0.7 }; sfx('groan'); break;
         case 'typefx': this.typeFx(a, b, e.fx, e.type); break;
+        case 'power':
+          // A power changed the play: its name bursts over the player in his type colour.
+          if (a && e.who?.power) {
+            const col = e.who.power.color;
+            this.burst(a.pos, col, 1.4); this.burst(a.pos, '#ffffff', 0.7);
+            a.flash = Math.max(a.flash ?? 0, 0.5);
+            this.floatText(a.pos, `${e.text.toUpperCase()}!`, col, 1.4);
+            sfx('power');
+          }
+          break;
         case 'slip':
           if (a) { a.flash = 0.25; this.dust(a.pos, 0.5, 0.5); this.dust(a.pos, -0.5, 0.3); }
           break;
@@ -905,6 +928,37 @@ export class Stage {
         sp.scale.set(s, s, 1);
       }
     }
+    // Powers: a spinning ring of light in his type colour under anyone in the zone.
+    const auras = this.auras ?? (this.auras = []);
+    let n = 0;
+    for (const p of lp.players) {
+      const a = p.power ? this.actorOf(p) : null;
+      if (!a?.root.visible) continue;
+      let m = auras[n];
+      if (!m) {
+        m = new THREE.Mesh(AURA_GEO, new THREE.MeshBasicMaterial({ map: auraTexture(), transparent: true, depthWrite: false, depthTest: false, fog: false }));
+        m.rotation.x = -Math.PI / 2; m.renderOrder = 4; this.scene.add(m);
+        // And a bolt badge over his head.
+        m.userData.bolt = new THREE.Sprite(new THREE.SpriteMaterial({ map: boltTexture(), depthTest: false, transparent: true, fog: false }));
+        m.userData.bolt.renderOrder = 11; this.scene.add(m.userData.bolt);
+        auras.push(m);
+      }
+      const k = reduceMotion ? 1 : 1 + 0.08 * Math.sin(now / 170 + n);
+      m.visible = true;
+      m.position.set(a.pos.x, 0.07, a.pos.z);
+      m.scale.setScalar(Math.max(1.1, a.body.r * 2.6) * k);
+      m.rotation.z = reduceMotion ? 0 : now / 650;
+      m.material.color.set(p.power.color);
+      m.material.opacity = 0.85 + 0.15 * Math.sin(now / 240 + n);
+      const b = m.userData.bolt;
+      b.visible = a !== sel;
+      b.material.color.set(p.power.color).lerp(_c.set('#ffffff'), 0.25);
+      b.position.set(a.pos.x, (a.fig?.template.height ?? a.body.height ?? 2) + 0.55 + (reduceMotion ? 0 : Math.sin(now / 260 + n) * 0.08), a.pos.z);
+      const bs = clampN(this.camera.position.distanceTo(b.position) * 0.022, 0.4, 0.9);
+      b.scale.set(bs, bs, 1);
+      n++;
+    }
+    for (; n < auras.length; n++) { auras[n].visible = false; auras[n].userData.bolt.visible = false; }
     // Name and slot over your player before the snap, and over the ball carrier you control.
     const showName = sel && (lp.phase === 'pre' || this.showNames || (c.carrier && lp.phase === 'live'));
     this.label.visible = !!showName;
@@ -1000,14 +1054,14 @@ export class Stage {
       const c = lp.carrier ?? lp.ball.holder;
       const at = c ? { x: lp.spotX ?? c.x, y: c.y } : { x: b.x, y: b.y };
       this.world(at.x, at.y, 0, f.focus);
-      near(at, 5);
+      near(at, 7);
       pt(f.focus.x, 0, f.focus.z);
       f.shot = 'post';
       set('POST_PLAY');
     } else if (lp.tackle) {
       const k = lp.tackle.c;
       this.world(k.x, k.y, 0, f.focus);
-      near(k, 5);
+      near(k, 6);
       f.shot = 'run';
       set('TACKLE');
     } else if (b.state === 'air' && lp.kick?.F) {
@@ -1039,6 +1093,8 @@ export class Stage {
       const land = this.world(T.tx, T.ty);
       pt(land.x, 0, land.z);
       near({ x: T.tx, y: T.ty }, 6);
+      // The man it is thrown to, wherever he is: a pass never cuts to an empty patch of turf.
+      if (T.target && Math.hypot(T.target.x - T.tx, T.target.y - T.ty) >= 6) body(T.target);
       if (u < 0.35) body(lp.off.QB);
       f.shot = 'pass';
       set('PASS_FLIGHT');
@@ -1298,6 +1354,36 @@ function blobTexture() {
   x.fillStyle = g; x.fillRect(0, 0, 64, 64);
   blobTex = new THREE.CanvasTexture(c);
   return blobTex;
+}
+
+// A lightning bolt in a dark disc, drawn white so the sprite's colour tints it.
+let boltTex = null;
+function boltTexture() {
+  if (boltTex) return boltTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgba(8,16,12,0.8)'; x.beginPath(); x.arc(32, 32, 29, 0, Math.PI * 2); x.fill();
+  x.lineWidth = 3; x.strokeStyle = '#ffffff'; x.stroke();
+  x.fillStyle = '#ffffff'; x.beginPath();
+  x.moveTo(36, 8); x.lineTo(17, 36); x.lineTo(30, 36); x.lineTo(26, 56); x.lineTo(47, 26); x.lineTo(34, 26); x.closePath(); x.fill();
+  boltTex = new THREE.CanvasTexture(c); boltTex.colorSpace = THREE.SRGBColorSpace;
+  return boltTex;
+}
+
+// The power aura: six bright arcs over a soft glow, drawn white so the material tints it.
+const AURA_GEO = new THREE.PlaneGeometry(2, 2);
+let auraTex = null;
+function auraTexture() {
+  if (auraTex) return auraTex;
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(64, 64, 28, 64, 64, 62);
+  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.6, 'rgba(255,255,255,0.35)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 128, 128);
+  x.strokeStyle = '#ffffff'; x.lineWidth = 7; x.lineCap = 'round';
+  for (let i = 0; i < 6; i++) { x.beginPath(); x.arc(64, 64, 50, (i / 6) * Math.PI * 2, (i / 6) * Math.PI * 2 + 0.7); x.stroke(); }
+  auraTex = new THREE.CanvasTexture(c); auraTex.colorSpace = THREE.SRGBColorSpace;
+  return auraTex;
 }
 
 function haloTexture() {

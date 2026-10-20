@@ -37,6 +37,8 @@ jobs:
         run: node test/league.mjs
       - name: Abilities, type theater and weather
         run: node test/abilities.mjs
+      - name: Powers
+        run: node test/powers.mjs
       - name: Two players in one play
         run: node test/controls.mjs
       - name: Pre-snap adjustments and difficulty
@@ -49,3 +51,5 @@ jobs:
         run: node test/penalties.mjs
       - name: Football IQ
         run: node test/iq.mjs 300 --strict
+      - name: Gameplay feel (movement, spacing, blocks, coverage reactions, tackles, possession)
+        run: node test/feel.mjs 300 --strict
