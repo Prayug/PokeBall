@@ -187,6 +187,15 @@ export function coverWant(lp, p) {
     return seek(p, { x: Math.max(1.5, p.x - 1), y: lp.holeY * 0.5 * fooled }, 0.5);
   }
   if (lp.play.pa && lp.t < 0.6 && ['MLB', 'OLB', 'SS'].includes(p.slot)) return seek(p, { x: 1.5, y: p.y }, 0.6);
+  // A zone defender reads the quarterback: when the passer's arm starts forward, the one whose
+  // area the ball is going to drives on the receiver it is meant for, a read's time after the
+  // windup starts (a good one gets a jump on the throw; a poor one sees it late or not at all).
+  if (p.zone && lp.windup && !lp.windup.away && lp.windup.r) {
+    const W = lp.windup, r = W.r;
+    if (lp.t - W.t0 > readDelay(lp, p) * 1.3 && dist(p, r) < 9 && Math.hypot(r.x - p.zone.x, r.y - p.zone.y) < p.zone.r + 3) {
+      return seek(p, { x: r.x + r.vx * 0.5 + 0.5, y: r.y + r.vy * 0.5 }, 1, 0.2);
+    }
+  }
   if (p.zone) return zoneWant(lp, p);
   if (p.man) {
     const r = p.man;

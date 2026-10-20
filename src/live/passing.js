@@ -595,7 +595,11 @@ function arrival(lp) {
   }
   if (dr > rReach || !inBounds) {
     dropBall(lp, 0.45);
-    incomplete(lp, `${nm(lp.off.QB.id)}'s pass for ${nm(r.id)} falls incomplete${dr > rReach ? ', just out of reach' : ''}.`);
+    // Out of bounds is its own result: the ball sails past the sideline or the end line, and
+    // the receiver can't bring it in there however close he got.
+    const why = !inBounds ? (Math.abs(spot.y) >= SIDE ? ' sails out of bounds' : ' sails out the back of the end zone') : dr > rReach ? ' falls incomplete, just out of reach' : ' falls incomplete';
+    if (!inBounds) event(lp, 'oob', '', r, null);
+    incomplete(lp, `${nm(lp.off.QB.id)}'s pass for ${nm(r.id)}${why}.`);
     return;
   }
   const contested = dfd && dd < 1.8;

@@ -52,6 +52,12 @@ export function bowl(pos) {
   return pos;
 }
 
+// The least distance a gameplay shot may come in to. A pile or the spot where a play ended is
+// a few bodies close together, and fitting just those would push the lens into the players
+// standing around them; these shots hold back far enough to show the pile in its place on the
+// field, with the yard lines around it.
+const SHOT_MIN = { TACKLE: 14, POST_PLAY: 17, CATCH: 12, PASS_FLIGHT: 12 };
+
 const D2R = Math.PI / 180;
 const _v = new THREE.Vector3(), _f = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3();
 
@@ -201,7 +207,7 @@ export class CameraRig {
         const pts = tac ? f.pts : box;
         const safe = tac ? { x: 0.92, y0: -0.84, y1: 0.7 } : f.pre ? { x: 0.94, y0: -0.86, y1: 0.42 } : { x: 0.86, y0: -0.76, y1: 0.45 };
         const R = this.fit(pts, s, 0, C.pitch, fov, aspect, { x: f.focus.x + s * (tac ? 3 : 2), z: f.focus.z * (tac ? 0.5 : 0.75) },
-          lift(safe), tac ? 24 : 9, tac ? 95 : 64);
+          lift(safe), tac ? 24 : SHOT_MIN[f.state] ?? 9, tac ? 95 : 64);
         this.place(R, f, C.zoom);
       }
     }
@@ -242,7 +248,7 @@ export class CameraRig {
       for (const o of obstacles) {
         const ox = o.x - this.wantPos.x, oz = o.z - this.wantPos.z;
         const along = (ox * lx + oz * lz) / L;
-        if (along < 0.5 || along > L * 0.4) continue;
+        if (along < 0.5 || along > L * 0.6) continue;
         const across = Math.abs(ox * lz - oz * lx) / L;
         if (across > o.r + 0.6) continue;
         const y0 = this.wantPos.y, yAt = y0 + (this.wantLook.y - y0) * (along / L);

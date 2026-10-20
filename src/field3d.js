@@ -501,6 +501,19 @@ export class Stage {
           this.rig.shake = Math.max(this.rig.shake, 0.12);
           sfx('hit');
           break;
+        case 'bighit':
+          // A tackler arriving with far more momentum than the carrier: a heavier jolt, the
+          // crowd reacts. Follows the contact event of the same hit.
+          if (a && b) this.burst(b.pos.clone().lerp(a.pos, 0.4), '#ffd23f', 1.2);
+          if (b) b.flash = 0.55;
+          this.rig.shake = Math.max(this.rig.shake, 0.28);
+          this.stadium.cheer(0.45);
+          sfx('bighit');
+          break;
+        case 'oob':
+          // A throw out of bounds: the ball skips off the turf past the line.
+          this.dust(this.ball.position, 0.4, 0.4);
+          break;
         case 'tackle': case 'sack':
           // The whistle: the pair is on the turf.
           if (a && b && e.kind === 'sack') this.burst(b.pos.clone().lerp(a.pos, 0.4), '#ff7a59', 1.1);
@@ -1000,14 +1013,14 @@ export class Stage {
       const c = lp.carrier ?? lp.ball.holder;
       const at = c ? { x: lp.spotX ?? c.x, y: c.y } : { x: b.x, y: b.y };
       this.world(at.x, at.y, 0, f.focus);
-      near(at, 5);
+      near(at, 7);
       pt(f.focus.x, 0, f.focus.z);
       f.shot = 'post';
       set('POST_PLAY');
     } else if (lp.tackle) {
       const k = lp.tackle.c;
       this.world(k.x, k.y, 0, f.focus);
-      near(k, 5);
+      near(k, 6);
       f.shot = 'run';
       set('TACKLE');
     } else if (b.state === 'air' && lp.kick?.F) {
@@ -1039,6 +1052,8 @@ export class Stage {
       const land = this.world(T.tx, T.ty);
       pt(land.x, 0, land.z);
       near({ x: T.tx, y: T.ty }, 6);
+      // The man it is thrown to, wherever he is: a pass never cuts to an empty patch of turf.
+      if (T.target && Math.hypot(T.target.x - T.tx, T.target.y - T.ty) >= 6) body(T.target);
       if (u < 0.35) body(lp.off.QB);
       f.shot = 'pass';
       set('PASS_FLIGHT');
