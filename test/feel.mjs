@@ -64,7 +64,7 @@ for (let i = 0; i < N; i++) {
           let d = h - st.h[st.h.length - 1].h; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
           // A body at speed can't swing its path faster than it can plant: 90 degrees in a
           // tenth of a second at 7 yards a second is a teleport, not a cut.
-          if (sp > 5 && Math.abs(d) / DT > 9) { C.turnFast++; if (process.env.WHY2 && p.role === "route" && (C.ex = (C.ex ?? 0) + 1) < 4) console.log(p.slot, lp.t.toFixed(3), d.toFixed(3), sp.toFixed(2), st.h[st.h.length - 1], p.act, p.wp, p.slow); if (process.env.WHY) { const key = `${p.role}/${p.act}/${p.juke > 0 ? "juke" : ""}${p.spin > 0 ? "spin" : ""}${p === lp.carrier ? "C" : ""}`; (C.why ??= {})[key] = (C.why[key] ?? 0) + 1; } }
+          if (sp > 5 && Math.abs(d) / DT > 9) { C.turnFast++; }
         }
         st.h.push({ t: lp.t, h, sp });
         while (st.h.length && st.h[0].t < lp.t - 0.6) st.h.shift();
@@ -158,4 +158,3 @@ for (const [name, v, lim, unit, range] of rows) {
   console.log(`${over ? 'FAIL' : '  ok'}  ${name.padEnd(56)} ${v.toFixed(2).padStart(7)}${unit}  (${limText})`);
 }
 if (STRICT && bad) process.exit(1);
-if (C.why) console.log(Object.entries(C.why).sort((a,b)=>b[1]-a[1]).slice(0,15));

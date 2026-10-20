@@ -49,3 +49,5 @@ jobs:
         run: node test/penalties.mjs
       - name: Football IQ
         run: node test/iq.mjs 300 --strict
+      - name: Gameplay feel (movement, spacing, blocks, coverage reactions, tackles, possession)
+        run: node test/feel.mjs 300 --strict
