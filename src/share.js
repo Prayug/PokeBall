@@ -114,7 +114,7 @@ export function decodeLeague(text) {
       const s = get(1) ? get(5) : -1;
       picks.push([id, s < 0 ? null : s === SLOT_KEYS.length ? 'BENCH' : SLOT_KEYS[s] ?? null]);
     }
-    if (!rounds || numTeams < 2 || numTeams > 10 || n > rounds * numTeams) return null;
+    if (!rounds || numTeams < 2 || numTeams > LG.MAX_TEAMS || n > rounds * numTeams) return null;
     let challenge = null;
     if (flags & 8) {
       i = Math.ceil(bit / 8);

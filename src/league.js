@@ -7,6 +7,8 @@ import { coverSlot, healWeek, recordInjuries } from './injuries.js';
 import { gameHeadline, weekInReview } from './weekly.js';
 import { archiveSeason, ensureRecords, noteGame } from './records.js';
 import { openFreeAgency } from './freeagency.js';
+import { buildSchedule, firstRound, isFinalRound, makeDivisions, pairSeeds, playoffRounds, playoffSeeds, roundLabel } from './geometry.js';
+import { makeTradeOffer, migrateTrades, pickOwner, weeklyTradeOffer } from './trades.js';
 
 export const AI_TEAMS = [
   { name: 'Cerulean Surf', abbr: 'CER', color: '#2F6FD6', coach: 'speed', coachName: 'Speed Kills' },
@@ -18,7 +20,17 @@ export const AI_TEAMS = [
   { name: 'Cinnabar Blaze', abbr: 'CIN', color: '#E0702A', coach: 'trench', coachName: 'Trench Builder' },
   { name: 'Lavender Haunts', abbr: 'LAV', color: '#7D5BB5', coach: 'types', coachName: 'Type Stacker' },
   { name: 'Viridian Rangers', abbr: 'VIR', color: '#2E7D6B', coach: 'balanced', coachName: 'Best Available' },
+  // Bigger leagues (12 and 16 teams) draw from these too; an 8-team league only from the nine
+  // above, so a seed (and a shared league code) builds the same league it always did.
+  { name: 'Goldenrod Gears', abbr: 'GLD', color: '#C9A227', coach: 'trench', coachName: 'Trench Builder' },
+  { name: 'Ecruteak Embers', abbr: 'ECR', color: '#B5482D', coach: 'types', coachName: 'Type Stacker' },
+  { name: 'Olivine Tides', abbr: 'OLV', color: '#2A8FA8', coach: 'speed', coachName: 'Speed Kills' },
+  { name: 'Mahogany Frost', abbr: 'MAH', color: '#6FA8C9', coach: 'balanced', coachName: 'Best Available' },
+  { name: 'Blackthorn Wyverns', abbr: 'BLK', color: '#3B4A8F', coach: 'speed', coachName: 'Speed Kills' },
+  { name: 'Azalea Swarm', abbr: 'AZA', color: '#7FA332', coach: 'trench', coachName: 'Trench Builder' },
 ];
+const CLASSIC_TEAMS = 9;
+export const MAX_TEAMS = AI_TEAMS.length + 1;
 
 // Small seeded RNG for league-level randomness (draft noise, schedule).
 export function makeRng(seed) {
@@ -36,8 +48,11 @@ export function makeRng(seed) {
 
 export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', rounds = 24, legendaries = false,
   typeCap = true, numTeams = 8, seed = Date.now(), userColor = '#C8102E', userPick = null, scheme = 'balanced' } = {}) {
+  numTeams = Math.max(2, Math.min(MAX_TEAMS, numTeams));
+  // A draft the pool can't fill drops to the shortest full roster (every starting slot).
+  if (rounds > maxRounds(numTeams, legendaries)) rounds = SLOT_KEYS.length;
   const rng = makeRng(seed);
-  const pool = AI_TEAMS.slice();
+  const pool = AI_TEAMS.slice(0, numTeams <= CLASSIC_TEAMS + 1 ? CLASSIC_TEAMS : AI_TEAMS.length);
   const ai = [];
   while (ai.length < numTeams - 1) ai.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   const teams = [
@@ -59,11 +74,19 @@ export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', round
   }
   return {
     version: 2, seed, rngState: rng.state(), settings: { rounds, legendaries, typeCap, numTeams },
-    teams, picks, pickIndex: 0, phase: 'draft', week: 0, schedule: [], results: [], playoffs: null, champion: null,
+    teams, divisions: makeDivisions(numTeams), picks, pickIndex: 0, phase: 'draft', week: 0, schedule: [], results: [], playoffs: null, champion: null,
     seasonStats: {}, season: 1, history: [], growth: {}, condition: {}, rookies: [], trade: null, offseason: null,
     injuries: {}, weekly: [],
     contracts: {}, cap: null, fa: null, careers: {}, careerSeason: 0, hof: [], records: {}, meetings: [],
+    pickOwners: {}, tradeLog: [],
   };
+}
+
+// The longest draft the pool can fill: every team drafts a full roster with some Pokémon left
+// over for free agency and the rookie drafts (16 teams can't all draft 28 without legendaries).
+export function maxRounds(numTeams, legendaries) {
+  const pool = ALL_IDS.filter((id) => legendaries || !PLAYERS[id].legendary).length;
+  return Math.floor((pool * 0.94) / numTeams);
 }
 
 // Brings older saves up to the current league shape.
@@ -77,6 +100,15 @@ export function migrateLeague(L) {
   L.injuries ??= {}; L.weekly ??= [];
   // Free agency and career records arrived within version 2: fill them in where missing.
   L.contracts ??= {}; L.cap ??= null; L.fa ??= null;
+  // Bigger leagues and trade desk 2.0 arrived within version 2 as well.
+  if (L.divisions === undefined) L.divisions = makeDivisions(L.teams.length);
+  if (L.playoffs && !L.playoffs.rounds) {
+    const P = L.playoffs, s = P.seeds;
+    P.byes = [];
+    P.rounds = [[{ home: s[0], away: s[3] }, { home: s[1], away: s[2] }]];
+    if (P.round >= 1) P.rounds.push(P.games);
+  }
+  migrateTrades(L);
   ensureRecords(L);
   replaceRetired(L);
   return L;
@@ -111,7 +143,7 @@ export function replaceRetired(L) {
       swaps.push({ team: t.id, out: old, in: id });
     }
   }
-  if (swaps.length && L.trade && swaps.some((s) => s.out === L.trade.youGet || s.out === L.trade.youSend)) L.trade = null;
+  if (swaps.length && L.trade && swaps.some((s) => [...L.trade.get, ...L.trade.send].includes(s.out))) L.trade = null;
   if (swaps.length) L.retiredSwaps = [...(L.retiredSwaps ?? []), ...swaps];
   return swaps;
 }
@@ -255,29 +287,9 @@ export function finishDraft(L) {
     if (!t.user) { t.lineup = lineup; t.bench = bench; }
   }
   L.phase = 'grades';
-  L.schedule = roundRobin(L.teams.map((t) => t.id), leagueRng(L));
+  L.schedule = buildSchedule(L, leagueRng(L));
   L.week = 0;
   L.trade = makeTradeOffer(L);
-}
-
-function roundRobin(ids, { r, save }) {
-  const arr = ids.slice();
-  if (arr.length % 2) arr.push(null);
-  const n = arr.length, weeks = [];
-  for (let w = 0; w < n - 1; w++) {
-    const games = [];
-    for (let i = 0; i < n / 2; i++) {
-      const a = arr[i], b = arr[n - 1 - i];
-      if (a == null || b == null) continue;
-      const home = (w + i) % 2 === 0;
-      games.push({ home: home ? a : b, away: home ? b : a });
-    }
-    weeks.push(games);
-    arr.splice(1, 0, arr.pop());
-  }
-  for (let i = weeks.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [weeks[i], weeks[j]] = [weeks[j], weeks[i]]; }
-  save();
-  return weeks;
 }
 
 // Letter grades by unit relative to the league.
@@ -443,25 +455,31 @@ export function advanceWeek(L) {
   healWeek(L);
   L.week++;
   if (L.week >= L.schedule.length) {
-    const top = standings(L).slice(0, 4).map((r) => r.id);
+    const seeds = playoffSeeds(L, standings(L));
+    const { byes, games } = firstRound(L, seeds);
     L.phase = 'playoffs';
-    L.playoffs = { round: 0, games: [{ home: top[0], away: top[3] }, { home: top[1], away: top[2] }], seeds: top, final: null };
+    if (L.trade?.status === 'open') L.trade.status = 'expired';
+    L.playoffs = { round: 0, games, seeds, byes, rounds: [games], final: null };
+  } else {
+    weeklyTradeOffer(L);
   }
 }
 
+// After a playoff round: the winners (and any teams on a bye) reseed, highest left hosting the
+// lowest, until one is left.
 export function advancePlayoffs(L) {
   const P = L.playoffs;
   weekInReview(L, { playoff: true, round: P.round });
   healWeek(L);
   const winners = L.results.filter((r) => r.playoff && r.round === P.round).map((r) => r.winner);
-  if (P.round === 0) {
-    const [a, b] = winners;
-    const seedOf = (id) => P.seeds.indexOf(id);
-    const home = seedOf(a) < seedOf(b) ? a : b;
-    P.round = 1; P.games = [{ home, away: home === a ? b : a }];
-  } else {
+  const alive = [...(P.round === 0 ? P.byes ?? [] : []), ...winners];
+  if (isFinalRound(L, P.round) || alive.length < 2) {
     L.champion = winners[0];
     L.phase = 'done';
+  } else {
+    P.round++;
+    P.games = pairSeeds(alive, P.seeds);
+    P.rounds.push(P.games);
   }
 }
 
@@ -582,7 +600,8 @@ export function awards(L) {
   return out;
 }
 
-// Semifinals and final with scores where played.
+// Every playoff round with scores where played, and the rounds still to come as open slots.
+// semis and final are the last two rounds.
 export function bracket(L) {
   const P = L.playoffs;
   if (!P) return null;
@@ -593,9 +612,25 @@ export function bracket(L) {
     const score = (id) => (r ? (r.home === id ? r.score[0] : r.score[1]) : null);
     return { home, away, homeScore: score(home), awayScore: score(away), winner: r?.winner ?? null, seeds: [s.indexOf(home) + 1, s.indexOf(away) + 1] };
   };
-  const semis = [game(0, s[0], s[3]), game(0, s[1], s[2])];
-  const final = P.round >= 1 ? game(1, P.games[0].home, P.games[0].away) : game(1, null, null);
-  return { semis, final, champion: L.champion };
+  const total = playoffRounds(L);
+  const rounds = [];
+  let size = (s.length - (P.byes?.length ?? 0)) / 2;
+  for (let i = 0; i < total; i++) {
+    const played = P.rounds[i];
+    const games = played ? played.map((g) => game(i, g.home, g.away)) : Array.from({ length: size }, () => game(i, null, null));
+    rounds.push({ round: i, name: roundLabel(L, i, true), games, byes: i === 0 ? P.byes ?? [] : [] });
+    size = Math.max(1, (games.length + (i === 0 ? P.byes?.length ?? 0 : 0)) / 2);
+  }
+  return { rounds, semis: rounds[total - 2]?.games ?? [], final: rounds[total - 1].games[0], champion: L.champion };
+}
+
+// How far a team went: 'champion', the round it lost in, or null when it missed the playoffs.
+export function playoffExit(L, id) {
+  if (L.champion === id) return 'champion';
+  const B = bracket(L);
+  if (!B || !B.rounds.some((r) => r.byes.includes(id) || r.games.some((g) => g.home === id || g.away === id))) return null;
+  const lost = B.rounds.find((r) => r.games.some((g) => g.winner != null && (g.home === id || g.away === id) && g.winner !== id));
+  return lost ? lost.round : 'alive';
 }
 
 // ---------- trades ----------
@@ -611,72 +646,6 @@ export function aiLikes(team, id) {
   if (team.coach === 'speed' && p.attrs.spd >= 85 && ['WR', 'CB', 'RB', 'S'].includes(grp)) return 5;
   if (team.coach === 'trench' && ['OL', 'DL'].includes(grp)) return 5;
   return 0;
-}
-
-// One AI team offers a 1-for-1 swap that helps both sides.
-export function makeTradeOffer(L) {
-  const me = L.teams.find((t) => t.user);
-  if (!me) return null;
-  const { r, save } = leagueRng(L);
-  const meBase = teamStrength(me.roster);
-  const topOvr = (id) => PLAYERS[id].ovr[PLAYERS[id].best[0]];
-  // The ten best by overall, plus the kicker and punter, whose value is at their own slot.
-  const mine = [...new Set([...me.roster.slice().sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 10), me.lineup.K, me.lineup.P])].filter((id) => id != null);
-  const upgrade = (id, k) => me.lineup[k] == null || PLAYERS[id].ovr[k] > PLAYERS[me.lineup[k]].ovr[k];
-  let best = null;
-  for (const t of L.teams) {
-    if (t.user) continue;
-    const base = teamStrength(t.roster);
-    const theirs = t.roster.filter((id) => upgrade(id, PLAYERS[id].best[0])).sort((a, b) => topOvr(b) - topOvr(a)).slice(0, 8);
-    for (const k of ['K', 'P']) if (t.lineup[k] != null && upgrade(t.lineup[k], k) && !theirs.includes(t.lineup[k])) theirs.push(t.lineup[k]);
-    for (const send of mine) {
-      for (const get of theirs) {
-        const meGain = teamStrength(me.roster.map((x) => (x === send ? get : x))) - meBase;
-        if (meGain <= 0.5) continue;
-        const aiGain = teamStrength(t.roster.map((x) => (x === get ? send : x))) - base + aiLikes(t, send) - aiLikes(t, get);
-        if (aiGain <= 1) continue;
-        const score = Math.min(meGain, aiGain) + r() * 2;
-        if (!best || score > best.score) best = { team: t.id, youGet: get, youSend: send, gain: Math.round(meGain * 10) / 10, score };
-      }
-    }
-  }
-  save();
-  if (!best) return null;
-  const { score, ...offer } = best;
-  return { ...offer, season: L.season ?? 1, status: 'open' };
-}
-
-// How the user's kicker and punter change if the open trade goes through and the depth chart is
-// auto-arranged (the lineup the offer's gain is measured on). Null when neither changes.
-export function tradeKicking(L) {
-  const T = L.trade, me = L.teams.find((t) => t.user);
-  if (!T || !me) return null;
-  const before = kickingUnit(me.lineup);
-  const after = kickingUnit(autoDepthChart(me.roster.map((x) => (x === T.youSend ? T.youGet : x))).lineup);
-  const touched = [T.youSend, T.youGet];
-  const k = before.k?.id !== after.k?.id && (touched.includes(before.k?.id) || touched.includes(after.k?.id));
-  const p = before.p?.id !== after.p?.id && (touched.includes(before.p?.id) || touched.includes(after.p?.id));
-  return k || p ? { before, after, k, p } : null;
-}
-
-export function tradeOpen(L) {
-  return L.trade?.status === 'open' && (L.phase === 'grades' || (L.phase === 'season' && L.week === 0));
-}
-
-export function acceptTrade(L) {
-  const T = L.trade;
-  if (!tradeOpen(L)) return false;
-  const me = L.teams.find((t) => t.user), ai = L.teams[T.team];
-  const swap = (arr, a, b) => arr.map((x) => (x === a ? b : x));
-  me.roster = swap(me.roster, T.youSend, T.youGet);
-  me.bench = swap(me.bench, T.youSend, T.youGet);
-  for (const k of Object.keys(me.lineup)) if (me.lineup[k] === T.youSend) me.lineup[k] = T.youGet;
-  for (const k of Object.keys(me.slots)) if (me.slots[k] === T.youSend) me.slots[k] = T.youGet;
-  ai.roster = swap(ai.roster, T.youGet, T.youSend);
-  const { lineup, bench } = autoDepthChart(ai.roster);
-  ai.lineup = lineup; ai.bench = bench; ai.slots = { ...lineup };
-  T.status = 'accepted';
-  return true;
 }
 
 // ---------- offseason ----------
@@ -769,16 +738,29 @@ export function rookieOrder(L) {
 }
 
 // After free agency: a snake rookie draft that fills every roster back to full. A team that
-// signed free agents has fewer picks and sits out the later rounds.
+// signed free agents has fewer picks and sits out the later rounds. Picks traded during the
+// season move the slot: the new owner uses it, and every team still makes exactly as many
+// picks as it has open spots (its earliest ones; a team that traded picks away makes up the
+// rest at the end of the draft).
 export function openRookieDraft(L) {
   const order = rookieOrder(L);
   const need = Object.fromEntries(L.teams.map((t) => [t.id, Math.max(0, L.settings.rounds - t.roster.length)]));
   const rounds = Math.max(0, ...Object.values(need));
+  const made = Object.fromEntries(L.teams.map((t) => [t.id, 0]));
   L.picks = [];
   for (let r = 0; r < rounds; r++) {
     const row = r % 2 === 0 ? order : [...order].reverse();
-    for (const id of row) if (need[id] > r) L.picks.push({ round: r + 1, team: id, player: null, slot: null });
+    for (const from of row) {
+      const team = pickOwner(L, L.season, r + 1, from);
+      if (made[team] >= need[team]) continue;
+      made[team]++;
+      L.picks.push({ round: r + 1, team, player: null, slot: null, ...(team !== from ? { from } : {}) });
+    }
   }
+  for (let r = rounds; L.teams.some((t) => made[t.id] < need[t.id]); r++) {
+    for (const id of order) if (made[id] < need[id]) { made[id]++; L.picks.push({ round: r + 1, team: id, player: null, slot: null }); }
+  }
+  L.pickOwners = Object.fromEntries(Object.entries(L.pickOwners ?? {}).filter(([k]) => !k.startsWith(`${L.season}:`)));
   L.pickIndex = 0; L.phase = 'draft';
   if (!L.picks.length) finishDraft(L);
 }

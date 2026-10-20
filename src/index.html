@@ -382,9 +382,33 @@ table.kicking thead th { font: 600 12px/1 var(--f-data); color: var(--chalk-dim)
   .tside b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 .trade.done { border-left: 4px solid var(--good); }
+.tside .tp { display: grid; justify-items: start; gap: 4px; }
+.tside .tp + .tp, .tside .tp + .pickchip { border-top: 1px solid var(--line); padding-top: 6px; }
+.pickchip { display: inline-block; font: 600 12px/1.2 var(--f-data); background: color-mix(in srgb, var(--amber) 22%, transparent); border: 1px solid var(--amber); border-radius: 3px; padding: 4px 6px; }
+/* Trade desk */
+.desk-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.desk-list { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 2px; max-height: 420px; overflow-y: auto; }
+.desk-list label { display: flex; flex-direction: row; color: var(--chalk); gap: 6px; align-items: center; padding: 3px 6px; border-radius: 3px; cursor: pointer; font-size: 14px; }
+.desk-list label:hover { background: var(--turf-deep); }
+.desk-list label.on { background: color-mix(in srgb, var(--amber) 18%, transparent); }
+.desk-list label.dis { opacity: 0.45; cursor: not-allowed; }
+.desk-list .pn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desk-list .tag { font: 600 11px/1 var(--f-data); color: var(--chalk-dim); }
+.desk-picks { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.desk-picks button.pickchip { cursor: pointer; background: transparent; color: inherit; }
+.desk-picks button.pickchip.on { background: color-mix(in srgb, var(--amber) 40%, transparent); }
+.verdict { border-left: 4px solid var(--line); padding: 6px 10px; margin: 10px 0; }
+.verdict.yes { border-color: var(--good); }
+.verdict.close { border-color: var(--amber); }
+.verdict.no { border-color: var(--red); }
+.tradelog { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.tradelog li { font-size: 14px; }
+@media (max-width: 560px) { .desk-cols { grid-template-columns: minmax(0, 1fr); } }
 
 /* Bracket, awards, history, results */
-.bracket { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: center; }
+.bracket { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; align-items: center; }
+.bgame.bye .bteam.tbd { font-size: 12px; }
+.stand em.seed { font: 600 11px/1 var(--f-data); color: var(--amber); font-style: normal; margin-right: 4px; }
 .bround { display: grid; gap: 8px; }
 .bround h4 { margin-top: 0; }
 .bgame { display: grid; gap: 2px; background: var(--turf-deep); border: 1px solid var(--line); border-radius: var(--r); padding: 4px; }

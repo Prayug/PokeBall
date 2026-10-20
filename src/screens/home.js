@@ -7,6 +7,7 @@ import { P, esc, sprite, teamBadge } from '../ui.js';
 import { autoAdvance, difficultyHtml } from './game.js';
 import { SCHEMES, SCHEME_KEYS } from '../coach.js';
 import { sharedInHtml } from './share.js';
+import { LEAGUE_SIZES } from '../geometry.js';
 
 function resumeScreen(L, game) {
   if (game && !game.final) return 'game';
@@ -14,7 +15,7 @@ function resumeScreen(L, game) {
 }
 export function loadSnapshot(snap) {
   S.league = LG.migrateLeague(snap.league); S.game = LG.replaceRetiredInGame(snap.game ?? null, S.league); S.gameMeta = snap.gameMeta ?? null;
-  S.offCuts = null; S.subSel = null; S.resultIdx = null;
+  S.offCuts = null; S.subSel = null; S.resultIdx = null; S.desk = null;
   setScreen(resumeScreen(S.league, S.game));
   if (S.screen === 'game') autoAdvance();
 }
@@ -36,7 +37,7 @@ export function renderHome() {
   return `<section class="home">
     ${sharedInHtml()}
     <div class="hero">
-      <p class="eyebrow">Gen 1 to 9 · 22 positions · 8-team league</p>
+      <p class="eyebrow">Gen 1 to 9 · 22 positions · 8 to 16-team leagues</p>
       <h1>Draft Pokémon. Coach football.</h1>
       <p class="lede">Every rating comes from real base stats: Speed makes receivers, Defense and HP make linemen, Sp. Atk makes quarterbacks. Type matchups decide the trenches.</p>
       <div class="showcase">${showcase.map((id) => `<figure>${sprite(id)}<figcaption>${esc(P(id).name)}<b>${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</b></figcaption></figure>`).join('')}</div>
@@ -48,9 +49,13 @@ export function renderHome() {
           <label>Team name<input id="f-name" maxlength="22" value="${esc(st.name)}"></label>
           <label class="short">Abbreviation<input id="f-abbr" maxlength="3" value="${esc(st.abbr)}"></label>
         </div>
+        <fieldset><legend>League size</legend>
+          ${LEAGUE_SIZES.map((n) => `<label class="pill"><input type="radio" name="teams" value="${n}" ${(st.teams ?? 8) === n ? 'checked' : ''}> ${n} teams${n === 8 ? ', 7 weeks, top 4 in the playoffs' : n === 12 ? ', 3 divisions, 14 weeks, 6 in the playoffs' : ', 4 divisions, 18 weeks, 8 in the playoffs'}</label>`).join('')}
+        </fieldset>
         <fieldset><legend>Draft length</legend>
           <label class="pill"><input type="radio" name="rounds" value="24" ${st.rounds === 24 ? 'checked' : ''}> 24 rounds, starters, kicker and punter</label>
           <label class="pill"><input type="radio" name="rounds" value="28" ${st.rounds === 28 ? 'checked' : ''}> 28 rounds, with 4 bench</label>
+          <span class="small muted">A 16-team league without legendaries drafts 24 rounds: the pool runs short at 28.</span>
         </fieldset>
         <fieldset class="schemes"><legend>Your scheme</legend>
           ${SCHEME_KEYS.map((k) => `<label class="schemepick"><input type="radio" name="scheme" value="${k}" ${(st.scheme ?? 'balanced') === k ? 'checked' : ''}><b>${esc(SCHEMES[k].name)}</b><span class="small muted">${esc(SCHEMES[k].blurb)}</span></label>`).join('')}
