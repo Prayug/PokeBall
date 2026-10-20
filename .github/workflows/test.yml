@@ -51,6 +51,8 @@ jobs:
         run: node test/clock.mjs
       - name: Penalties
         run: node test/penalties.mjs
+      - name: Replay review and the film room's tape
+        run: node test/review.mjs
       - name: Football IQ
         run: node test/iq.mjs 300 --strict
       - name: Gameplay feel (movement, spacing, blocks, coverage reactions, tackles, possession)

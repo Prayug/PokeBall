@@ -121,7 +121,7 @@ export function decodeLeague(text) {
       const u16 = () => (u8() << 8) | u8();
       const c = { gp: u8(), w: u8(), l: u8(), t: u8(), pf: u16(), pa: u16(), finish: u8() };
       const end = i, sum = u16();
-      if (sum !== check16(b.slice(0, end)) || c.w + c.l + c.t !== c.gp || c.finish > 4) return null;
+      if (sum !== check16(b.slice(0, end)) || c.w + c.l + c.t !== c.gp || c.finish > 5) return null;
       challenge = { ...c, id: sum.toString(16).toUpperCase().padStart(4, '0') };
     }
     return { code: m[1], seed, rounds, numTeams, legendaries: !!(flags & 1), typeCap: !!(flags & 2), rng, name, abbr, picks, challenge };
@@ -152,7 +152,7 @@ export function leagueFromShare(D, { replay = true, teamName, abbr } = {}) {
 
 // ---------- challenges ----------
 export const recordText = (s) => `${s.w}-${s.l}${s.t ? `-${s.t}` : ''}`;
-export const FINISH_SHORT = ['', 'missed the playoffs', 'lost a semifinal', 'lost the final', 'champions'];
+export const FINISH_SHORT = ['', 'missed the playoffs', 'lost a semifinal', 'lost the final', 'champions', 'lost in the first round'];
 export function challengeText(C) {
   return C.finish ? `${recordText(C)}, ${FINISH_SHORT[C.finish]}` : `${recordText(C)} through ${C.gp} game${C.gp === 1 ? '' : 's'}`;
 }
@@ -179,7 +179,7 @@ export function challengeStatus(L) {
   const ready = C.finish ? mine.finish > 0 : mine.gp >= C.gp;
   if (!ready) return { state: 'pending', mine };
   const net = (s) => s.w - s.l;
-  const d = (C.finish ? mine.finish - C.finish : 0) || net(mine) - net(C) || (mine.pf - mine.pa) - (C.pf - C.pa);
+  const d = (C.finish ? LG.FINISH_RANK[mine.finish] - LG.FINISH_RANK[C.finish] : 0) || net(mine) - net(C) || (mine.pf - mine.pa) - (C.pf - C.pa);
   return { state: d > 0 ? 'won' : d < 0 ? 'lost' : 'tied', mine };
 }
 // Freezes a decided challenge so later seasons (whose results replace the first's) keep it.
