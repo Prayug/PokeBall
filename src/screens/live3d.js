@@ -662,7 +662,7 @@ function debugHud() {
   rows.push(`<b>${L3.flow ?? ''}</b> · sim ${lp ? `${lp.phase} t=${f(lp.t, 2)}` : '—'} · camera ${stage.rig.shot ?? stage.rig.mode} pos ${f(stage.rig.pos.x)},${f(stage.rig.pos.y)},${f(stage.rig.pos.z)} → ${f(stage.rig.look.x)},${f(stage.rig.look.z)}`);
   if (lp) {
     const b = lp.ball;
-    rows.push(`ball ${b.state}${b.holder ? ` (${b.holder.slot})` : ''} at ${f(b.x)}, ${f(b.y)}, h ${f(b.z, 2)}${lp.thrown ? ` · thrown to ${lp.thrown.target?.slot ?? 'away'} T=${f(lp.thrown.T, 2)}s` : ''}${lp.tackle ? ` · tackle ${lp.tackle.q.slot}→${lp.tackle.c.slot} fp ${f(lp.tackle.fp)}` : ''}`);
+    rows.push(`<b>${lp.possession ?? ''}</b> · ball ${b.state}${b.holder ? ` (${b.holder.slot})` : ''} at ${f(b.x)}, ${f(b.y)}, h ${f(b.z, 2)}${lp.thrown ? ` · thrown to ${lp.thrown.target?.slot ?? 'away'} T=${f(lp.thrown.T, 2)}s` : ''}${lp.tackle ? ` · tackle ${lp.tackle.q.slot}→${lp.tackle.c.slot} fp ${f(lp.tackle.fp)}` : ''}`);
     const tgt = (p) => p.eng ? `eng ${p.eng.slot}` : p.aim ? `→${p.aim.slot ?? ''}` : p.man ? `man ${p.man.slot}` : p.zone ? `zone ${f(p.zone.x, 0)},${f(p.zone.y, 0)}` : p.route ? `route ${p.routeName ?? ''} ${p.wp}/${p.route.length}` : '';
     const tbl = lp.players.map((p) => `<tr class="${p.side}"><td>${p.slot}</td><td>${p.act}</td><td>${p.contact ?? ''}</td><td>${p.role}</td><td>${f(Math.hypot(p.vx, p.vy))}</td><td>${tgt(p)}</td></tr>`).join('');
     rows.push(`<table>${tbl}</table>`);

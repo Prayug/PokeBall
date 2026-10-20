@@ -2,7 +2,7 @@
 // with all 22 players on autopilot. Prints the same league averages as balance.mjs.
 // Usage: node test/live.mjs [games]
 import { createLeague, aiChoosePick, makePick, teamForGame } from '../src/league.js';
-import { createGame, runPlay, runLivePlay, aiOffenseCall, aiDefenseCall, OFF_PLAYS } from '../src/engine.js';
+import { createGame, runPlay, runLivePlay, snapClock, aiOffenseCall, aiDefenseCall, OFF_PLAYS } from '../src/engine.js';
 import { createLivePlay, autoPlay, playSeconds } from '../src/live.js';
 
 const N = Number(process.argv[2] ?? 40);
@@ -20,6 +20,7 @@ for (let i = 0; i < N; i++) {
     const off = aiOffenseCall(g), def = aiDefenseCall(g);
     const k = OFF_PLAYS[off].kind;
     if (k === 'run' || k === 'pass') {
+      if (!snapClock(g, null, off)) continue;
       const lp = createLivePlay(g, off, def, {});
       const r = autoPlay(lp);
       const s = playSeconds(lp);

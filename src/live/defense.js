@@ -2,7 +2,7 @@
 // assignments at the line, and what each defender wants each step (rush, cover, pursue).
 import { clamp, rep } from '../engine.js';
 import { frontX } from '../formations.js';
-import { DT, RECEIVERS, dist, len, mustGain, seek, sgn, slowDown, sticks } from '../live.js';
+import { DT, RECEIVERS, dist, len, mustGain, perceive, seek, sgn, slowDown, sticks } from '../live.js';
 
 // Defensive calls as data: who rushes (blitz), who drops from the line into coverage (drop),
 // zone spots { slot: [depth, across, radius] } (across is toward the defender's own side for
@@ -110,7 +110,8 @@ export function rushWant(lp, p) {
     const lane = rushLane(lp, p, c);
     if (lane) return seek(p, lane, fooled ? 0.7 : 1, 0.05);
   }
-  intercept(p, c, fooled ? 0.7 : 1);
+  // A rusher has his eyes on the passer the whole way; a runner's cuts take him a beat to read.
+  intercept(p, c, fooled ? 0.7 : 1, lp.kind === 'pass' && !lp.carrierSet ? null : lp);
 }
 // The point to aim for to get through the line, or null if the straight path is open.
 function rushLane(lp, p, c) {
@@ -152,6 +153,15 @@ function rushLane(lp, p, c) {
   return { x: p.x, y: sgn(p.y || 0.01) * (wide + p.r + 0.6) };
 }
 
+// How late a defender reads what a receiver or a ball carrier does: coverage skill and
+// awareness, slower against the user on the easier levels (aiRead). A man at 60 coverage
+// answers a cut about a quarter second after it, a great one in about half that.
+export function readDelay(lp, p, carrier = false) {
+  const skill = carrier ? p.a.awr * 0.5 + p.a.tkl * 0.2 + p.a.spd * 0.3 : p.a.cov * 0.6 + p.a.awr * 0.4;
+  const base = carrier ? 0.09 + (100 - skill) * 0.0022 : 0.1 + (100 - skill) * 0.004;
+  return clamp(base, 0.05, 0.45) * (lp.user != null && lp.user !== lp.d ? lp.aiRead ?? 1 : 1);
+}
+
 export function coverWant(lp, p) {
   const g = lp.g;
   const c = lp.carrierSet ? lp.carrier : null;
@@ -177,6 +187,15 @@ export function coverWant(lp, p) {
     return seek(p, { x: Math.max(1.5, p.x - 1), y: lp.holeY * 0.5 * fooled }, 0.5);
   }
   if (lp.play.pa && lp.t < 0.6 && ['MLB', 'OLB', 'SS'].includes(p.slot)) return seek(p, { x: 1.5, y: p.y }, 0.6);
+  // A zone defender reads the quarterback: when the passer's arm starts forward, the one whose
+  // area the ball is going to drives on the receiver it is meant for, a read's time after the
+  // windup starts (a good one gets a jump on the throw; a poor one sees it late or not at all).
+  if (p.zone && lp.windup && !lp.windup.away && lp.windup.r) {
+    const W = lp.windup, r = W.r;
+    if (lp.t - W.t0 > readDelay(lp, p) * 1.3 && dist(p, r) < 9 && Math.hypot(r.x - p.zone.x, r.y - p.zone.y) < p.zone.r + 3) {
+      return seek(p, { x: r.x + r.vx * 0.5 + 0.5, y: r.y + r.vy * 0.5 }, 1, 0.2);
+    }
+  }
   if (p.zone) return zoneWant(lp, p);
   if (p.man) {
     const r = p.man;
@@ -187,7 +206,9 @@ export function coverWant(lp, p) {
     // falls behind; on straight lines downfield he only gives up a little ground.
     p.aim = r;
     const lag = p.lag ?? 0.2;
-    const px = r.x - r.vx * lag * 0.45, py = r.y - r.vy * lag;
+    // He plays what he saw a beat ago (see perceive in live.js).
+    const rs = perceive(lp, r, p.readT ??= readDelay(lp, p));
+    const px = rs.x - rs.vx * lag * 0.45, py = rs.y - rs.vy * lag;
     // Keep a cushion over the top that closes as the route develops.
     p.gap0 ??= Math.max(1, p.x - r.x);
     // A shaded coverage plays with more cushion (over the top) or less (underneath), and
@@ -195,7 +216,7 @@ export function coverWant(lp, p) {
     const cushion = Math.max((r.x > 12 ? 1.4 : 0.4) + (p.cushion ?? 0), p.gap0 - lp.t * 5);
     const lev = p.lev ?? 0.4;
     const tx = px + cushion, ty = py + (r.y > 0 ? -lev : lev);
-    let vx = (tx - p.x) * 3 + r.vx, vy = (ty - p.y) * 3 + r.vy;
+    let vx = (tx - p.x) * 3 + rs.vx, vy = (ty - p.y) * 3 + rs.vy;
     const l = len(vx, vy), cap = p.top;
     if (l > cap) { vx *= cap / l; vy *= cap / l; }
     p.want = { vx, vy };
@@ -225,7 +246,8 @@ function zoneWant(lp, p) {
   p.zoneMan = threat;
   if (!threat) { seek(p, z, 0.75, 2); return; }
   const lag = p.lag ?? 0.25;
-  const px = threat.x - threat.vx * lag * 0.45, py = threat.y - threat.vy * lag;
+  const ts = perceive(lp, threat, p.readT ??= readDelay(lp, p));
+  const px = ts.x - ts.vx * lag * 0.45, py = ts.y - ts.vy * lag;
   let tx = (px + 1.2) * 0.75 + z.x * 0.25;
   const ty = py * 0.75 + z.y * 0.25;
   // Deep zones never let a receiver get behind them.
@@ -254,7 +276,7 @@ export function pursueWant(lp, p, c) {
       const tx = c.x + c.vx * T + fwd * Math.min(2.5, d * 0.2), ty = c.y + c.vy * T;
       return seek(p, { x: tx, y: ty }, 1, 0.05);
     }
-    intercept(p, c, 1);
+    intercept(p, c, 1, lp);
     if (p.want) {
       const sh = outside ? out * 0.6 : -out * 0.25;
       const tl = Math.max(1, d);
@@ -264,12 +286,14 @@ export function pursueWant(lp, p, c) {
     }
     return;
   }
-  intercept(p, c, 1);
+  intercept(p, c, 1, lp);
 }
 
 // Aim at where the target will be, not where it is.
-function intercept(p, c, frac) {
-  p.aim = c;
+function intercept(p, c0, frac, lp = null) {
+  p.aim = c0;
+  // The carrier as this defender reads him: a juke or a cutback takes a beat to register.
+  const c = lp ? perceive(lp, c0, p.readC ??= readDelay(lp, p, true)) : c0;
   // Solve |c + v t - p| = speed * t for the earliest t.
   const sp = Math.max(3, p.top * frac);
   const rx = c.x - p.x, ry = c.y - p.y;
