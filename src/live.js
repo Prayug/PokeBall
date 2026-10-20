@@ -4,6 +4,7 @@
 // Coordinates are yards in the offense's frame: x runs downfield from the line of scrimmage,
 // y runs across the field (sidelines at ±SIDE). No DOM access, so tests can run it headless.
 import { traitMod } from './traits.js';
+import { livePower } from './powers.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
 import { bestMatchup } from './types.js';
 import { weatherPhys } from './weather.js';
@@ -17,7 +18,7 @@ import { PLAY_ROUTES, airJumps, ballFlight, buildRoute, contest, coverageRead, l
 import { atSnap, shiftStep } from './live/presnap.js';
 import { XP_SPOT, kickStep, kickWant, liveKick, setupKick } from './live/kicks.js';
 import { RATES, liveFoul, preSnapFoul, sloppy } from './penalties.js';
-export { dist, DT, event, finish, GRAVITY, isManual, kin, len, mustGain, note, passBlockWant, RECEIVERS, seek, separate, setCarrier, sgn, SIDE, slowDown, steer, sticks, traitNotes, unengage } from './live/core.js';
+export { dist, DT, event, finish, GRAVITY, isManual, kin, len, mustGain, note, passBlockWant, perceive, RECEIVERS, seek, separate, setCarrier, sgn, SIDE, slowDown, steer, sticks, traitNotes, unengage } from './live/core.js';
 export { DEF_SCHEMES } from './live/defense.js';
 export { liveKick } from './live/kicks.js';
 export { ROUTES, PLAY_ROUTES, OPENNESS, releasePoint, catchHeight, flightAt } from './live/passing.js';
@@ -104,6 +105,7 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
   if (lp.kick && opts.from) for (const p of lp.kick.ko ? lp.players : [lp.kick.returner, lp.kicker]) if (p && dist(p, p.home) > 12) { p.x = p.home.x; p.y = p.home.y; }
   if (!lp.kick?.ko) lp.ball.holder = lp.off.C ?? lp.off.QB;
   syncBall(lp);
+  trackPossession(lp);
   // Coach mode (opts.watch): the user called the play and the AI plays every Pokémon.
   if (opts.watch) lp.control = null;
   // A kick: the receiving side has the returner; the kicking side takes a cover man once it is away.
@@ -150,11 +152,17 @@ function makePlayer(g, ti, side, slot, id, lp) {
     // Top speed from Speed; getting there from Acceleration; braking and cutting from Agility.
     // Heavy bodies are slower to get going and to turn.
     top: 5.6 + 0.04 * a.spd, accel: (6 + 0.03 * a.spd + 0.035 * a.acl) * (1 - heavy), cut: (1.4 + a.agi / 100) * (1 - heavy * 0.8) * (wx?.cut ?? 1), wx,
+    // Sideways grip in a cut, yards per second squared: agility, less for a heavy body and on
+    // a slick field.
+    grip: (12 + a.agi * 0.1) * (1 - heavy * 0.7) * (wx?.cut ?? 1),
     role: 'idle', eng: null, engT: 0, stun: 0, cool: 0, slow: 0, wp: 0, route: null, man: null, zone: null,
     react: 0, manual: false, anim: rand(g) * 8, juke: -1, truck: -1, spin: -1, burst: 1,
     // Authoritative state the renderer, the HUD and the tests read: the action this player is
     // doing (see classify()), its contact state in a block, its target, and its acceleration.
     act: 'SET', contact: null, tgt: null, acl: 0, turnRate: 0,
+    // His power, when he has zoned into it (see powers.js): the traits read its live edges and
+    // the field draws its aura.
+    power: livePower(g, ti, id),
   };
 }
 
@@ -392,7 +400,7 @@ export function snap(lp) {
     }
   }
   // A kickoff has no snap: the kicker starts his run up to the tee.
-  if (lp.kick?.ko) { lp.kick.stage = 'approach'; event(lp, 'snap', '', lp.kicker, lp.kicker); return; }
+  if (lp.kick?.ko) { lp.kick.stage = 'approach'; event(lp, 'snap', '', lp.kicker, lp.kicker); trackPossession(lp); return; }
   const qb = lp.snapTo ?? lp.off.QB, c = lp.off.C;
   if (isGun(lp.formation) && c && qb) {
     // The ball flies back from the center to the quarterback.
@@ -410,6 +418,7 @@ export function snap(lp) {
   const wide = (s) => front.filter((p) => sgn(p.y) === s).sort((a, b) => Math.abs(b.y) - Math.abs(a.y))[0];
   for (const s of [-1, 1]) { const w = wide(s); if (w) w.edge = s; }
   event(lp, 'snap', '', c ?? qb, qb);
+  trackPossession(lp);
 }
 
 // The play's state for the game loop: PRE_SNAP, SNAP (the ball on its way from the center
@@ -434,6 +443,7 @@ export function step(lp, input = null) {
     shiftStep(lp);
     for (const p of lp.players) { orient(lp, p); classify(lp, p); }
     if (lp.set && lp.snapQueued) snap(lp);
+    trackPossession(lp);
     return;
   }
   if (lp.phase !== 'live') {
@@ -447,6 +457,7 @@ export function step(lp, input = null) {
     looseBall(lp);
     syncBall(lp);
     for (const p of lp.players) { orient(lp, p); classify(lp, p); }
+    trackPossession(lp);
     return;
   }
   lp.t += DT;
@@ -493,9 +504,69 @@ export function step(lp, input = null) {
   if (lp.phase === 'live') boundaries(lp);
   looseBall(lp);
   syncBall(lp);
-  for (const p of lp.players) classify(lp, p);
+  for (const p of lp.players) { classify(lp, p); remember(lp, p); }
   if (lp.phase === 'live' && lp.t > MAX_TIME) whistle(lp, 'time');
+  trackPossession(lp);
 }
+
+// ---------- possession ----------
+// Where the ball is, as one state the whole game agrees on:
+//   PRE_SNAP      on the turf at the center
+//   SNAP          on its way back from the center (a shotgun or long snap)
+//   LIVE_PLAY     in the quarterback's (or holder's, or punter's) hands behind the line, or on
+//                 the tee, before anyone runs with it
+//   PASS_IN_AIR   thrown, not yet caught, batted or on the ground
+//   KICK_IN_AIR   punted or kicked
+//   BALL_CARRIED  a runner has it: a handoff, a scramble, a catch, an interception, a return
+//   LOOSE         nobody has it: a fumbled or batted ball bouncing, an onside kick
+//   PLAY_DEAD     the whistle: nothing about the ball changes after this
+// It is derived from the simulation each step and checked against the legal moves below, so a
+// conflicting state (a catch after the whistle, a carrier with the ball in the air) is caught
+// the step it happens; lp.possLog keeps the sequence with the holder at each change.
+export const POSSESSION_FLOW = {
+  PRE_SNAP: ['SNAP', 'LIVE_PLAY', 'BALL_CARRIED', 'PLAY_DEAD'],
+  SNAP: ['LIVE_PLAY', 'BALL_CARRIED', 'LOOSE', 'PLAY_DEAD'],
+  LIVE_PLAY: ['PASS_IN_AIR', 'KICK_IN_AIR', 'BALL_CARRIED', 'LOOSE', 'PLAY_DEAD'],
+  PASS_IN_AIR: ['BALL_CARRIED', 'LOOSE', 'PLAY_DEAD'],
+  KICK_IN_AIR: ['BALL_CARRIED', 'LOOSE', 'PLAY_DEAD'],
+  BALL_CARRIED: ['PASS_IN_AIR', 'LOOSE', 'PLAY_DEAD'],
+  LOOSE: ['BALL_CARRIED', 'PLAY_DEAD'],
+  PLAY_DEAD: [],
+};
+export function possessionOf(lp) {
+  if (lp.phase === 'pre') return 'PRE_SNAP';
+  if (lp.phase === 'dead') return 'PLAY_DEAD';
+  const b = lp.ball;
+  if (b.state === 'snap') return 'SNAP';
+  if (b.state === 'air') return lp.kick?.F && !lp.thrown ? 'KICK_IN_AIR' : 'PASS_IN_AIR';
+  if (b.state === 'loose' || b.state === 'onside') return 'LOOSE';
+  if (b.state === 'held' && lp.carrierSet && b.holder === lp.carrier) return 'BALL_CARRIED';
+  return 'LIVE_PLAY';
+}
+function trackPossession(lp) {
+  const now = possessionOf(lp);
+  if (now === lp.possession) return;
+  const was = lp.possession;
+  if (was && !(POSSESSION_FLOW[was] ?? []).includes(now)) (lp.possErrors ??= []).push(`${was} -> ${now} at t=${lp.t.toFixed(2)}`);
+  lp.possession = now;
+  const h = lp.ball.holder;
+  (lp.possLog ??= []).push({ t: lp.t, state: now, holder: h ? `${h.side}${h.slot}` : null });
+}
+
+// ---------- what the defense can see ----------
+// Nobody reads a cut the instant it happens. Each player keeps a short trail of where he was
+// and how he was moving; a defender acts on what a receiver or a ball carrier was doing a
+// moment ago (his reaction time), carried forward along that path. A receiver who breaks his
+// route is still "running the old route" to his man for that beat, so the separation at the
+// break is real, and then the defender drives on the new path through his own feet.
+const HIST = 0.8;
+function remember(lp, p) {
+  const h = (p.hist ??= []);
+  h.push({ t: lp.t, x: p.x, y: p.y, vx: p.vx, vy: p.vy });
+  while (h.length > 2 && h[0].t < lp.t - HIST) h.shift();
+}
+// Where a defender sees a player is perceive() in live/core.js, so defense.js can use it
+// without importing this module back.
 
 // ---------- the authoritative action state ----------
 // What each player is doing this step, decided by the simulation from its real state. The
@@ -887,7 +958,8 @@ function move(lp, p, dt) {
   if (!isManual(lp, p) && !p.carrier) [vx, vy] = steer(lp, p, vx, vy);
   // Routes and pursuit bend along the sideline instead of running out over it.
   if (!p.carrier && Math.abs(p.y) > SIDE - 1.5 && vy * p.y > 0) vy *= clamp((SIDE + 0.5 - Math.abs(p.y)) / 2, 0, 1);
-  kin(p, vx, vy, top, dt, boost);
+  // A ball carrier and a pass rusher with a lane are all feet: they cut a little harder.
+  kin(p, vx, vy, top, dt, boost, p.carrier ? 1.45 : p.role === 'rush' && !p.eng ? 1.3 : 1);
 }
 
 // Orientation is simulation state too: each player turns toward what he should be facing (his
@@ -1010,7 +1082,7 @@ function blocks(lp) {
     }
     // Rate of getting off the block, per second: rating and type edge, quick feet shed sooner,
     // and nobody sheds in the first instants of the fit.
-    const base = passPro ? 0.8 : lp.carrierSet ? 0.11 : 0.06;
+    const base = passPro ? 1.9 : lp.carrierSet ? 0.11 : 0.06;
     const quick = clamp((d.a.acc - b.a.acc) / 60, -0.4, 0.5);
     let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.8 ? 0.25 : 1) * traitMod('shedRate', { d, b }).v;
     if (!passPro) rate = Math.max(rate, 0.1);
@@ -1051,7 +1123,18 @@ function blocks(lp) {
       ux = 0.75; uy = away * 0.66;
       push = -push;
     }
-    const vx = ux * push, vy = uy * push * 0.6;
+    let vx = ux * push, vy = uy * push * 0.6;
+    // Hand fighting: the defender works to one shoulder of the blocker (toward the passer, or
+    // the side of the ball on a run) and counters back to the other when it stalls; the blocker
+    // mirrors him, so the pair shuffles along the line instead of standing frozen. Quicker feet
+    // win the shuffle, and the bigger the blocker's edge the less ground it gives.
+    if (b.engT > 0.15) {
+      d.rs ??= sgn((target.y - b.y) * 0.5 + (d.y - b.y)) || 1;
+      if (b.engT > (d.rsT ??= 0.5 + (b.id % 5) * 0.08)) { d.rs = -d.rs; d.rsT = b.engT + 0.55 + clamp((b.a.blk - (passPro ? d.a.rush : d.a.str)) * 0.01, -0.2, 0.4); }
+      const quick = clamp(1 + ((d.a.agi ?? 60) - (b.a.agi ?? 60)) * 0.015, 0.5, 1.6) * (passPro ? 1 : 0.3);
+      const lat = d.rs * quick * clamp(1.1 - Math.abs(push) * 0.3, 0.3, 1.1);
+      vx += -uy * lat; vy += ux * lat;
+    }
     b.contact = d.contact = Math.abs(push) > 0.5 && b.engT > 0.3 ? 'PUSHING' : 'ENGAGED';
     for (const q of [b, d]) { q.vx = vx; q.vy = vy; q.x += vx * DT; q.y += vy * DT; }
     // Keep the blocker in front, squaring up over a few frames (never a jump on contact).
@@ -1163,6 +1246,11 @@ function contacts(lp) {
     if (c.spin > 0) p -= (user ? 0.3 : 0.17) * (0.3 + (c.a.spd + c.a.strBT) / 320 - q.a.tkl / 400) * (headOn ? 1.25 : 0.8);
     if (c.truck > 0) p -= 0.08 + (c.a.strBT - q.a.tkl) * 0.012 + clamp(Math.log(PLAYERS[c.id].weight / Math.max(1, PLAYERS[q.id].weight)) * 0.06, -0.12, 0.15);
     if (q.dive != null && q.dive > 0) p += 0.1;
+    // How he arrives: square and closing fast wraps up; chasing from behind is an arm tackle.
+    const ux = (c.x - q.x) / (dd || 1), uy = (c.y - q.y) / (dd || 1);
+    const closing = (q.vx - c.vx) * ux + (q.vy - c.vy) * uy;
+    const behind = (c.vx * ux + c.vy * uy) > 0.6 * cs && cs > 3;
+    p += clamp((closing - 5) * 0.02, -0.08, 0.06) - (behind ? 0.07 : 0);
     const tTk = traitMod('tackleOdds', { c, q });
     p += tTk.v;
     if (tTk.used.length) traitNotes(lp, tTk, { c, q }, c);
@@ -1215,11 +1303,17 @@ function startTackle(lp, c, q, sack, dove) {
   const mark = c.side === 'off' ? (lp.spot + sticks(lp) >= 100 ? lp.goalX : sticks(lp)) : null;
   const reach = mark != null && mark - c.x > 0 && mark - c.x < 1.5 ? 0.35 : 0;
   const lean = sack ? 0 : clamp(0.3 + reach + (c.a.strBT - q.a.tkl) * 0.012 + Math.max(0, c.vx * fwd) * 0.07 + Math.log(mc / mq) * 0.35 - (headOn ? 0.35 : 0), 0, 1.4 + reach);
-  lp.tackle = { c, q, sack, t0: lp.t, T: TACKLE_T * (1 + drag), vx, vy, fp: c.x, fwd, dove, lean, contact: { x: c.x, y: c.y },
+  // A big hit: the tackler arrives with much more momentum along the hit than the carrier has
+  // coming the other way. The carrier is stood up and put down about where he is.
+  const hl = dist(c, q) || 1, ux = (c.x - q.x) / hl, uy = (c.y - q.y) / hl;
+  const pq = mq * Math.max(0, q.vx * ux + q.vy * uy), pc = mc * Math.max(0, -(c.vx * ux + c.vy * uy));
+  const big = !dove && !sack && pq > 450 && pq > pc * 1.6 + 150;
+  lp.tackle = { c, q, sack, t0: lp.t, T: TACKLE_T * (1 + drag), vx, vy, fp: c.x, fwd, dove, lean: big ? Math.min(lean, 0.15) : lean, big, contact: { x: c.x, y: c.y },
     impact: len(c.vx - q.vx, c.vy - q.vy) };
   if (lp.windup) lp.windup = null;
   c.slow = 0; q.dive = dove ? 0.3 : q.dive;
   event(lp, 'contact', `${nm(q.id)} wraps up ${nm(c.id)}`, q, c);
+  if (big) event(lp, 'bighit', '', q, c);
 }
 
 function tackleStep(lp) {
@@ -1231,7 +1325,9 @@ function tackleStep(lp) {
   // Teammates arriving add their weight and the pile stops sooner.
   let help = 0;
   for (const o of lp.players) if (o !== q && o.side === q.side && !o.eng && dist(o, c) < o.r + c.r + 0.25) help++;
-  const f = Math.exp(-DT * (3.2 + help * 2.5));
+  // Friction on the pile: the pair is brought to a stop over the sequence (faster on a big
+  // hit and with help arriving), not left to skate across the turf.
+  const f = Math.exp(-DT * ((T.big ? 7 : 3.9) + help * 2.2));
   T.vx *= f; T.vy *= f;
   c.vx = T.vx; c.vy = T.vy; c.x += c.vx * DT; c.y += c.vy * DT;
   if (T.lean && e < T.T) { const k = (T.lean * DT) / T.T; c.x += T.fwd * k; q.x += T.fwd * k; }

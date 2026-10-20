@@ -222,12 +222,27 @@ export function routeWant(lp, p) {
   }
   if (p.jam > 0) { p.jam -= DT; p.want = { vx: 0.6, vy: 0 }; return; }
   const r = p.route;
+  const live = !!lp.players;   // (futureRoute runs this on a bare copy to lead the receiver)
+  // The quarterback is out of the pocket and still looking to throw: the scramble drill.
+  if (live && scrambling(lp) && !(r?.[p.wp]?.block != null)) return scrambleWant(lp, p);
   if (!r || p.wp >= r.length) {
-    if (r && r[r.length - 1]?.stop) { p.want = { vx: 0, vy: 0 }; return; }
-    const l = len(p.vx, p.vy) || 1;
-    p.want = { vx: (p.vx / l) * p.top * 0.95, vy: (p.vy / l) * p.top * 0.95 };
-    if (p.x > lp.goalX + 8) p.want = { vx: 0, vy: p.vy };
-    return;
+    if (!live) {
+      if (r && r[r.length - 1]?.stop) { p.want = { vx: 0, vy: 0 }; return; }
+      const l = len(p.vx, p.vy) || 1;
+      p.want = { vx: (p.vx / l) * p.top * 0.95, vy: (p.vy / l) * p.top * 0.95 };
+      return;
+    }
+    // The route is run. A deep route keeps going (bending away from whoever is on him); a curl,
+    // a hitch or a stick sits down and works a step or two into the open; anything else
+    // settles into the nearest hole in the coverage instead of drifting on to the sideline.
+    const stop = r && r[r.length - 1]?.stop;
+    if (!stop && p.x > 16 && p.x < lp.goalX + 6) {
+      const near = nearestDef(lp, p), away = near && dist(near, p) < 4 ? sgn(p.y - near.y || 1) * 0.35 : 0;
+      const l = len(p.vx, p.vy) || 1;
+      p.want = { vx: p.top * 0.95, vy: (p.vy / l) * p.top * 0.3 + away * p.top };
+      return;
+    }
+    return seekSpace(lp, p, p.settle ??= { x: Math.min(p.x + (stop ? 0 : 1.5), lp.goalX + 5), y: p.y }, stop ? 1.6 : 3.2, stop ? 0.5 : 0.75);
   }
   const w = r[p.wp];
   if (w.block != null) {
@@ -237,6 +252,48 @@ export function routeWant(lp, p) {
   const d = dist(p, w);
   if (d < 0.7) { p.wp++; return routeWant(lp, p); }
   seek(p, w, 0.97, w.stop ? 1.0 : 0.01);
+}
+
+// Is the quarterback scrambling with the ball, still a passer (rolled out of the pocket, or
+// pushed deep), with nobody thrown to yet?
+export function scrambling(lp) {
+  const qb = lp.off.QB;
+  if (!qb || lp.kind !== 'pass' || lp.thrown || lp.windup || lp.carrierSet || lp.ball.holder !== qb || lp.t < 1.2 || lp.play.boot) return false;
+  return Math.abs(qb.y) > 4.5 || qb.x < lp.dropX - 2.5;
+}
+
+// The scramble drill, the way receivers are coached it: deep men keep going deep and drift
+// toward the side the quarterback is rolling to, the short and intermediate men come back
+// toward the line on his side, each finding a window between defenders he can see.
+function scrambleWant(lp, p) {
+  const qb = lp.off.QB, side = sgn(qb.y || 1);
+  if (p.x > 14) {
+    const ty = clamp(p.y + side * 6, -SIDE + 3, SIDE - 3);
+    return seekSpace(lp, p, { x: Math.min(p.x + 5, lp.goalX + 4), y: ty }, 3, 0.95);
+  }
+  const ty = clamp(qb.y + side * 4 + (p.y - qb.y) * 0.35, -SIDE + 2.5, SIDE - 2.5);
+  return seekSpace(lp, p, { x: clamp(p.x - 1.5, 3, lp.goalX + 2), y: ty }, 3.5, 0.9);
+}
+
+// Work into the open near a spot: of the points around it, the one farthest from any defender
+// (and in the quarterback's view, not behind someone), chosen a few times a second so he
+// settles rather than twitches.
+function seekSpace(lp, p, base, R, frac) {
+  if (!p.space || lp.t - p.space.t > 0.3) {
+    let best = null;
+    for (let k = -1; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2, rr = k < 0 ? 0 : R;
+      const c = { x: base.x + Math.cos(a) * rr, y: clamp(base.y + Math.sin(a) * rr, -SIDE + 1.5, SIDE - 1.5) };
+      if (c.x < 1) continue;
+      let room = 99;
+      for (const q of lp.players) if (q.side === 'def') room = Math.min(room, Math.hypot(q.x - c.x, q.y - c.y));
+      const score = Math.min(room, 7) - Math.hypot(c.x - base.x, c.y - base.y) * 0.25 - Math.hypot(c.x - p.x, c.y - p.y) * 0.08;
+      if (!best || score > best.score) best = { ...c, score };
+    }
+    p.space = { t: lp.t, x: best?.x ?? base.x, y: best?.y ?? base.y };
+  }
+  seek(p, p.space, frac, 1.2);
+  // Settled in the hole: face the quarterback (see faceWant), ready for the ball.
 }
 
 // ---------- passing ----------
@@ -358,7 +415,7 @@ export function flightAt(F, e) {
 
 function futureRoute(r, T) {
   // Run a copy of the receiver along his route for T seconds.
-  const c = { x: r.x, y: r.y, vx: r.vx, vy: r.vy, fx: r.fx, fy: r.fy, top: r.top, accel: r.accel, route: r.route, wp: r.wp, role: 'route' };
+  const c = { x: r.x, y: r.y, vx: r.vx, vy: r.vy, fx: r.fx, fy: r.fy, top: r.top, accel: r.accel, cut: r.cut, grip: r.grip, route: r.route, wp: r.wp, role: 'route' };
   const stub = { thrown: null, t: 9, goalX: 999 };
   for (let t = 0; t < T; t += DT) {
     const w = c.route?.[c.wp];
@@ -519,9 +576,9 @@ function arrival(lp) {
   // Defender plays the ball first if he is closer.
   const dUp = dfd && upNow(dfd), rUp = upNow(r);
   if (dfd && dd < (dUp ? 1.75 : 1.5) && (dd < dr + (dUp ? 0.5 : 0.25) || dr > rReach - 0.05)) {
-    const tInt = traitMod('intChance', { d: dfd, r });
+    const tInt = traitMod('intChance', { d: dfd, r, qb: lp.off.QB });
     const hawk = tInt.v;
-    traitNotes(lp, tInt, { d: dfd, r }, dfd);
+    traitNotes(lp, tInt, { d: dfd, r, qb: lp.off.QB }, dfd);
     const R = rep(dfd.id, dfd.a.cov, r.id, r.a.hndC);
     const pI = (diff) => clamp(0.11 + hawk + diff * 0.006 + (T.pressured ? 0.04 : 0) + (dr > rReach ? 0.12 : 0) - dd * 0.05, 0.03, 0.42)
       * (lp.offCall === 'screen' ? 0.4 : 1) + (userPlay && dfd === userDef ? 0.18 : 0);
@@ -538,7 +595,11 @@ function arrival(lp) {
   }
   if (dr > rReach || !inBounds) {
     dropBall(lp, 0.45);
-    incomplete(lp, `${nm(lp.off.QB.id)}'s pass for ${nm(r.id)} falls incomplete${dr > rReach ? ', just out of reach' : ''}.`);
+    // Out of bounds is its own result: the ball sails past the sideline or the end line, and
+    // the receiver can't bring it in there however close he got.
+    const why = !inBounds ? (Math.abs(spot.y) >= SIDE ? ' sails out of bounds' : ' sails out the back of the end zone') : dr > rReach ? ' falls incomplete, just out of reach' : ' falls incomplete';
+    if (!inBounds) event(lp, 'oob', '', r, null);
+    incomplete(lp, `${nm(lp.off.QB.id)}'s pass for ${nm(r.id)}${why}.`);
     return;
   }
   const contested = dfd && dd < 1.8;

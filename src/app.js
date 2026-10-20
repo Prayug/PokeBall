@@ -320,7 +320,7 @@ function start(data) {
   readShareFromUrl();
   const snap = data?.state;
   if (snap?.league || snap?.game) {
-    S.league = LG.migrateLeague(snap.league); S.game = snap.game; S.gameMeta = snap.gameMeta; S.screen = snap.screen ?? 'home';
+    S.league = LG.migrateLeague(snap.league); S.game = LG.replaceRetiredInGame(snap.game, S.league); S.gameMeta = snap.gameMeta; S.screen = snap.screen ?? 'home';
   }
   document.addEventListener('toggle', (e) => { if (e.target.classList?.contains('presnap')) S.presnapClosed = !e.target.open; }, true);
   document.addEventListener('click', onClick);

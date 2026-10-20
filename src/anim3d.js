@@ -15,6 +15,27 @@ const BASE = ['idle', 'stance', 'run', 'block'];
 const FADE = 10; // cross-fade rate (1/s)
 
 function pose() { return new Float32Array(N); }
+
+// The whole-body gesture (if any) a standing Pokémon is in the middle of at time t: one every
+// two and a half to four seconds, each its own length, skipping about one in six; which ones
+// depend on how the body moves. u runs 0..1 through the gesture.
+const GESTURES = {
+  biped: ['look', 'look', 'stretch', 'bounce', 'nod', 'rock'],
+  quad: ['look', 'look', 'shake', 'bounce', 'nod'],
+  hopper: ['hop', 'hop', 'look', 'wiggle', 'stretch'],
+  serpent: ['look', 'wiggle', 'stretch', 'nod'],
+  flyer: ['bob', 'look', 'wiggle', 'spin'],
+  floater: ['bob', 'look', 'wiggle', 'spin'],
+};
+const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+export function idleGesture(t, seed, style = 'biped') {
+  const period = 2.5 + hash(seed * 13 + 1) * 1.5, s = t + seed * 23, k = Math.floor(s / period);
+  if (hash(k + seed * 7 + 0.5) < 0.16) return null;
+  const list = GESTURES[style] ?? GESTURES.biped, kind = list[Math.floor(hash(k * 3.1 + seed + 2) * list.length)];
+  const len = kind === 'spin' ? 1.6 : kind === 'look' ? 1.9 : kind === 'shake' ? 0.9 : kind === 'hop' ? 0.9 : 1.3;
+  const u = (s - k * period) / len;
+  return u > 1 ? null : { kind, u, side: hash(k * 9.1 + seed) < 0.5 ? 1 : -1 };
+}
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const ease = (u) => u * u * (3 - 2 * u);
 
@@ -309,15 +330,23 @@ export class Animator {
           if (ph < 0.3) dip = Math.sin((ph / 0.3) * Math.PI) * live;
         }
       }
-      f.pivot.rotation.set(pitch + rock + dip * 0.07, (f.rig ? 0 : this.fb.twist * 0.8) + sl * Math.sin(ph) * 0.32 + lookY, o[ROLL] * k + m * Math.sin(ph) * 0.1 + sl * Math.sin(ph + 0.8) * 0.06 + swayR, 'XZY');
+      // Off the line the skill players never stand dead still: defensive backs chop their feet,
+      // linebackers rock side to side reading the backfield, receivers bounce now and then.
+      if (live > 0.01 && set !== 'line' && set !== 'qbUnder') {
+        const z = this.seed * 40, tt = this.t;
+        if (set === 'db') toes = Math.max(toes, (0.25 + 0.75 * Math.abs(Math.sin(tt * 6.5 + z))) * 0.45 * live);
+        if (set === 'back' && this.side === 'def') { swayR += Math.sin(tt * 1.7 + z) * 0.05 * live; lookY += Math.sin(tt * 0.9 + z) * 0.16 * live; }
+        if (set === 'skill') { const u = (tt * 0.36 + this.seed) % 1; if (u < 0.14) toes = Math.max(toes, Math.abs(Math.sin((u / 0.14) * Math.PI * 3)) * live); }
+      }
+      const idle = this.idleLife(H, hard, run);
+      f.pivot.rotation.set(pitch + rock + dip * 0.07 + idle.pitch, (f.rig ? 0 : this.fb.twist * 0.8) + sl * Math.sin(ph) * 0.32 + lookY + idle.yaw, o[ROLL] * k + m * Math.sin(ph) * 0.1 + sl * Math.sin(ph + 0.8) * 0.06 + swayR + idle.roll, 'XZY');
       // A crouch lowers the hips, so the feet stay on the turf.
       const c = this.fb.crouch, drop = f.rig ? (f.hipH ?? 0) * (1 - 0.5 * (Math.cos(0.55 * c) + Math.cos(0.3 * c))) : 0;
-      f.pivot.position.y = Math.max(0, o[LIFT]) - drop + hop + toes * H * 0.025 - dip * H * 0.02;
-      // Breathing while standing (harder for a lineman in his stance), squash and stretch while
-      // bounding.
-      const still = this.w.idle + this.w.stance;
+      f.pivot.position.y = Math.max(0, o[LIFT]) - drop + hop + toes * H * 0.025 - dip * H * 0.02 + idle.lift;
+      // Breathing while standing (harder for a lineman in his stance, and deeper standing about
+      // than set), squash and stretch while bounding.
       const breath = set === 'line' ? 0.03 : 0.018;
-      const sy = 1 + Math.sin(this.t * (set === 'line' ? 2.8 : 2.3)) * breath * still * (1 - hard) + m * (hs - 0.55) * 0.12;
+      const sy = 1 + Math.sin(this.t * (set === 'line' ? 2.8 : 2.3)) * (breath * this.w.stance + 0.03 * this.w.idle) * (1 - hard) + m * (hs - 0.55) * 0.12 + idle.stretch;
       f.pivot.scale.set(1 / Math.sqrt(sy), sy, 1 / Math.sqrt(sy));
       return;
     }
@@ -327,6 +356,46 @@ export class Animator {
     const r = bones.root;
     r.rotation.set(o[PITCH], 0, o[ROLL], 'XZY');
     r.position.y = Math.max(0, o[LIFT]) / (f.group.scale.y || 1);
+  }
+
+  // Standing about (after the whistle, while the next play is called): whole-body life big
+  // enough to read from the stands, on top of the breathing and small gestures the bones get
+  // (model3d.driveLimbs). The weight shifts from side to side, the body rises and settles with
+  // each breath, and every few seconds the Pokémon does something with all of itself, picked
+  // for how it moves: a two-legged one turns to look around, stretches up tall, bounces, nods
+  // or rocks; a four-legged one looks, shakes itself off, bounces or nods; a legless one hops,
+  // wiggles or looks; a flier or floater bobs, wiggles, looks, or spins right round.
+  // Returns the pivot offsets (radians, yards, and a stretch on the scale).
+  idleLife(H, hard, run) {
+    const L = { yaw: 0, roll: 0, pitch: 0, lift: 0, stretch: 0 };
+    const k = this.w.idle * (1 - hard) * (1 - run);
+    if (k < 0.01) return L;
+    const z = this.seed * 40, t = this.t, st = this.style;
+    L.roll = Math.sin(t * 0.9 + z) * (st === 'biped' ? 0.035 : 0.015) * k;
+    L.lift = (0.5 + 0.5 * Math.sin(t * 2.2 + z)) * H * 0.008 * k;
+    const G = idleGesture(t, this.seed, st);
+    if (!G) return L;
+    const u = G.u, e = Math.sin(Math.PI * u) ** 2, hold = Math.min(1, 2.2 * Math.sin(Math.PI * u)) * k;
+    switch (G.kind) {
+      case 'look': L.yaw += G.side * 0.55 * hold; L.pitch -= 0.04 * hold; break;
+      case 'stretch': L.stretch += 0.07 * e * k; L.pitch -= 0.1 * e * k; break;
+      case 'bounce': L.lift += Math.abs(Math.sin(u * Math.PI * 3)) * H * 0.05 * k; break;
+      case 'nod': L.pitch += Math.sin(u * Math.PI * 2) * 0.13 * k; break;
+      case 'rock': L.roll += Math.sin(u * Math.PI * 4) * 0.08 * (1 - u) * k; break;
+      case 'shake': L.roll += Math.sin(u * Math.PI * 12) * 0.13 * (1 - u) * k; L.yaw += Math.sin(u * Math.PI * 12 + 1) * 0.06 * (1 - u) * k; break;
+      case 'hop': {
+        // Crouch, spring up, squash on landing.
+        if (u < 0.15) L.stretch -= Math.sin((u / 0.15) * Math.PI) * 0.06 * k;
+        else if (u < 0.6) { const v = (u - 0.15) / 0.45; L.lift += Math.sin(v * Math.PI) * H * 0.14 * k; L.stretch += Math.sin(v * Math.PI) * 0.05 * k; }
+        else if (u < 0.8) L.stretch -= Math.sin(((u - 0.6) / 0.2) * Math.PI) * 0.09 * k;
+        break;
+      }
+      case 'wiggle': L.yaw += Math.sin(u * Math.PI * 6) * 0.2 * (1 - u) * k; L.roll += Math.sin(u * Math.PI * 6 + 1) * 0.05 * (1 - u) * k; break;
+      case 'bob': L.lift += Math.sin(Math.PI * u) * H * 0.1 * k; break;
+      case 'spin': L.yaw += G.side * Math.PI * 2 * ease(u) * k; break;
+      default: break;
+    }
+    return L;
   }
 
   get yawOffset() { return this.out[YAW]; }

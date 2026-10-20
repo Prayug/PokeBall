@@ -23,6 +23,18 @@ export const sticks = (lp) => clamp(lp.g.toGo ?? 10, 1, lp.goalX);
 // Must this snap reach the sticks (third or fourth down with more than a yard to go)?
 export const mustGain = (lp) => (lp.g.down ?? 1) >= 3 && sticks(lp) > 1;
 
+// Where `who` is to a defender who reacts `delay` seconds late: his recorded state then,
+// projected forward. The trail itself is kept on the player by the live loop.
+export function perceive(lp, who, delay) {
+  const h = who.hist;
+  if (!h?.length || delay <= 0) return who;
+  const want = lp.t - delay;
+  let k = h.length - 1;
+  while (k > 0 && h[k].t > want) k--;
+  const s = h[k], e = Math.max(0, lp.t - s.t);
+  return { x: s.x + s.vx * e, y: s.y + s.vy * e, vx: s.vx, vy: s.vy };
+}
+
 // Is this player steered by a person right now (player one, or player two in a two-player game)?
 export function isManual(lp, p) { return (p === lp.control && lp.manual) || (!!lp.p2 && p === lp.p2.control && lp.p2.manual); }
 
@@ -166,15 +178,46 @@ export function steer(lp, p, vx, vy) {
   return [(nx / l) * sp, (ny / l) * sp];
 }
 
-// Accelerate toward a wanted velocity; braking and cutting are quicker than speeding up.
-export function kin(p, vx, vy, top, dt, boost = 1) {
-  const wl = len(vx, vy);
-  if (wl > top) { vx *= top / wl; vy *= top / wl; }
-  let dvx = vx - p.vx, dvy = vy - p.vy;
-  const brake = dvx * p.vx + dvy * p.vy < 0 ? (p.cut ?? 2) : 1;
-  const dl = len(dvx, dvy), amax = p.accel * dt * boost * brake;
-  if (dl > amax) { dvx *= amax / dl; dvy *= amax / dl; }
-  p.vx += dvx; p.vy += dvy;
+// Locomotion. A body has a speed and a heading, not a velocity it can rewrite at will: it
+// speeds up from its Acceleration (harder from a standstill than near top speed), brakes
+// harder than it speeds up (Agility), and swings its path no faster than its feet can grip
+// the turf at the speed it carries (lateral grip / speed, so a sprinter bends his path and a
+// player at a jog changes direction almost on the spot). Asked to go somewhere well off his
+// heading, he plants: he sheds the speed he cannot turn with, cuts, and drives out of it, so
+// a sharp route break, a juke or a defender flipping his hips all cost what they should.
+// Nearly stopped, he simply pivots and goes. boost scales the whole engine for moves (a juke,
+// the sprint burst). gripK lets a ball carrier or a free rusher cut a little harder.
+const PIVOT = 0.8;
+export function kin(p, vx, vy, top, dt, boost = 1, gripK = 1) {
+  let wl = len(vx, vy);
+  if (wl > top) { vx *= top / wl; vy *= top / wl; wl = top; }
+  const s = len(p.vx, p.vy);
+  const acc = p.accel * boost * (1.15 - 0.45 * clamp(s / (p.top || top), 0, 1));
+  const brake = p.accel * (p.cut ?? 2) * Math.max(1, boost * 0.8);
+  if (s < PIVOT || wl < 0.05) {
+    // From a standstill (or stopping): accelerate straight toward what he wants.
+    let dvx = vx - p.vx, dvy = vy - p.vy;
+    const dl = len(dvx, dvy), amax = (wl < 0.05 ? brake : Math.max(acc, s < 0.3 ? acc : brake * 0.6)) * dt;
+    if (dl > amax) { dvx *= amax / dl; dvy *= amax / dl; }
+    p.vx += dvx; p.vy += dvy;
+    integrate(p, dt);
+    return;
+  }
+  const hx = p.vx / s, hy = p.vy / s, ux = vx / wl, uy = vy / wl;
+  const err = Math.atan2(hx * uy - hy * ux, hx * ux + hy * uy);
+  // The speed he can carry through this much turn: all of it straight ahead, none of it on a
+  // reversal (he plants and comes back).
+  const keep = Math.cos(Math.min(Math.abs(err), Math.PI / 2));
+  const sWant = wl * keep * keep;
+  const ds = clamp(sWant - s, -brake * dt, acc * dt);
+  const sn = Math.max(0, s + ds);
+  // Grip: how hard he can bend his path (yards per second squared, sideways).
+  const grip = (p.grip ?? 16) * boost * gripK;
+  const wMax = grip / Math.max(sn, 1.6);
+  const turn = clamp(err, -wMax * dt, wMax * dt);
+  const c = Math.cos(turn), sn2 = Math.sin(turn);
+  const nx = hx * c - hy * sn2, ny = hx * sn2 + hy * c;
+  p.vx = nx * sn; p.vy = ny * sn;
   integrate(p, dt);
 }
 
@@ -229,29 +272,37 @@ export function separate(lp, passes = 2) {
   }
 }
 
-// p pressed against a body in direction (ux, uy): the speed into it turns into a slide around
-// it, toward the side he was already drifting (or the side of the spot he wants).
+// p pressed against a body in direction (ux, uy): running into it costs him the speed he had
+// into it (a soft contact, over a few frames), and he works around it toward the side he wants,
+// turning no faster than his feet allow (half his grip, since he also steers in kin; a pass
+// rusher working an edge is all feet), so he slides off a body instead of grinding into it.
 export function slide(p, ux, uy) {
   const vn = p.vx * ux + p.vy * uy;
   if (vn <= 0) return;
-  const sp0 = len(p.vx, p.vy);
-  p.vx -= ux * vn; p.vy -= uy * vn;
-  const tx = -uy, ty = ux;
-  const w = p.want ?? p;
-  const vt = p.vx * tx + p.vy * ty, wt = w.vx * tx + w.vy * ty;
-  const s = sgn(vt * 3 + wt || 1);
-  // Keep at least half the lost speed as a slide along the body, never more than he had.
-  const want = Math.max(Math.abs(vt), vn * 0.6);
-  p.vx += tx * (s * want - vt); p.vy += ty * (s * want - vt);
-  const sp = len(p.vx, p.vy);
-  if (sp > sp0) { p.vx *= sp0 / sp; p.vy *= sp0 / sp; }
+  const s = len(p.vx, p.vy) || 1;
+  const k = 1 - 0.7 * (vn / s);
+  p.vx *= k; p.vy *= k;
+  const tx = -uy, ty = ux, w = p.want ?? p;
+  const side = sgn((p.vx * tx + p.vy * ty) * 3 + (w.vx * tx + w.vy * ty) || 1);
+  const sn = len(p.vx, p.vy);
+  if (sn < 0.3) { p.vx += tx * side * vn * 0.3; p.vy += ty * side * vn * 0.3; return; }
+  const cur = Math.atan2(p.vy, p.vx), want = Math.atan2(ty * side, tx * side);
+  let d = want - cur; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+  const a = cur + sgn(d) * Math.min(Math.abs(d), ((p.grip ?? 16) * (p.role === 'rush' ? 1.2 : 0.5) / Math.max(sn, 1.6)) * DT);
+  p.vx = Math.cos(a) * sn; p.vy = Math.sin(a) * sn;
 }
 
 export function unengage(p) { const q = p.eng; if (q) { q.eng = null; q.shed = null; } p.eng = null; p.shed = null; }
 
 // Notes for the traits that acted at a hook (quiet ones only when the caller says so).
 export function traitNotes(lp, T, ctx, who, decided = false) {
-  for (const t of T.used) if (!t.quiet || decided) note(lp, t.kind, t.note(ctx), who);
+  for (const t of T.used) {
+    if (t.quiet && !decided) continue;
+    const by = t.who?.(ctx) ?? who;
+    // A power that changed the play flashes its name over the player.
+    if (t.kind === 'power' && !lp.notes.some((n) => n.kind === 'power' && n.who === by)) event(lp, 'power', by.power.name, by);
+    note(lp, t.kind, t.note(ctx), by);
+  }
 }
 
 // Something about a Pokémon (its type, its ability, its build) changed this play.

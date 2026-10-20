@@ -114,6 +114,7 @@ function playOne(g, off, def) {
     if (lp.spotX == null) issues.push('no forward-progress spot');
   }
   if (lp.end?.how === 'sack' && !(lp.spotX < 0)) issues.push(`sack spotted at ${lp.spotX?.toFixed(1)}, not behind the line`);
+  for (const e of lp.possErrors ?? []) issues.push(`possession ${e}`);
   return { lp, r: lp.result, issues: [...new Set(issues)], tr };
 }
 
@@ -185,8 +186,12 @@ for (const [i, C] of S.entries()) {
     runLivePlay(g, off, def, r, playSeconds(lp));
     const o = b.poss;
     if (g.clock >= b.clock) problems.push('game clock did not run');
-    if (r.turnover && g.poss === o) problems.push('turnover did not change possession');
-    if (lp.end.how === 'td' && g.score[o] < b.score[o] + 6) problems.push('touchdown not scored');
+    // A defensive touchdown (a pick-six) scores for the defense, which then kicks off back to
+    // the offense, so possession ends up where it started.
+    const defTD = lp.end.how === 'td' && lp.carrier?.side === 'def';
+    const scorer = defTD ? 1 - o : o;
+    if (r.turnover && !defTD && g.poss === o) problems.push('turnover did not change possession');
+    if (lp.end.how === 'td' && g.score[scorer] < b.score[scorer] + 6) problems.push('touchdown not scored');
     if (!r.turnover && lp.end.how !== 'td') {
       const first = r.yards >= b.toGo;
       if (first && (g.poss !== o || g.down !== 1)) problems.push(`gained ${r.yards} on ${b.toGo} to go but it is ${g.down} down for team ${g.poss}`);
