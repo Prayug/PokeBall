@@ -702,6 +702,7 @@ body.g3d-on main { max-width: none; }
 .game.spectate .bc-cell { font-size: 22px; padding: 0 16px; }
 .game.spectate .bc-clock { font-size: 28px; }
 .game.spectate .bc-pc, .game.spectate .hud-tip { display: none; }
+.game.g3d.spectate .hud { padding-top: 86px; }
 .game.spectate .menubtn { opacity: 0.45; transition: opacity 0.2s; }
 .game.spectate .menubtn:hover, .game.spectate .menubtn:focus-visible, .game.spectate .menubtn[aria-expanded="true"] { opacity: 1; }
 /* The last-play ticker moves to the bottom-left corner, clear of the big scoreboard. */
@@ -710,6 +711,7 @@ body.g3d-on main { max-width: none; }
 .pill.spec .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); animation: pc-warn 1.6s ease-in-out infinite; box-shadow: 0 0 0 2px rgba(255,255,255,0.12); }
 @media (max-width: 900px) {
   .game.spectate .bcast { height: 46px; }
+  .game.g3d.spectate .hud { padding-top: 112px; }
   .game.spectate .bc-abbr { width: 52px; font-size: 19px; }
   .game.spectate .bc-team { background: linear-gradient(90deg, var(--team) 0 52px, rgba(255,255,255,0.04) 52px); }
   .game.spectate .bc-score { font-size: 28px; } .game.spectate .bc-cell { font-size: 16px; padding: 0 10px; } .game.spectate .bc-clock { font-size: 20px; }
