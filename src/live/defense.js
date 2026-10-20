@@ -110,7 +110,8 @@ export function rushWant(lp, p) {
     const lane = rushLane(lp, p, c);
     if (lane) return seek(p, lane, fooled ? 0.7 : 1, 0.05);
   }
-  intercept(p, c, fooled ? 0.7 : 1, lp);
+  // A rusher has his eyes on the passer the whole way; a runner's cuts take him a beat to read.
+  intercept(p, c, fooled ? 0.7 : 1, lp.kind === 'pass' && !lp.carrierSet ? null : lp);
 }
 // The point to aim for to get through the line, or null if the straight path is open.
 function rushLane(lp, p, c) {

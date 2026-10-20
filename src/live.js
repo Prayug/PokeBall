@@ -165,7 +165,7 @@ function makePlayer(g, ti, side, slot, id, lp) {
     top: 5.6 + 0.04 * a.spd, accel: (6 + 0.03 * a.spd + 0.035 * a.acl) * (1 - heavy), cut: (1.4 + a.agi / 100) * (1 - heavy * 0.8) * (wx?.cut ?? 1), wx,
     // Sideways grip in a cut, yards per second squared: agility, less for a heavy body and on
     // a slick field.
-    grip: (11 + a.agi * 0.09) * (1 - heavy * 0.7) * (wx?.cut ?? 1),
+    grip: (12 + a.agi * 0.1) * (1 - heavy * 0.7) * (wx?.cut ?? 1),
     role: 'idle', eng: null, engT: 0, stun: 0, cool: 0, slow: 0, wp: 0, route: null, man: null, zone: null,
     react: 0, manual: false, anim: rand(g) * 8, juke: -1, truck: -1, spin: -1, burst: 1,
     // Authoritative state the renderer, the HUD and the tests read: the action this player is
@@ -1086,7 +1086,8 @@ function move(lp, p, dt) {
   if (!isManual(lp, p) && !p.carrier) [vx, vy] = steer(lp, p, vx, vy);
   // Routes and pursuit bend along the sideline instead of running out over it.
   if (!p.carrier && Math.abs(p.y) > SIDE - 1.5 && vy * p.y > 0) vy *= clamp((SIDE + 0.5 - Math.abs(p.y)) / 2, 0, 1);
-  kin(p, vx, vy, top, dt, boost);
+  // A ball carrier and a pass rusher with a lane are all feet: they cut a little harder.
+  kin(p, vx, vy, top, dt, boost, p.carrier ? 1.3 : p.role === 'rush' && !p.eng ? 1.3 : 1);
 }
 
 // Steering around bodies in the way: anyone (but the player this one is going after) a little
@@ -1124,7 +1125,7 @@ export function steer(lp, p, vx, vy) {
 // Nearly stopped, he simply pivots and goes. boost scales the whole engine for moves (a juke,
 // the sprint burst).
 const PIVOT = 0.8;
-export function kin(p, vx, vy, top, dt, boost = 1) {
+export function kin(p, vx, vy, top, dt, boost = 1, gripK = 1) {
   let wl = len(vx, vy);
   if (wl > top) { vx *= top / wl; vy *= top / wl; wl = top; }
   const s = len(p.vx, p.vy);
@@ -1148,7 +1149,7 @@ export function kin(p, vx, vy, top, dt, boost = 1) {
   const ds = clamp(sWant - s, -brake * dt, acc * dt);
   const sn = Math.max(0, s + ds);
   // Grip: how hard he can bend his path (yards per second squared, sideways).
-  const grip = (p.grip ?? 16) * boost;
+  const grip = (p.grip ?? 16) * boost * gripK;
   const wMax = grip / Math.max(sn, 1.6);
   const turn = clamp(err, -wMax * dt, wMax * dt);
   const c = Math.cos(turn), sn2 = Math.sin(turn);
@@ -1260,14 +1261,24 @@ export function separate(lp, passes = 2) {
 }
 
 // p pressed against a body in direction (ux, uy): running into it costs him the speed he had
-// into it (a soft contact, over a few frames), but it never spins his path around: going
-// around the body is his feet's job (steer and kin), at the rate they can turn.
+// into it (a soft contact, over a few frames), and he works around it toward the side he wants,
+// turning no faster than his feet allow (half his grip, since he also steers in kin; a pass
+// rusher working an edge is all feet), so he
+// slides off a body instead of grinding into it or spinning around it.
 function slide(p, ux, uy) {
   const vn = p.vx * ux + p.vy * uy;
   if (vn <= 0) return;
   const s = len(p.vx, p.vy) || 1;
   const k = 1 - 0.7 * (vn / s);
   p.vx *= k; p.vy *= k;
+  const tx = -uy, ty = ux, w = p.want ?? p;
+  const side = sgn((p.vx * tx + p.vy * ty) * 3 + (w.vx * tx + w.vy * ty) || 1);
+  const sn = len(p.vx, p.vy);
+  if (sn < 0.3) { p.vx += tx * side * vn * 0.3; p.vy += ty * side * vn * 0.3; return; }
+  const cur = Math.atan2(p.vy, p.vx), want = Math.atan2(ty * side, tx * side);
+  let d = want - cur; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+  const a = cur + sgn(d) * Math.min(Math.abs(d), ((p.grip ?? 16) * (p.role === 'rush' ? 1.2 : 0.5) / Math.max(sn, 1.6)) * DT);
+  p.vx = Math.cos(a) * sn; p.vy = Math.sin(a) * sn;
 }
 
 // ---------- blocking ----------
@@ -1338,7 +1349,7 @@ function blocks(lp) {
     }
     // Rate of getting off the block, per second: rating and type edge, quick feet shed sooner,
     // and nobody sheds in the first instants of the fit.
-    const base = passPro ? 0.8 : lp.carrierSet ? 0.11 : 0.06;
+    const base = passPro ? 1.5 : lp.carrierSet ? 0.11 : 0.06;
     const quick = clamp((d.a.acc - b.a.acc) / 60, -0.4, 0.5);
     let rate = base * Math.exp(R.diff / 9) * (1 + quick) * (b.engT < 0.8 ? 0.25 : 1) * traitMod('shedRate', { d, b }).v;
     if (!passPro) rate = Math.max(rate, 0.1);
@@ -1387,7 +1398,7 @@ function blocks(lp) {
     if (b.engT > 0.15) {
       d.rs ??= sgn((target.y - b.y) * 0.5 + (d.y - b.y)) || 1;
       if (b.engT > (d.rsT ??= 0.5 + (b.id % 5) * 0.08)) { d.rs = -d.rs; d.rsT = b.engT + 0.55 + clamp((b.a.blk - (passPro ? d.a.rush : d.a.str)) * 0.01, -0.2, 0.4); }
-      const quick = clamp(1 + ((d.a.agi ?? 60) - (b.a.agi ?? 60)) * 0.015, 0.5, 1.6) * (passPro ? 1 : 0.6);
+      const quick = clamp(1 + ((d.a.agi ?? 60) - (b.a.agi ?? 60)) * 0.015, 0.5, 1.6) * (passPro ? 1 : 0.3);
       const lat = d.rs * quick * clamp(1.1 - Math.abs(push) * 0.3, 0.3, 1.1);
       vx += -uy * lat; vy += ux * lat;
     }
