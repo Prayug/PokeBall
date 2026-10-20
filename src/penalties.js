@@ -82,7 +82,7 @@ export function simFouls(g, r) {
 
 // The down, distance and spot if the penalty is accepted, from the spot before the play.
 // Distance penalties stop at half the distance to the goal; interference is spotted where it
-// happened (at the 1 if in the end zone, where it stays when the ball is already there).
+// happened (at the 1 if in the end zone).
 export function enforce(before, f) {
   const P = PENALTIES[f.type];
   let { spot, down, toGo } = before;
@@ -91,7 +91,8 @@ export function enforce(before, f) {
     moved = -Math.min(P.yards, Math.floor(spot / 2));
     spot += moved; toGo -= moved;
   } else {
-    moved = P.spot ? Math.max(Math.min(1, 99 - spot), Math.min(f.x, 99 - spot)) : Math.min(P.yards, Math.floor((100 - spot) / 2));
+    // From the 1 there is nowhere left to go: interference there is a first down at the 1.
+    moved = P.spot ? Math.min(Math.max(1, f.x), 99 - spot) : Math.min(P.yards, Math.floor((100 - spot) / 2));
     spot += moved;
     if (P.auto || moved >= toGo) { first = true; down = 1; toGo = Math.min(10, 100 - spot); } else toGo -= moved;
   }
