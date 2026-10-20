@@ -1,5 +1,5 @@
 // League: teams, snake draft with AI drafters, schedule, standings and leaders.
-import { PLAYERS, ALL_IDS, SLOT, SLOT_KEYS, BASELINE, autoDepthChart, unitRatings } from './ratings.js';
+import { PLAYERS, ALL_IDS, RETIRED, SLOT, SLOT_KEYS, BASELINE, autoDepthChart, unitRatings } from './ratings.js';
 import { bestMultiplier, matchupModifier, ABILITIES } from './types.js';
 import { createGame, kickingUnit, simUntil, summary } from './engine.js';
 import { SCHEMES, schemeDraft } from './coach.js';
@@ -78,7 +78,68 @@ export function migrateLeague(L) {
   // Free agency and career records arrived within version 2: fill them in where missing.
   L.contracts ??= {}; L.cap ??= null; L.fa ??= null;
   ensureRecords(L);
+  replaceRetired(L);
   return L;
+}
+
+// Pokémon without a 3D model left the game. A saved league that has one on a roster gets the
+// closest free Pokémon in its place: the same primary type where one is free, then the nearest
+// overall at the slot it plays. The newcomer takes over its slot, depth chart spot, contract,
+// condition and growth; the retired one's stats and records stay under its own name.
+export function replaceRetired(L) {
+  if (!L?.teams) return [];
+  const swaps = [];
+  for (const t of L.teams) {
+    for (const old of t.roster.filter((id) => RETIRED.has(id))) {
+      const p = PLAYERS[old];
+      const slot = Object.keys(t.lineup ?? {}).find((k) => t.lineup[k] === old)
+        ?? Object.keys(t.slots ?? {}).find((k) => t.slots[k] === old) ?? p.best[0];
+      const free = available(L).filter((id) => p.legendary || !PLAYERS[id].legendary);
+      const pool = free.length ? free : available(L);
+      if (!pool.length) continue;
+      const cost = (id) => Math.abs(PLAYERS[id].ovr[slot] - p.ovr[slot]) + (PLAYERS[id].types[0] === p.types[0] ? 0 : 6);
+      const id = pool.reduce((a, b) => (cost(b) < cost(a) ? b : a));
+      const swap = (x) => (x === old ? id : x);
+      t.roster = t.roster.map(swap);
+      t.bench = (t.bench ?? []).map(swap);
+      for (const m of [t.slots, t.lineup]) if (m) for (const k of Object.keys(m)) m[k] = swap(m[k]);
+      if (L.offseason?.cuts?.[t.id]) L.offseason.cuts[t.id] = L.offseason.cuts[t.id].map(swap);
+      for (const m of [L.contracts, L.condition, L.growth, L.injuries]) {
+        if (m && old in m) { m[id] = m[old]; delete m[old]; }
+      }
+      if (L.rookies) L.rookies = L.rookies.map(swap);
+      swaps.push({ team: t.id, out: old, in: id });
+    }
+  }
+  if (swaps.length && L.trade && swaps.some((s) => s.out === L.trade.youGet || s.out === L.trade.youSend)) L.trade = null;
+  if (swaps.length) L.retiredSwaps = [...(L.retiredSwaps ?? []), ...swaps];
+  return swaps;
+}
+
+// The same for a game saved in progress: each retired Pokémon on a side is replaced by the one
+// its league team took in its place, or else (a quick game) the closest Pokémon on neither side.
+export function replaceRetiredInGame(g, L = null) {
+  if (!g?.teams) return g;
+  const inGame = new Set(g.teams.flatMap((s) => s.roster ?? []));
+  for (const side of g.teams) {
+    for (const old of (side.roster ?? []).filter((id) => RETIRED.has(id))) {
+      let id = (L?.retiredSwaps ?? []).find((s) => s.out === old && s.team === side.id)?.in;
+      if (id == null || inGame.has(id)) {
+        const p = PLAYERS[old], k = p.best[0];
+        const pool = ALL_IDS.filter((x) => !inGame.has(x) && (p.legendary || !PLAYERS[x].legendary));
+        id = pool.reduce((a, b) => (Math.abs(PLAYERS[b].ovr[k] - p.ovr[k]) < Math.abs(PLAYERS[a].ovr[k] - p.ovr[k]) ? b : a));
+      }
+      inGame.add(id);
+      const swap = (x) => (x === old ? id : x);
+      side.roster = side.roster.map(swap);
+      side.bench = (side.bench ?? []).map(swap);
+      for (const m of [side.starters, side.lineup]) if (m) for (const k of Object.keys(m)) m[k] = swap(m[k]);
+      for (const m of [side.energy, side.locks, side.out, side.stats]) {
+        if (m && old in m) { m[id] = m[old]; delete m[old]; }
+      }
+    }
+  }
+  return g;
 }
 
 // Box scores are most of a save's size (about 130 KB a season). Keep them for the current and

@@ -1,7 +1,7 @@
 // League sharing: a short code for a league's first draft (the seed, the settings, the user's
 // team name and every pick made so far) that rebuilds the same draft in another browser. A
 // friend can load the draft exactly as it went, or draft from the same seed themselves.
-import { PLAYERS, SLOT_KEYS } from './ratings.js';
+import { PLAYERS, RETIRED, SLOT_KEYS } from './ratings.js';
 import * as LG from './league.js';
 
 const VERSION = 1;
@@ -102,9 +102,12 @@ export function leagueFromShare(D, { replay = true, teamName, abbr } = {}) {
   for (const [id, slot] of D.picks) {
     if (L.phase !== 'draft') break;
     const team = L.teams[LG.currentPick(L).team];
-    if (!LG.available(L).includes(id)) throw new Error(`${PLAYERS[id]?.name ?? id} is picked twice`);
+    // A draft shared before a Pokémon left the game can still pick it; it is swapped out below.
+    const taken = L.teams.some((t) => t.roster.includes(id));
+    if (RETIRED.has(id) ? taken : !LG.available(L).includes(id)) throw new Error(`${PLAYERS[id]?.name ?? id} is picked twice`);
     const ok = slot === 'BENCH' || (slot && team.slots[slot] == null);
     LG.makePick(L, id, ok ? slot : null);
   }
+  LG.replaceRetired(L);
   return L;
 }
