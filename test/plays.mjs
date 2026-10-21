@@ -113,8 +113,11 @@ for (const [name, C] of Object.entries(CASES)) {
   runLivePlay(g, off, def, r, playSeconds(lp));
   const o = before.poss;
   if (g.clock >= before.clock) fail(name, 'game clock did not run');
-  if (r.turnover && g.poss === o) fail(name, 'turnover did not change possession');
-  if (lp.end.how === 'td' && g.score[o] < before.score[o] + 6) fail(name, 'touchdown not scored');
+  // (A turnover returned for a touchdown scores for the defense, which then kicks off to the
+  // offense, so the ball comes back to the team that lost it.)
+  const scorer = r.turnover ? 1 - o : o;
+  if (r.turnover && lp.end.how !== 'td' && g.poss === o) fail(name, 'turnover did not change possession');
+  if (lp.end.how === 'td' && g.score[scorer] < before.score[scorer] + 6) fail(name, 'touchdown not scored');
   if (!r.turnover && lp.end.how !== 'td') {
     const gained = r.yards;
     const expectFirst = gained >= before.toGo;

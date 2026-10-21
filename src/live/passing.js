@@ -227,27 +227,17 @@ export function routeWant(lp, p) {
   // The quarterback is out of the pocket and still looking to throw: the scramble drill.
   if (live && scrambleDrill(lp, p) && !(r?.[p.wp]?.block != null)) return scrambleWant(lp, p);
   if (!r || p.wp >= r.length) {
-    if (!live) {
-      // Leading him past the end of his route: where he really goes next (below), not on into
-      // the bench or out the back of the end zone. A deep man keeps running downfield; everyone
-      // else pulls up and sits down.
-      const stop = !r || r[r.length - 1]?.stop;
-      if (!stop && p.x > 16 && p.x < lp.goalX + 6) {
-        const l = len(p.vx, p.vy) || 1;
-        p.want = { vx: p.top * 0.95, vy: (p.vy / l) * p.top * 0.3 };
-      } else p.want = { vx: 0, vy: 0 };
-      return;
+    // The route is run. A curl, a hitch or a stick (a bar on the play art) sits down and works a
+    // step or two into the open. Anything with an arrow keeps going the way the arrow points
+    // (a slant keeps slanting, a drag keeps crossing, a go keeps going), turning upfield along
+    // the sideline when it gets there, and only late in a play that never found him does he
+    // settle into a hole in the coverage.
+    const stop = !r || r[r.length - 1]?.stop;
+    if (!stop) {
+      if (live) p.doneAt ??= lp.t;
+      if (p.x < lp.goalX + 7.5 && (!live || lp.t - p.doneAt < 2)) return arrowWant(lp, p, r);
     }
-    // The route is run. A deep route keeps going (bending away from whoever is on him); a curl,
-    // a hitch or a stick sits down and works a step or two into the open; anything else
-    // settles into the nearest hole in the coverage instead of drifting on to the sideline.
-    const stop = r && r[r.length - 1]?.stop;
-    if (!stop && p.x > 16 && p.x < lp.goalX + 6) {
-      const near = nearestDef(lp, p), away = near && dist(near, p) < 4 ? sgn(p.y - near.y || 1) * 0.35 : 0;
-      const l = len(p.vx, p.vy) || 1;
-      p.want = { vx: p.top * 0.95, vy: (p.vy / l) * p.top * 0.3 + away * p.top };
-      return;
-    }
+    if (!live) { p.want = { vx: 0, vy: 0 }; return; }
     return seekSpace(lp, p, p.settle ??= { x: Math.min(p.x + (stop ? 0 : 1.5), lp.goalX + 5), y: p.y }, stop ? 1.6 : 3.2, stop ? 0.5 : 0.75);
   }
   const w = r[p.wp];
@@ -296,17 +286,38 @@ export function routeWant(lp, p) {
   seek(p, aim, Math.max(frac, 0.25), 0.01);
 }
 
+// Past the end of an arrow route: on along the direction of its last leg; near the sideline
+// that direction bends upfield, and he never runs out of bounds or out the back of the end zone.
+function arrowWant(lp, p, r) {
+  const b = r[r.length - 1], a0 = r[r.length - 2];
+  const a = a0 && a0.x != null ? a0 : p.legFrom && (p.legFrom.x !== b.x || p.legFrom.y !== b.y) ? p.legFrom : r.from ?? p;
+  let dx = b.x - a.x, dy = b.y - a.y;
+  const l = len(dx, dy) || 1;
+  dx /= l; dy /= l;
+  const edge = SIDE - 2.5 - Math.abs(p.y);
+  if (dy * p.y > 0 && edge < 2) {
+    // At the sideline: turn up it.
+    const k = clamp(edge / 2, 0, 1);
+    dy *= k; dx = Math.sqrt(Math.max(0, 1 - dy * dy));
+  }
+  const sp = p.top * 0.9;
+  p.want = { vx: dx * sp, vy: dy * sp };
+}
+
 // Is the quarterback scrambling with the ball, still a passer (rolled out of the pocket, or
 // pushed deep), with nobody thrown to yet?
 export function scrambling(lp) {
   const qb = lp.off.QB;
   if (!qb || lp.kind !== 'pass' || lp.thrown || lp.windup || lp.carrierSet || lp.ball.holder !== qb || lp.t < 1.2 || lp.play.boot) return false;
-  return Math.abs(qb.y) > 4.5 || qb.x < lp.dropX - 2.5;
+  // Out of the pocket: outside the tackle box, or chased far behind his drop (a full dropback,
+  // even a deep one, is still the pocket).
+  return Math.abs(qb.y) > 5.5 || qb.x < lp.dropX - 8;
 }
 
-// Does this receiver break off into the scramble drill? A quarterback sliding in the pocket or
-// stepping a yard or two wide doesn't break the play: the routes run as called until he has
-// clearly been on the move outside it for a beat. A man who has finished his route reacts at once.
+// Does this receiver break off into the scramble drill? A quarterback sliding in the pocket,
+// dropping back or stepping a yard or two wide doesn't break the play: the routes run as called
+// until he has clearly been on the move outside it for a second. A man who has finished his
+// route reacts sooner.
 export function scrambleDrill(lp, p) {
   if (lp.scrambleChk !== lp.t) {
     lp.scrambleChk = lp.t;
@@ -316,7 +327,7 @@ export function scrambleDrill(lp, p) {
     else lp.scrambleFrom ??= lp.t;
   }
   if (lp.scrambleFrom == null) return false;
-  return lp.t - lp.scrambleFrom > 0.6 || !p.route || p.wp >= p.route.length;
+  return lp.t - lp.scrambleFrom > (!p.route || p.wp >= p.route.length ? 0.3 : 1);
 }
 
 // The scramble drill, the way receivers are coached it: deep men keep going deep and drift
