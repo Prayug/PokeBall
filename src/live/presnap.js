@@ -1,6 +1,7 @@
 // Pre-snap adjustments, made at the line once both teams are set and before the snap.
 // Offense: an audible to another play from the same formation (the game screen rebuilds the play
-// from audibles()), a hot route for one receiver, and motion for one receiver off the line.
+// from audibles()), a hot route for one receiver, a run flipped to the other side, and motion
+// for one receiver off the line.
 // Defense: shade the coverage, show blitz (walk the linebackers and the strong safety up to the
 // line) and back out (drop the blitzers back to their normal depth, so the blitz is hidden).
 // Everything here changes the live play in place and is deterministic, so the replay (which
@@ -9,6 +10,7 @@ import { formationsFor, frontX, lineX } from '../formations.js';
 import { DT, RECEIVERS, SIDE, dist, kin, seek, separate, sgn, steer } from './core.js';
 import { PLAY_ROUTES, buildRoute } from './passing.js';
 import { clamp } from '../engine.js';
+import { setupRun } from './runs.js';
 
 const ready = (lp) => lp.phase === 'pre' && lp.set && !lp.kick;
 const onOffense = (lp) => lp.user != null && lp.user === lp.o;
@@ -19,7 +21,7 @@ const onDefense = (lp) => lp.user != null && lp.user === lp.d;
 // formation can run (and the scouting "Fits" call first, when it is one of them), never the
 // call already lined up. The quick, short list a real offense carries to the line.
 const AUDIBLE_FAMILIES = [
-  ['inside_run', 'dive', 'power', 'counter'], ['outside_run', 'toss'], ['slant', 'stick', 'out'],
+  ['inside_run', 'dive', 'power', 'counter', 'trap'], ['outside_run', 'toss', 'sweep'], ['slant', 'stick', 'out'],
   ['screen', 'bubble'], ['smash', 'curl', 'flood'], ['four_verts', 'post'],
 ];
 export function audibles(lp, fit = null) {
@@ -54,6 +56,17 @@ export function hotRoute(lp, slot, route) {
   (lp.hot ??= {})[slot] = route;
   lp.eligible = RECEIVERS.filter((k) => lp.off[k]?.role === 'route');
   lp.reads = null;
+  return true;
+}
+
+// ---------- flip ----------
+// A run flipped at the line: the same concept to the other side, every assignment redrawn.
+export function canFlip(lp) { return ready(lp) && onOffense(lp) && lp.kind === 'run' && lp.play.dir !== 'sneak' && !lp.motion; }
+export function flipRun(lp) {
+  if (!canFlip(lp)) return false;
+  lp.runSide = -lp.runSide;
+  setupRun(lp);
+  lp.flipped = !lp.flipped;
   return true;
 }
 

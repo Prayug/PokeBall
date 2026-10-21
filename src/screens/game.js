@@ -452,7 +452,10 @@ export function doCall(call) {
   S.coachDown = false; S.takeOver = false;
   S.csTab = null; S.csPage = 0;
   const watch = !!S.watch || spectating();
-  playCall(off, def, g.poss === us ? S.tempo : null, { userSide: us, watch, autoQB: watch, autoSnap: watch || g.poss !== us ? 1.6 : null,
+  // A flipped call goes to the other side; the flip is for this call only.
+  const flip = g.poss === us && !!S.runFlip;
+  S.runFlip = false;
+  playCall(off, def, g.poss === us ? S.tempo : null, { userSide: us, watch, autoQB: watch, autoSnap: watch || g.poss !== us ? 1.6 : null, flip,
     formation: g.poss === us ? formFor(off) : aiFormation(off), defFormation: g.poss === us ? aiFront(def) : frontFor(def) });
 }
 
@@ -484,15 +487,18 @@ function twoPlayerCall(g, call) {
   // A kickoff or an extra point leaves the other side nothing to call: it lines up at once.
   const solo = !S.p2Call && ['kickoff', 'xp'].includes(OFF_PLAYS[call]?.kind);
   if (!S.p2Call && !solo) {
-    S.p2Call = { off: call, formation: formFor(call) };
+    S.p2Call = { off: call, formation: formFor(call), flip: !!S.runFlip };
+    S.runFlip = false;
     render();
     return;
   }
-  const { off, formation } = solo ? { off: call, formation: formFor(call) } : S.p2Call, def = solo ? aiDefenseCall(g) : call;
+  const stored = solo ? { off: call, formation: formFor(call), flip: !!S.runFlip } : S.p2Call;
+  if (solo) S.runFlip = false;
+  const { off, formation, flip } = stored, def = solo ? aiDefenseCall(g) : call;
   S.p2Call = null;
   markBefore();
   if (stage && (['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]))) {
-    startLive(off, def, { userSide: 0, user2: 1, formation, defFormation: frontFor(def) });
+    startLive(off, def, { userSide: 0, user2: 1, formation, flip, defFormation: frontFor(def) });
     return;
   }
   S.busy = true;
@@ -550,7 +556,7 @@ export function autoAdvance() {
     const ours = ['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]);
     if (stage && ours && aiCalls()) S.coachDown = true;
     else render();
-    playCall(off, def, null, { userSide: userSide(), watch: aiCalls() || !!S.watch, autoQB: true, autoSnap: 1.4, formation: aiFormation(off), defFormation: aiFront(def) });
+    playCall(off, def, null, { userSide: userSide(), watch: aiCalls() || !!S.watch, autoQB: true, autoSnap: 1.4, aiSide: true, formation: aiFormation(off), defFormation: aiFront(def) });
   }, stage ? 700 : 650);
 }
 

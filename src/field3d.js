@@ -23,6 +23,7 @@ import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
 import { positionName } from './formations.js';
 import { flightAt, SIDE as SIDE_W, isGun } from './live.js';
+import { keepTrack } from './live/runs.js';
 
 const reduceMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const RECEIVER_KEYS = ['WR1', 'WR2', 'WR3', 'TE', 'RB'];
@@ -425,20 +426,16 @@ export class Stage {
           if (pts.length > 1) add(pts, 0.3, ART_COLORS[i], 0.92, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow');
         });
       } else {
-        // Run: the lane the carrier takes and who each blocker takes.
-        const c = lp.carrier ?? lp.off.RB;
-        if (c) {
-          const hole = lp.holeY ?? 0;
-          const dir = lp.play.dir;
-          const lane = dir === 'counter' ? [W(c.home.x, c.home.y), W(c.home.x + 0.5, -Math.sign(hole) * 2), W(-3, hole * 0.4), W(1.5, hole), W(6, hole * 1.05)]
-            : dir === 'toss' || dir === 'outside' ? [W(c.home.x, c.home.y), W(-3.5, hole * 0.6), W(0, hole), W(6, hole * 1.05)]
-              : [W(c.home.x, c.home.y), W(-3.5, hole * 0.35), W(1.5, hole), W(6, hole * 1.05)];
-          add(lane, 0.42, '#ffd23f', 0.92, 'arrow');
-        }
-        // A pulling guard and a lead fullback show their paths to the hole.
+        // Run: the carrier's track (the one he runs, see live/runs.js), the pullers' paths and the
+        // lead blockers'.
+        const c = lp.carrier ?? lp.off.RB, hole = lp.holeY ?? 0;
+        const track = c?.track ?? (lp.play.dir === 'sneak' ? [{ x: 3, y: 0 }] : null);
+        if (c && track) add([W(c.home.x, c.home.y), ...track.map((w) => W(w.x, w.y))], 0.42, '#ffd23f', 0.92, 'arrow');
+        if (lp.play.dir === 'read' && lp.off.QB) add([W(lp.off.QB.home.x, lp.off.QB.home.y), ...keepTrack(lp).map((w) => W(w.x, w.y))], 0.24, '#ffd23f', 0.6, 'arrow');
         for (const b of Object.values(lp.off)) {
-          if (b.pull) add([W(b.home.x, b.home.y), W(b.pull.via.x, b.pull.via.y), W(1.5, (lp.holeY ?? 0) * 0.95)], 0.2, '#ffffff', 0.85, 'bar');
-          else if (b.role === 'lead') add([W(b.home.x, b.home.y), W(0.8, (lp.holeY ?? 0) * 0.85)], 0.2, '#ffffff', 0.85, 'bar');
+          const to = b.assign ? W(Math.min(1.5, b.assign.home.x - 0.6), b.assign.home.y) : W(1.5, hole * 0.95);
+          if (b.pull) add([W(b.home.x, b.home.y), ...b.pull.path.map((w) => W(w.x, w.y)), to], 0.2, '#ffffff', 0.85, 'bar');
+          else if (b.role === 'lead') add([W(b.home.x, b.home.y), to], 0.2, '#ffffff', 0.85, 'bar');
         }
         for (const k of ['LT', 'LG', 'C', 'RG', 'RT', 'TE']) {
           const b = lp.off[k];
