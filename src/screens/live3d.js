@@ -12,17 +12,20 @@ import { P, esc } from '../ui.js';
 import { sfx } from '../audio.js';
 import { POWER_OF, powerLine } from '../powers.js';
 import { autoAdvance, doCall, needsUser, playClockOut, setMode, spectating, toggleTakeOver, twoPlayer, userSide, userTimeout } from './game.js';
-import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions } from './callsheet.js';
+import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions, quickCalls } from './callsheet.js';
 import { SHADES, audibles, cycleShade, flipRun, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
 import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
 import { boothAfter } from '../broadcast.js';
+import { boothAfter as callAfter, boothFlow, boothHush, boothLive, boothReset, boothReview, captionHtml } from './booth.js';
 import { afterPlay as broadcastAfter, afterReview as broadcastReview, layersHtml, onCall as broadcastCall, onFlow as broadcastFlow, resetBroadcast } from './broadcast.js';
 
 function keysHelp() {
   return `<div class="keygrid">
     <span><kbd>1</kbd>-<kbd>8</kbd> between plays: call that play on the open page · <kbd>←</kbd> <kbd>→</kbd> turn the page</span>
-    <span><kbd>C</kbd> change camera (gameplay, tactical, broadcast, player) · <kbd>M</kbd> menu · <kbd>Esc</kbd> change the play</span>
+    <span><kbd>Enter</kbd> between plays: call the play that fits the down · <kbd>R</kbd> call your last call again</span>
+    <span><kbd>Space</kbd> after the whistle: skip the result and the walk back to the line</span>
+    <span><kbd>C</kbd> change camera (gameplay, tactical, broadcast, player) · <kbd>M</kbd> menu · <kbd>U</kbd> mute · <kbd>Esc</kbd> change the play</span>
     <span><kbd>Space</kbd> snap (hurries everyone to the line), juke with the ball, dive to tackle</span>
     <span><kbd>W A S D</kbd> or arrows: move your player</span>
     <span><kbd>Shift</kbd> sprint</span>
@@ -48,7 +51,7 @@ function keysHelp() {
     <span>Left stick or D-pad: move · <kbd>RT</kbd> sprint · <kbd>A</kbd> snap, juke, dive, go up for the ball</span>
     <span><kbd>B</kbd> spin · <kbd>X</kbd> truck · <kbd>Y</kbd> switch defender · right stick click: throw it away</span>
     <span>On a pass, <kbd>A</kbd> <kbd>B</kbd> <kbd>X</kbd> <kbd>Y</kbd> <kbd>RB</kbd> throw to receivers 1-5: tap for touch, hold for a bullet, with <kbd>LB</kbd> held for a lob</span>
-    <span>Between plays the D-pad moves between plays and <kbd>A</kbd> calls one · <kbd>LB</kbd> <kbd>RB</kbd> turn the page · <kbd>B</kbd> change the call · <kbd>Start</kbd> pause or menu · <kbd>Back</kbd> camera</span>
+    <span><kbd>A</kbd> after the whistle skips to the next call · between plays the D-pad moves between plays and <kbd>A</kbd> calls one · <kbd>LB</kbd> <kbd>RB</kbd> turn the page · <kbd>B</kbd> change the call · <kbd>Start</kbd> pause or menu · <kbd>Back</kbd> camera</span>
   </div>
   <h4>Two players on one screen</h4>
   <div class="keygrid">
@@ -95,6 +98,7 @@ function setFlow(st) {
   if (L3.trace.length > 400) L3.trace.shift();
   stage?.setState?.(st);
   broadcastFlow(st, g, stage, L3.lp);
+  boothFlow(st, g, L3.lp);
   const d = document.getElementById('dbg-state');
   if (d) d.textContent = st;
 }
@@ -120,7 +124,7 @@ export function ensureStage() {
   stageWrap = document.createElement('div');
   stageWrap.className = 'stagewrap';
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
-    <div class="lower3" id="lower3" aria-live="polite"></div>
+    <div class="lower3" id="lower3" aria-live="polite"></div>${captionHtml()}
     ${layersHtml()}
     <div class="ov-badge" id="replay-badge" hidden>Replay</div>
     <div class="hud-acts"><button class="hud-replay" id="chal-btn" data-act="challenge" hidden>Challenge <kbd>G</kbd></button>
@@ -310,6 +314,7 @@ function commitPlay() {
   render();
   showBanner(resultBanner(entry, lp, b));
   powerFlash(entry, broadcastAfter(g, b, stage));
+  callAfter(g, entry, b, lp);
 }
 
 // A power switching on is called out over the field as well as on the result card; after the
@@ -354,7 +359,7 @@ export function afterLivePlay(entry) {
   render();
   if (!entry || !g) { autoAdvance(); return; }
   // No live play follows to clear it, so the card leaves once the result beat is over.
-  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); powerFlash(entry, broadcastAfter(g, b, stage)); }
+  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); powerFlash(entry, broadcastAfter(g, b, stage)); callAfter(g, entry, b, null); }
   autoAdvance();
 }
 
@@ -368,6 +373,7 @@ export function resetBetweenGames() {
   if (L3.replay) stopReplay();
   hideBanner();
   resetBroadcast();
+  boothReset(S.game);
   clearTimeout(timers.power);
   L3.flow = null;
   if (stage) setFlow('PLAY_SELECTION');
@@ -496,8 +502,8 @@ function hudTip(lp) {
   const f = L3.flow;
   if (!lp) {
     if (!(f === 'PLAY_SELECTION' && S.game && !S.game.final && needsUser(S.game) && !S.busy)) return '';
-    if (twoPlayer()) { const s = userSide(); return `Player ${s + 1} (${S.game.teams[s].abbr}): call your ${S.game.poss === s ? 'offense' : 'defense'} · number keys · ← → categories`; }
-    return padRecent(0) ? 'Pick a play · D-pad and A · LB RB categories' : 'Pick a play · number keys · ← → categories';
+    if (twoPlayer()) { const s = userSide(); return `Player ${s + 1} (${S.game.teams[s].abbr}): ${S.game.phase === 'penalty' ? 'accept or decline the penalty' : `call your ${S.game.poss === s ? 'offense' : 'defense'}`} · number keys · ← → categories`; }
+    return padRecent(0) ? 'Pick a play · D-pad and A · LB RB categories' : 'Pick a play · number keys · Enter the play that fits · ← → categories';
   }
   const c = lp.control;
   // Two players: the defense waits for the offense to snap.
@@ -582,6 +588,7 @@ function loop(now) {
         L3.rec?.log.push(inp);
         L3.acc -= DT;
       }
+      boothLive(lp);
       if (lp.phase === 'dead') {
         if (!L3.committed) commitPlay();
         L3.deadT += dt;
@@ -631,6 +638,8 @@ function loop(now) {
       if (L3.pclock <= 0) { L3.pclock = 40; playClockOut(); }
     }
   }
+  // A replay or the film room has the field: the booth lets the tape run without calling it.
+  if (FILM.open || L3.replay) { if (!L3.hushed) { L3.hushed = true; boothHush(); } } else L3.hushed = false;
   if (g && !g.final) setFlow(flowNow(now));
   // The game clock runs during the play and stops on the whistle.
   const gc = document.getElementById('gclock');
@@ -762,12 +771,42 @@ function finishReview() {
     const B = resultBanner(out.entry, null, rv.before);
     if (B) showBanner({ ...B, head: `Reversed · ${B.head}`, text: note.text });
     broadcastReview(g, rv.before, stage, true);
+    boothReview(g, true);
   } else {
+    boothReview(g, false);
     showBanner({ head: note.head, tone: 'muted', yds: '', clock: '', notes: [], possession: false, text: note.text, next: `${downText(g)} at ${spotText(g)}` });
   }
   hideBanner(4500);
   autoAdvance();
 }
+// Space (Enter for player two, A on a pad) after the whistle: skip the rest of the result beat
+// and the walk to the line, and bring the next call up at once. Only a press made a moment after
+// the whistle counts, so a juke or dive mashed through the tackle does not skip the result card.
+export function skipBeat() {
+  const now = performance.now();
+  if (!stage || !S.game || S.game.final || L3.replay || FILM.open || now - L3.flowAt < 450) return false;
+  if (L3.flow === 'PLAY_RESULT') {
+    if (L3.lp?.phase === 'dead') {
+      if (!L3.committed) return false;
+      endResult();
+    } else if (!L3.lp && L3.resultUntil > now) { L3.resultUntil = 1; hideBanner(1200); }
+    else return false;
+    // A review the booth or the other coach started has the field now.
+    if (L3.replay) return true;
+  } else if (L3.flow !== 'RESET_FORMATION') return false;
+  settlePreview();
+  return true;
+}
+// The teams walk the rest of the way to the line in one go.
+function settlePreview() {
+  if (!L3.preview?.lp) showPreview();
+  const pv = L3.preview?.lp;
+  if (pv) for (let i = 0; i < 1200 && !pv.set; i++) stepLive(pv, null);
+  L3.resetUntil = 0; L3.acc = 0;
+  stage?.snapCamera();
+  render();
+}
+
 // A replay, a review or the film room has the field: the next play waits for it.
 export const fieldBusy = () => !!L3.replay || FILM.open;
 export function closeHelp() { S.helpOpen = false; S.seenHelp = true; savePrefs(); syncOverlays(); }
@@ -846,6 +885,12 @@ export function onKey(e, down) {
     if (code === 'KeyI' && !L3.lp) { e.preventDefault(); S.csScout = !S.csScout; S.csFold = false; render(); return; }
     if (FILM.open) { filmKey(e); return; }
     if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
+    if ((code === 'Space' || code === 'Enter' || code === 'NumpadEnter') && !e.target.closest?.('button, a, summary') && skipBeat()) { e.preventDefault(); return; }
+    // The final whistle: Enter plays another quick game, or goes back to the season.
+    if ((code === 'Enter' || code === 'NumpadEnter') && S.game.final && !e.target.closest?.('button, a, summary')) {
+      const go = document.querySelector('.ov-final .btn.primary');
+      if (go) { e.preventDefault(); go.click(); return; }
+    }
     if (code === 'KeyJ' && filmReady() && !L3.replay) { e.preventDefault(); openFilm(); return; }
     if (code === 'KeyG' && !L3.lp && !L3.replay) { e.preventDefault(); userChallenge(); return; }
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
@@ -856,7 +901,9 @@ export function onKey(e, down) {
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
     if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; render(); return; }
-    if (code === 'KeyT' && !L3.lp && !L3.replay) { e.preventDefault(); userTimeout(); return; }
+    // Only while the call sheet is up: a T mashed to throw the ball away as the whistle blows
+    // must not burn a timeout.
+    if (code === 'KeyT' && !L3.lp && !L3.replay) { e.preventDefault(); if (L3.flow === 'PLAY_SELECTION') userTimeout(); return; }
     if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
     if (code === 'KeyB' && !L3.lp) { e.preventDefault(); S.runFlip = !S.runFlip; render(); return; }
     if (code === 'Escape') {
@@ -873,6 +920,16 @@ export function onKey(e, down) {
       const hit = (tabs.find(([k]) => k === cur)?.[2] ?? []).find((c) => c.code === code)
         ?? tabs.flatMap(([, , cs]) => cs).find((c) => KICK_KEYS[c.call] && c.code === code);
       if (hit) { e.preventDefault(); doCall(hit.call); return; }
+      // Enter calls the play that fits the down; R calls your last call again.
+      // (One player only: in a two-player game these keys belong to the players' moves.)
+      if ((code === 'Enter' || code === 'NumpadEnter') && !twoPlayer() && !e.target.closest?.('button, a, summary')) {
+        const q = quickCalls(g);
+        if (q.fit) { e.preventDefault(); doCall(q.fit); return; }
+      }
+      if (code === 'KeyR' && !twoPlayer()) {
+        const q = quickCalls(g);
+        if (q.again) { e.preventDefault(); doCall(q.again); return; }
+      }
       if (code === 'ArrowLeft' || code === 'ArrowRight') { e.preventDefault(); csMove(code === 'ArrowLeft' ? -1 : 1); return; }
       if (code === 'KeyZ') { e.preventDefault(); cycleForm(g.poss === userSide()); return; }
     }
