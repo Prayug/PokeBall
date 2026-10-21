@@ -1022,6 +1022,8 @@ body.g3d-on .top { margin-inline: -8px; }
 .top-team b { font: 700 14px/1.1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; }
 .top-team small { font: 600 11px/1.1 var(--f-data); color: var(--chalk-dim); text-transform: uppercase; letter-spacing: 0.08em; }
 .top-team .tbadge { font-size: 13px; padding: 5px 6px; border-radius: 50%; min-width: 34px; text-align: center; }
+/* The speaker sits beside the team chip; the chip takes the spare space. */
+.top-team ~ .sndwrap { margin-left: 10px; }
 
 /* Screen titles: chrome lettering on a franchise slash. */
 main h1 { background: linear-gradient(180deg, #ffffff 35%, #c7d8c6 70%, #9fb7a2); -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -1208,6 +1210,32 @@ main.enter .col > :nth-child(n+4) { animation-delay: 0.14s; }
   main.enter > section, main.enter .card { animation: none; }
   .btn, .btn::after, .showcase figure, .showcase figure::after, .dslot { transition: none; }
 }
-</style>
+
+/* The booth's captions: who is talking and what they said, under the scorebug. */
+.booth-cap { position: absolute; left: 50%; top: 64px; z-index: 4; pointer-events: none; transform: translate(-50%, -6px); opacity: 0; transition: opacity 0.2s, transform 0.2s;
+  display: flex; gap: 8px; align-items: baseline; max-width: min(620px, calc(100% - 32px)); padding: 7px 14px; border-radius: 6px; font-size: 14px; line-height: 1.3;
+  background: rgba(9, 22, 17, 0.82); backdrop-filter: blur(6px); border-left: 3px solid var(--amber); box-shadow: 0 6px 18px rgba(0,0,0,0.3); }
+.booth-cap.on { opacity: 1; transform: translate(-50%, 0); }
+.booth-cap.color { border-left-color: #4fc3f7; }
+.booth-cap b { flex: none; font: 600 11px/1 var(--f-data); letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber); }
+.booth-cap.color b { color: #4fc3f7; }
+.booth-cap .bc-say { color: var(--chalk); }
+.booth-cap.hype .bc-say { font-weight: 700; color: #fff; }
+.booth-cap .bc-mic { flex: none; align-self: center; width: 7px; height: 10px; border-radius: 4px; background: currentColor; color: var(--amber); box-shadow: 0 6px 0 -3px currentColor; }
+.booth-cap.color .bc-mic { color: #4fc3f7; }
+.game.spectate .booth-cap { top: 128px; }
+@media (max-width: 640px) { .booth-cap { top: 58px; font-size: 13px; } .game.spectate .booth-cap { top: 112px; } }
+@media (prefers-reduced-motion: reduce) { .booth-cap { transition: none; } }
+/* The speaker button and the sound panel in the top bar. */
+.sndwrap { margin-left: auto; position: relative; }
+.sndbtn { width: 38px; height: 38px; border-radius: 50%; border: 1px solid rgba(238,242,230,0.25); background: rgba(9,22,17,0.5); cursor: pointer; display: grid; place-items: center; color: var(--chalk); }
+.sndbtn:hover { border-color: var(--amber); }
+.sndbtn.off { color: var(--bad); border-color: rgba(255,138,122,0.5); }
+.sndpop { position: absolute; right: 0; top: calc(100% + 8px); width: min(320px, calc(100vw - 32px)); z-index: 30; padding: 12px 14px; }
+.snd { display: grid; gap: 6px; font-size: 14px; }
+.snd-row { display: grid; grid-template-columns: 92px 1fr 34px; gap: 8px; align-items: center; font-size: 13px; }
+.snd-row input { width: 100%; accent-color: var(--amber); }
+.snd-row output { text-align: right; font: 600 12px/1 var(--f-data); color: var(--chalk-dim); }
+.snd-voices { margin: 0; }</style>
 <div id="app"></div>
 <!--APP-->
