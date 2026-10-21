@@ -3,7 +3,8 @@
 import { applyGrowth, autoDepthChart } from './ratings.js';
 import { createGame, manualSub, simUntil } from './engine.js';
 import { worldSpots } from './live.js';
-import { initAudio, setSound } from './audio.js';
+import { cry, initAudio, ui } from './audio.js';
+import { applySound, clickSound, soundButtonHtml, soundInput, soundTest, syncMusic, toggleMute } from './screens/sound.js';
 import { cameraDefaults } from './camera3d.js';
 import * as LG from './league.js';
 import { S, clearTimers, deleteSlot, loadPrefs, loadSaved, migrateStorage, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
@@ -77,6 +78,7 @@ function renderTop() {
   return `<header class="top">
     <button class="brand" data-act="home" aria-label="Home"><span class="ball" aria-hidden="true"></span>PokeBall</button>
     <nav>${items.map(([k, label]) => `<button class="nav ${S.screen === k ? 'on' : ''}" data-act="go" data-to="${k}">${label}</button>`).join('')}</nav>
+    ${soundButtonHtml()}
   </header>`;
 }
 
@@ -86,7 +88,12 @@ function onClick(e) {
   if (!el || el.disabled) return;
   const act = el.dataset.act;
   const L = S.league;
+  clickSound(act);
+  // A click anywhere else closes the sound panel.
+  if (S.soundOpen && act !== 'sound' && act !== 'sndtest' && !el.closest('.sndpop')) S.soundOpen = false;
   switch (act) {
+    case 'sound': S.soundOpen = !S.soundOpen; if (S.soundOpen) S.menuOpen = false; render(); break;
+    case 'sndtest': soundTest(); break;
     case 'skip': S.skipOpen = !S.skipOpen; render(); break;
     case 'kit': case 'kitchant': kitAct(act, el); break;
     case 'home': S.game = S.gameMeta?.quick ? null : S.game; setScreen('home'); break;
@@ -175,8 +182,8 @@ function onClick(e) {
       el.classList.add('sel');
       break;
     }
-    case 'draftbtn': userDraft(Number(el.dataset.id), null); break;
-    case 'draftsel': userDraft(S.draft.sel, document.getElementById('d-slot')?.value ?? null); break;
+    case 'draftbtn': { const id = Number(el.dataset.id); const n = L?.pickIndex; userDraft(id, null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
+    case 'draftsel': { const id = S.draft.sel, n = L?.pickIndex; userDraft(id, document.getElementById('d-slot')?.value ?? null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
     case 'sort': S.draft.sort = el.dataset.key; render(); break;
     case 'autodraft': S.draft.autoAll = !S.draft.autoAll; render(); draftTick(); break;
     case 'startseason': L.phase = 'season'; setScreen('season'); break;
@@ -241,6 +248,7 @@ function onClick(e) {
 
 function onInput(e) {
   const t = e.target;
+  if (t.type === 'range' && t.id?.startsWith('snd-')) { soundInput(t); return; }
   if (t.id === 'k-word') { kitInput(t); return; }
   if (t.id === 'fa-amount') {
     S.faAmount = Math.round(Number(t.value));
@@ -272,7 +280,7 @@ function onChange(e) {
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
   if (t.id === 'cs-tempo') { S.tempo = t.value; t.blur(); render(); }
   if (t.id === 'cs-form') { const v = t.value || null; if (S.game?.poss === userSide()) S.formPick = v; else S.frontPick = v; t.blur(); render(); }
-  if (t.id === 'g-sound') { S.sound = t.checked; setSound(S.sound); savePrefs(); }
+  if (soundInput(t)) return;
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
   if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }
   if (t.id === 'g-pips') { S.pips = t.checked; if (stage) stage.showPips = S.pips; savePrefs(); }
@@ -334,6 +342,7 @@ export function render() {
   const focusId = document.activeElement?.id;
   app.innerHTML = renderTop() + `<main>${body}</main>`;
   document.body.classList.toggle('g3d-on', S.screen === 'game' && !!stage);
+  syncMusic();
   if (S.screen === 'game') mountStage();
   if (S.screen === 'kit') drawKitPreview();
   if (S.screen === 'draft' && boardScroll != null) { const b = document.querySelector('.board .tablewrap'); if (b) b.scrollTop = boardScroll; }
@@ -351,7 +360,7 @@ function start(data) {
   loadPrefs();
   migrateStorage();
   initAudio();
-  setSound(S.sound);
+  applySound();
   try { if (/[?&#]debug\b/.test(location.search + location.hash)) S.debug = true; } catch { /* no location */ }
   // Streamer mode: ?watch in the address opens straight into a game the AI plays on both sides,
   // and each final rolls into the next game. Your saved league and mode are left as they were.
@@ -367,7 +376,11 @@ function start(data) {
   document.addEventListener('change', onChange);
   window.addEventListener('resize', () => { if (S.screen === 'game' && stage) fitStage(); });
   document.addEventListener('submit', onSubmit);
-  window.addEventListener('keydown', (e) => onKey(e, true));
+  window.addEventListener('keydown', (e) => {
+    // U mutes and unmutes the game on any screen.
+    if (e.code === 'KeyU' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('input, select, textarea')) { e.preventDefault(); toggleMute(); return; }
+    onKey(e, true);
+  });
   window.addEventListener('keyup', (e) => onKey(e, false));
   window.addEventListener('blur', () => clearInput(true));
   initPads();
