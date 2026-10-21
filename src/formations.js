@@ -53,7 +53,7 @@ export const OFF_FORMATIONS = {
 export const PLAY_FORMATION = {
   inside_run: 'iform', outside_run: 'singleback', qb_sneak: 'singleback', draw: 'gun_spread',
   screen: 'gun_spread', slant: 'gun_spread', out: 'gun_trips', curl: 'gun_spread', te_seam: 'pistol', post: 'gun_trips', pa_deep: 'singleback',
-  power: 'iform', counter: 'singleback', toss: 'singleback', dive: 'iform',
+  power: 'iform', counter: 'singleback', toss: 'singleback', dive: 'iform', trap: 'singleback', sweep: 'singleback',
   qb_draw: 'gun_spread', qb_power: 'pistol', read_option: 'pistol',
   bubble: 'gun_trips', stick: 'gun_spread', curl_flat: 'gun_spread', mesh: 'gun_spread', smash: 'gun_spread', dagger: 'gun_trips',
   levels: 'gun_trips', flood: 'singleback', y_cross: 'gun_spread', four_verts: 'gun_spread', pa_boot: 'singleback',

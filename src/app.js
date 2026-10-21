@@ -222,6 +222,7 @@ function onClick(e) {
     case 'ps': presnapAct(el.dataset.ps, el.dataset.arg); break;
     case 'csfold': S.csFold = !S.csFold; render(); break;
     case 'csall': S.csAll = !S.csAll; S.csFold = false; render(); break;
+    case 'csflip': S.runFlip = !S.runFlip; render(); break;
     case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
     case 'quality': S.quality = el.dataset.q; stage?.setQuality(S.quality); savePrefs(); render(); break;
     case 'details': S.menuOpen = false; render(); document.querySelector('.game.g3d .below')?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' }); break;

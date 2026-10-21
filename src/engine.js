@@ -22,6 +22,8 @@ export const OFF_PLAYS = {
   counter: { name: 'Counter', kind: 'run', dir: 'counter', like: 'inside_run', blurb: 'Step one way, run the other' },
   toss: { name: 'Toss Sweep', kind: 'run', dir: 'toss', sim: 'outside_run', blurb: 'Pitch it wide and race the edge' },
   dive: { name: 'HB Dive', kind: 'run', dir: 'dive', like: 'inside_run', blurb: 'Quick hit straight ahead' },
+  trap: { name: 'Trap', kind: 'run', dir: 'trap', like: 'inside_run', blurb: 'Let the tackle in, guard traps him' },
+  sweep: { name: 'Pin & Pull', kind: 'run', dir: 'sweep', sim: 'outside_run', blurb: 'Pin the end, linemen pull and lead wide' },
   draw: { name: 'HB Draw', kind: 'run', dir: 'draw', blurb: 'Show pass, hand off late' },
   qb_sneak: { name: 'QB Sneak', kind: 'run', dir: 'sneak', blurb: 'Push for a yard' },
   qb_draw: { name: 'QB Draw', kind: 'run', dir: 'qbdraw', sim: 'draw', qb: true, blurb: 'Drop like a pass, then the QB takes off' },
@@ -1230,6 +1232,7 @@ const RUN_PAIRS = {
   power: [['RT', 'DE', 1.2], ['TE', 'OLB', 1.0], ['RG', 'DT2', 1.0], ['LG', 'MLB', 1.1], ['C', 'DT1', 0.6], ['LT', 'LE', 0.3]],
   counter: [['LT', 'LE', 1.2], ['LG', 'MLB', 1.0], ['C', 'DT1', 1.0], ['RG', 'OLB', 0.9], ['TE', 'DE', 0.5], ['RT', 'DT2', 0.4]],
   dive: [['C', 'MLB', 1.2], ['LG', 'DT1', 1.3], ['RG', 'DT2', 1.3], ['LT', 'LE', 0.3], ['RT', 'DE', 0.3]],
+  trap: [['LG', 'DT2', 1.3], ['RG', 'MLB', 1.0], ['C', 'DT1', 1.0], ['LT', 'OLB', 0.6], ['RT', 'DE', 0.4]],
 };
 const RUN_TACKLERS = {
   outside: { OLB: 3, CB1: 2, SS: 2.5, MLB: 2, LE: 1, DE: 1 },
@@ -1237,6 +1240,7 @@ const RUN_TACKLERS = {
   power: { OLB: 3, MLB: 3, SS: 2.5, DE: 1.5, DT2: 1 },
   counter: { MLB: 3, LE: 2, OLB: 2, SS: 2, FS: 1, DT1: 1 },
   dive: { MLB: 4, DT1: 3, DT2: 3, SS: 1 },
+  trap: { MLB: 4, OLB: 2, DT1: 2, SS: 2, FS: 1 },
 };
 
 function doRun(g, call, defCall, qbRun = false) {
@@ -1259,6 +1263,7 @@ function doRun(g, call, defCall, qbRun = false) {
   lane = lane / wsum + SCHEME[defCall].run * (dir === 'dive' ? 0.6 : 1);
   if (dir === 'draw') lane += { pass_blitz: 6, cover0: 7, fire_zone: 2, prevent: 4, cover2: 2, cover4: 1, run_blitz: -4, goal_line: -3 }[defCall] ?? 0;
   if (dir === 'counter') lane += { run_blitz: 4, pass_blitz: 3, cover0: 3, fire_zone: 2, goal_line: -1, base: -1 }[defCall] ?? 0;
+  if (dir === 'trap') lane += { run_blitz: 3, pass_blitz: 4, mug: 3, cover0: 2, nickel_blitz: 2, goal_line: -2, base: -1, tampa2: -1 }[defCall] ?? 0;
 
   const power = eff(g, o, carrier, 'str', { run: true }), speed = eff(g, o, carrier, 'spd', { run: true });
   let yards;
@@ -1277,6 +1282,9 @@ function doRun(g, call, defCall, qbRun = false) {
     } else if (dir === 'counter') {
       // A slow-developing cutback: feast or famine.
       mean += -0.6 + (power - 65) * 0.04 + (speed - 65) * 0.02; sd = 4.0;
+    } else if (dir === 'trap') {
+      // Quick misdirection inside: a penetrating front gets trapped, a patient one sits on it.
+      mean += 0.1 + (power - 65) * 0.035 + (speed - 65) * 0.03; sd = 3.4;
     } else if (dir === 'dive') {
       // A quick hit straight ahead: rarely stuffed, rarely breaks long.
       mean += 0.2 + (power - 65) * 0.045 + (speed - 65) * 0.01; sd = 2.3;
@@ -1305,7 +1313,7 @@ function doRun(g, call, defCall, qbRun = false) {
   }
   const s = st(g, o, carrier);
   s.ra++; s.ry += Math.min(yards, 100 - g.spot); s.rlong = Math.max(s.rlong, yards);
-  const where = { inside: 'up the middle', outside: chance(g, 0.5) ? 'around the left end' : 'around the right end', draw: 'on the draw', sneak: 'on the sneak', power: 'off tackle', counter: 'on the counter', dive: 'on the dive' }[dir];
+  const where = { inside: 'up the middle', outside: chance(g, 0.5) ? 'around the left end' : 'around the right end', draw: 'on the draw', sneak: 'on the sneak', power: 'off tackle', counter: 'on the counter', dive: 'on the dive', trap: 'on the trap' }[dir];
   const gain = yards > 0 ? `for ${yards} yard${yards === 1 ? '' : 's'}` : yards === 0 ? 'for no gain' : `for a loss of ${-yards}`;
   let text = extras.length ? `${nm(carrier)} runs ${where}, ${extras.join(' and ')}. Gain of ${yards}.` : `${nm(carrier)} runs ${where} ${gain}.`;
   const se = keyRep && Math.abs(keyRep.diff) > 12 && (keyRep.diff > 0 ? keyRep.aSE : keyRep.dSE);
@@ -1659,7 +1667,7 @@ export function passWeights(g) {
 // The newer plays share the weight of the original play they resolve as, so the AI mixes the
 // whole playbook in the same proportions by kind and depth.
 const SHARE = { bubble: 0.5, stick: 0.8, curl_flat: 0.7, mesh: 0.8, smash: 0.7, dagger: 0.6, levels: 0.6, flood: 0.6, y_cross: 0.7,
-  four_verts: 0.7, pa_boot: 1.2, power: 0.8, counter: 0.6, toss: 0.7, dive: 0.6,
+  four_verts: 0.7, pa_boot: 1.2, power: 0.8, counter: 0.6, toss: 0.7, dive: 0.6, trap: 0.5, sweep: 0.55,
   cover1_robber: 0.6, cover2_man: 0.6, tampa2: 0.7, cover4: 0.8, mug: 0.6, nickel_blitz: 0.6, fire_zone: 0.7, cover0: 0.35 };
 function spread(w, kind) {
   const table = kind === 'def' ? DEF_PLAYS : OFF_PLAYS;

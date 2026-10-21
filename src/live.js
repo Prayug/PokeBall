@@ -16,6 +16,7 @@ import { dist, DT, event, finish, inTackle, integrate, isManual, kin, len, note,
 import { DEF_SCHEMES, coverWant, pursueWant, rushWant, setupDefense } from './live/defense.js';
 import { PLAY_ROUTES, airJumps, ballFlight, buildRoute, contest, coverageRead, looseBall, qbBrain, releasePoint, routeWant, snapFlight, startJump, startThrow, throwAway, windup } from './live/passing.js';
 import { atSnap, shiftStep } from './live/presnap.js';
+import { aiSide, conceptOf, defaultSide, designedWant, meshPoint, runnerWant, setupRun } from './live/runs.js';
 import { XP_SPOT, kickStep, kickWant, liveKick, setupKick } from './live/kicks.js';
 import { RATES, liveFoul, preSnapFoul, sloppy } from './penalties.js';
 export { dist, DT, event, finish, GRAVITY, isManual, kin, len, mustGain, note, passBlockWant, perceive, RECEIVERS, seek, separate, setCarrier, sgn, SIDE, slowDown, steer, sticks, traitNotes, unengage } from './live/core.js';
@@ -33,8 +34,6 @@ const ENGAGE = 1.15;
 const TACKLE_T = 0.5;
 // The handoff exchange: the ball travels from the quarterback's hands to the back's belly.
 const EXCHANGE_T = 0.2;
-// Run directions where the quarterback is the designed ball carrier ('read' decides at the mesh).
-const QB_RUNS = new Set(['sneak', 'qbdraw', 'qbpower']);
 const DROP = { screen: -6, short: -6.5, mid: -7.5, deep: -8.5 };
 const READ_AT = { screen: 0.55, short: 0.95, mid: 1.55, deep: 2.1 };
 
@@ -95,6 +94,13 @@ export function createLivePlay(g, offCall, defCall, opts = {}) {
     lp.formationIssues = [];
   } else {
     resolveSpacing(lp);
+    // The side a run goes: the caller's (the play's own side, or flipped), or for an AI
+    // offense, read from the box at the line.
+    if (lp.kind === 'run') {
+      const mine = lp.user === o || lp.p2?.user === o;
+      const ai = opts.aiSide === true || (!mine && opts.aiSide !== false);
+      lp.runSide = opts.runSide === 1 || opts.runSide === -1 ? opts.runSide : ai ? aiSide(lp) : defaultSide(lp) * (opts.flip ? -1 : 1);
+    }
     setupOffense(lp);
     for (const p of lp.players) p.home = { x: p.x, y: p.y };
     lp.formationIssues = validateFormation(lp);
@@ -170,93 +176,7 @@ function setupOffense(lp) {
   const O = lp.off, play = lp.play;
   const rbBlocks = lp.blitz.length > 0 && lp.offCall !== 'screen';
   for (const k of ['LT', 'LG', 'C', 'RG', 'RT']) if (O[k]) O[k].role = lp.kind === 'run' ? 'runblock' : 'passblock';
-  if (lp.kind === 'run') {
-    const dir = play.dir;
-    // Designed quarterback runs: he keeps it (a read option decides at the mesh).
-    lp.qbRun = QB_RUNS.has(dir);
-    lp.carrier = lp.qbRun ? O.QB : O.RB;
-    // Inside runs hit the A or B gap between the actual linemen, outside runs the edge.
-    const gap = (a, b) => (O[a] && O[b] ? (O[a].y + O[b].y) / 2 : null);
-    const side = chance(lp.g, 0.5) ? -1 : 1;
-    const inside = (k) => (side < 0 ? gap(...[['LG', 'C'], ['LT', 'LG']][k]) : gap(...[['C', 'RG'], ['RG', 'RT']][k])) ?? side * (k ? 2.7 : 0.9);
-    lp.holeY = dir === 'outside' ? side * 7 : dir === 'sneak' ? 0 : inside(chance(lp.g, 0.55) ? 0 : 1);
-    if (dir === 'draw') lp.holeY = inside(1);
-    if (dir === 'dive' || dir === 'qbdraw' || dir === 'read') lp.holeY = inside(0);
-    if (dir === 'counter') lp.holeY = inside(1);
-    // Toss: pitched to the back, who races the edge.
-    if (dir === 'toss') lp.holeY = side * 9.5;
-    // Power: off tackle to the tight end's side, behind a pulling guard.
-    lp.runSide = side;
-    if (dir === 'power' || dir === 'qbpower') {
-      const s2 = O.TE && O.TE.x > -3 ? sgn(O.TE.y) : side;
-      lp.runSide = s2;
-      const t = s2 > 0 ? O.RT : O.LT;
-      lp.holeY = t ? t.y + s2 * 1.7 : s2 * 4.5;
-    }
-    // Each blocker takes the nearest defender in front of him.
-    const bl = ['LT', 'LG', 'C', 'RG', 'RT', lp.formation === 'iform' && dir !== 'sneak' ? null : 'TE'].map((k) => k && O[k]).filter(Boolean);
-    const df = ['LE', 'DE', 'DT1', 'DT2', 'OLB', 'MLB'].map((k) => lp.def[k]).filter(Boolean);
-    const pairs = [];
-    for (const b of bl) for (const d of df) pairs.push([Math.abs(b.y - d.y) + Math.max(0, d.x - 2) * 0.5, b, d]);
-    pairs.sort((a, b) => a[0] - b[0]);
-    const used = new Set();
-    for (const [, b, d] of pairs) {
-      if (b.assign || used.has(d)) continue;
-      b.assign = d; b.role = 'runblock'; used.add(d);
-    }
-    // Receivers stalk-block the nearest man in coverage on their side, not a fixed slot (the
-    // slot corner may be lined up across the field).
-    const taken = new Set();
-    for (const w of ['WR1', 'WR2', 'WR3']) {
-      const r = O[w];
-      if (!r) continue;
-      let best = null, bd = 99;
-      for (const q of Object.values(lp.def)) {
-        if (taken.has(q) || used.has(q) || ['LE', 'DE', 'DT1', 'DT2'].includes(q.slot)) continue;
-        const dd = Math.hypot(q.x - r.x, q.y - r.y);
-        if (dd < bd) { bd = dd; best = q; }
-      }
-      r.role = 'stalk'; r.assign = best; if (best) taken.add(best);
-    }
-    // Power and counter pull the backside guard: he runs flat behind the line and leads
-    // through the hole onto the first linebacker.
-    if (dir === 'power' || dir === 'counter' || dir === 'qbpower') {
-      const hs = sgn(lp.holeY || lp.runSide);
-      const g2 = hs > 0 ? O.LG : O.RG;
-      const lbs = ['OLB', 'MLB', 'CB3'].map((k) => lp.def[k]).filter(Boolean);
-      const lb = lbs.sort((a, b) => Math.abs(a.y - lp.holeY) - Math.abs(b.y - lp.holeY))[0];
-      if (g2 && lb) {
-        // Whoever had the linebacker takes the guard's man instead.
-        const was = bl.find((b) => b !== g2 && b.assign === lb);
-        if (was) was.assign = g2.assign;
-        g2.assign = lb; g2.pull = { until: dir === 'power' ? 0.85 : 0.85, via: { x: -1.5, y: lp.holeY - hs * 0.8 } };
-      }
-    }
-    // A fullback (the I-form's tight end) leads through the hole instead of blocking a man: he
-    // takes the linebacker nobody up front has.
-    if (O.TE && lp.formation === 'iform' && dir !== 'sneak') {
-      O.TE.role = 'lead';
-      const free = ['MLB', 'OLB', 'SS'].map((k) => lp.def[k]).filter((q) => q && !bl.some((x) => x !== O.TE && x.assign === q));
-      O.TE.assign = free.sort((a, b) => Math.abs(a.y - lp.holeY) - Math.abs(b.y - lp.holeY))[0] ?? null;
-    }
-    if (O.QB) O.QB.role = dir === 'sneak' ? 'carrier' : lp.qbRun ? 'qbkeep' : 'handoff';
-    // The back leads for the quarterback on his designed runs, and takes the fake on a read.
-    if (O.RB) O.RB.role = dir === 'sneak' ? 'runblock' : dir === 'qbpower' || dir === 'qbdraw' ? 'lead' : 'runner';
-    if (O.TE?.role === 'lead' && O.RB?.role === 'lead') O.TE.role = 'runblock';
-    lp.handAt = { draw: 0.95, sneak: 0, dive: 0.2, power: 0.5, counter: 0.45, toss: 0.3, qbdraw: 0.85, qbpower: 0.8, read: 0.45 }[dir] ?? 0.42;
-    // Read option: the backside end is left unblocked on purpose; the quarterback reads him.
-    if (dir === 'read') {
-      const s2 = -sgn(lp.holeY || 1);
-      const ends = Object.values(lp.def).filter((q) => ['LE', 'DE'].includes(q.slot) && sgn(q.y) === s2);
-      const end = ends.sort((a, b) => Math.abs(b.y) - Math.abs(a.y))[0];
-      if (end) {
-        lp.readEnd = end;
-        end.crash = chance(lp.g, ['run_blitz', 'goal_line', 'mug', 'cover0'].includes(lp.defCall) ? 0.65 : 0.45);
-        for (const b of bl) if (b.assign === end) b.assign = null;
-      }
-    }
-    return;
-  }
+  if (lp.kind === 'run') { setupRun(lp); return; }
   const routes = PLAY_ROUTES[lp.offCall];
   for (const k of RECEIVERS) {
     const p = O[k];
@@ -482,6 +402,11 @@ export function step(lp, input = null) {
     else if (rb && dist(rb, qb) < rb.r + qb.r + 0.75) startExchange(lp, qb, rb);
   }
   if (lp.kind === 'run' && !lp.carrierSet && lp.t >= lp.handAt + 1.2 && qbHas(lp)) { lp.carrier = lp.off.QB; setCarrier(lp, lp.off.QB); }
+  // The draw: the line has shown pass; with the ball handed off it turns and drives its man.
+  if (lp.kind === 'run' && lp.carrierSet && !lp.drawn && conceptOf(lp).scheme === 'draw') {
+    lp.drawn = true;
+    for (const k of ['LT', 'LG', 'C', 'RG', 'RT']) { const b = lp.off[k]; if (b?.role === 'passblock') { b.role = 'runblock'; b.assign = b.pick ?? b.assign; } }
+  }
   // AI quarterback, then the throwing motion
   if (lp.kind === 'pass' && !lp.thrown && !lp.windup) coverageRead(lp);
   if (lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'done') qbBrain(lp);
@@ -701,8 +626,8 @@ function think(lp, p) {
       const rb = lp.carrier;
       if (!lp.carrierSet && rb && lp.t > lp.handAt + 0.15) return seek(p, rb, 0.55, 0.6);
       if (lp.play.dir === 'toss') return seek(p, lp.carrierSet ? { x: p.x - 1, y: -sgn(lp.holeY) * 2 } : { x: p.x - 0.6, y: sgn(lp.holeY) * 0.8 }, 0.5);
-      const mesh = { x: lp.play.dir === 'dive' ? -3.2 : -4.2, y: lp.holeY > 0 ? 0.6 : -0.6 };
-      return seek(p, lp.carrierSet ? { x: -6, y: -lp.holeY * 0.3 } : mesh, 0.6);
+      // He opens quickly, out of the way of anyone pulling behind the line.
+      return seek(p, lp.carrierSet ? { x: -6.5, y: -lp.holeY * 0.3 } : meshPoint(lp), 0.9);
     }
     case 'fake': return seek(p, { x: -7, y: -sgn(lp.holeY) * 4 }, 0.5);
     case 'trail':
@@ -712,17 +637,9 @@ function think(lp, p) {
     case 'qbkeep':
       // QB draw: drop as if to pass, then go. QB power: a step to the hole side.
       if (lp.play.dir === 'qbdraw') return seek(p, { x: Math.min(p.home.x - 1.6, p.x), y: p.home.y }, 0.35);
-      return seek(p, { x: p.x, y: p.y + sgn(lp.holeY) * 0.6 }, 0.4);
-    case 'runner': {
-      // Before the handoff: head for the mesh point, then aim at the hole.
-      const dir = lp.play.dir;
-      if (dir === 'draw' && lp.t < lp.handAt - 0.35) return seek(p, { x: -6.5, y: 1 }, 0.2);
-      // Counter: a jab step the wrong way first, so the linebackers flow with it.
-      if (dir === 'counter' && lp.t < 0.4) return seek(p, { x: p.x, y: -sgn(lp.holeY) * 2.5 }, 0.7);
-      if (dir === 'toss') return seek(p, { x: Math.min(p.x, -4.5), y: sgn(lp.holeY) * 6 }, 1, 0.1);
-      if (dir === 'dive') return seek(p, { x: -2.2, y: lp.holeY }, 1);
-      return seek(p, { x: -3.5, y: lp.holeY * 0.35 }, 0.8);
-    }
+      return runnerWant(lp, p);
+    // Before the handoff: the back runs his concept's track to the mesh (see live/runs.js).
+    case 'runner': return runnerWant(lp, p);
     case 'carrier': return carrierWant(lp, p);
     case 'route': return routeWant(lp, p);
     case 'passblock': return passBlockWant(lp, p);
@@ -733,6 +650,11 @@ function think(lp, p) {
       // Through the hole a step ahead of the back onto his linebacker, then the first defender
       // who shows.
       const lb = p.assign && !p.assign.eng && p.assign.stun <= 0.3 && !p.eng ? p.assign : null;
+      // A kick-out: straight at the end man, from the inside out.
+      if (lb && p.kick && !p.kicked) {
+        p.aim = lb;
+        return seek(p, { x: lb.x - 0.5, y: lb.y - lp.runSide * 0.5 }, 1, 0.3);
+      }
       if (lb && p.x > -1.5 && dist(p, lb) < 8) {
         p.aim = lb;
         return seek(p, { x: lb.x - 0.6, y: lb.y + (lb.y > lp.holeY ? 0.3 : -0.3) }, 1, 0.3);
@@ -774,11 +696,15 @@ function qbMove(lp, p) {
 
 function runBlockWant(lp, p) {
   if (p.eng) return;
-  if (p.pull && lp.t < p.pull.until && !lp.tackle) {
+  if (p.pull && !p.pull.done && lp.t < p.pull.until && !lp.tackle && dist(p, p.pull.via) > 0.7) {
     // Pulling: flat down the line behind the other blockers, then turn up through the hole.
     p.aim = p.assign;
-    return seek(p, p.pull.via, 1, 0.3);
+    const P = p.pull;
+    P.i ??= 0;
+    if (P.path && P.i < P.path.length - 1 && (dist(p, P.path[P.i]) < 0.7 || (P.path[P.i].y - p.y) * sgn(P.via.y - P.path[0].y) < 0)) P.i++;
+    return seek(p, P.path ? P.path[P.i] : P.via, 1, 0.2);
   }
+  if (p.pull) p.pull.done = true;
   let tgt = p.assign && !p.assign.eng && p.assign.stun <= 0.3 ? p.assign : null;
   if (!tgt || dist(tgt, p) > 7) {
     tgt = null;
@@ -824,19 +750,8 @@ function escortWant(lp, p, c) {
 function carrierWant(lp, p) {
   const g = lp.g;
   const fwd = p.side === 'off' ? 1 : -1;
-  // Designed runs hit the hole first.
-  // Designed runs hit the hole first. An outside run stretches to the edge, then reads it: if
-  // a defender has set the edge outside him, he bounces back inside instead of running into it.
-  if (lp.kind === 'run' && (p.slot === 'RB' || (p.slot === 'QB' && (lp.qbRun || lp.kept) && lp.play.dir !== 'sneak')) && p.x < 0.5) {
-    const e = lp.t - (lp.carrierAt ?? 0);
-    const wide = lp.play.dir === 'outside' || lp.play.dir === 'toss' || lp.kept;
-    if (wide && e < 1.1 && !lp.bounced) {
-      const out = sgn(lp.holeY);
-      const edge = lp.players.find((q) => q.side !== p.side && !q.eng && q.stun <= 0 && (q.y - p.y) * out > 0.3 && Math.abs(q.x - p.x) < 3 && dist(q, p) < 3.4);
-      if (edge && e > 0.35) { lp.bounced = true; event(lp, 'bounce', '', p, edge); }
-      else return seek(p, { x: Math.min(1.5, -1 + e * (lp.play.dir === 'toss' ? 4.5 : 3)), y: lp.holeY }, 1, 0.05);
-    } else if (e < (lp.play.dir === 'power' || lp.play.dir === 'qbpower' ? 0.8 : 0.55) && !wide) return seek(p, { x: 1.5, y: lp.holeY }, 1, 0.05);
-  }
+  // Designed runs follow their concept's track, with its read (see live/runs.js).
+  if (lp.kind === 'run' && (p.slot === 'RB' || (p.slot === 'QB' && (lp.qbRun || lp.kept) && lp.play.dir !== 'sneak')) && designedWant(lp, p)) return;
   // A fake punt: the up-back gets to the edge first.
   if (lp.fake === 'punt' && p.x < 0.5 && lp.t - (lp.carrierAt ?? 0) < 1.6) return seek(p, { x: 1.5, y: lp.fakeEdge * 9 }, 1, 0.05);
   // The sneak: straight ahead behind the center, leaning a half step to the softer A gap. The
@@ -884,7 +799,9 @@ function carrierWant(lp, p) {
     }
     // Saving clock: past the line, angle for the nearer sideline.
     const out = lp.clockOut && p.x > 1 ? dy * sgn(p.y || 1) * 0.9 : 0;
-    const score = dx * fwd * (1.7 + north) - danger - Math.abs(a) * 0.002 - strung * Math.max(0, Math.abs(a) - 45) / 45 * 0.9 + out;
+    // A designed run near the line still leans to its hole (or the cutback he read).
+    const aim = lp.kind === 'run' && p.side === 'off' && p.x < 2 && lp.holeY != null && !lp.kept ? -Math.abs(p.y + dy * 2.2 - lp.holeY) * 0.16 : 0;
+    const score = dx * fwd * (1.7 + north) - danger - Math.abs(a) * 0.002 - strung * Math.max(0, Math.abs(a) - 45) / 45 * 0.9 + out + aim;
     if (!best || score > best.score) best = { dx, dy, score };
   }
   const sprint = 1;
@@ -946,7 +863,8 @@ function move(lp, p, dt) {
   // The player you control jogs at 86% of top speed; Shift is a sprint burst to 110% with a
   // harder first step, for about three seconds (longer with Stamina) before it needs to
   // recover. The burst refills while jogging or standing.
-  let boost = p.juke > 0 ? 2.2 : p.truck > 0 ? 1.6 : 1;
+  // A pulling lineman fires out of his stance flat down the line.
+  let boost = p.juke > 0 ? 2.2 : p.truck > 0 ? 1.6 : p.pull && !p.pull.done ? 1.5 : 1;
   p.sprinting = false;
   if (isManual(lp, p)) {
     const i = p.input ?? {};
@@ -1037,10 +955,14 @@ function blocks(lp) {
     if (!blocker) continue;
     for (const d of lp.players) {
       if (d.side === b.side || d.eng || d.carrier || d.stun > 0 || d.shedT > 0) continue;
+      // A pulling lineman runs past everyone on his way to the man he is pulling for.
+      // So does a kick-out or trap block until he has hit his man.
+      if (((b.pull && !b.pull.done) || (b.kick && !b.kicked && b.assign && !b.assign.eng)) && d !== b.assign) continue;
       // Linemen get their hands on anyone who comes within arm's length; nobody runs through them.
       const line = b.role === 'passblock' || b.role === 'runblock' || b.role === 'kblock';
       if (dist(b, d) > Math.max(ENGAGE, b.r + d.r + (line ? 0.45 : 0.08))) continue;
       engage(lp, b, d);
+      if (b.kick) b.kicked = true;
       break;
     }
     if (!b.eng && b.aim && dist(b, b.aim) < 3) { b.contact = 'APPROACHING'; b.tgt = b.aim; }
@@ -1119,7 +1041,8 @@ function blocks(lp) {
       if (behind > 0) push *= Math.max(0.25, 1 - behind * 0.4);
     } else if (push < 0 && lp.holeY != null && (lp.kind === 'run')) {
       // Drive him off the lane: back and to the side away from the hole.
-      const away = sgn(d.y - lp.holeY);
+      // A kick-out drives the end out toward the sideline; the back runs inside it.
+      const away = b.kick ? lp.runSide : sgn(d.y - lp.holeY);
       ux = 0.75; uy = away * 0.66;
       push = -push;
     }

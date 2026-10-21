@@ -13,7 +13,7 @@ import { sfx } from '../audio.js';
 import { POWER_OF, powerLine } from '../powers.js';
 import { autoAdvance, doCall, needsUser, playClockOut, setMode, spectating, toggleTakeOver, twoPlayer, userSide, userTimeout } from './game.js';
 import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions } from './callsheet.js';
-import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
+import { SHADES, audibles, cycleShade, flipRun, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
 import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
 import { boothAfter } from '../broadcast.js';
@@ -33,7 +33,8 @@ function keysHelp() {
     <span><kbd>E</kbd> truck through a tackler</span>
     <span><kbd>R</kbd> spin move</span>
     <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
-    <span>At the line on offense: <kbd>V</kbd> audible, <kbd>B</kbd> hot route, <kbd>N</kbd> motion, then a number to pick</span>
+    <span>At the line on offense: <kbd>V</kbd> audible, <kbd>B</kbd> hot route (on a run: flip it to the other side), <kbd>N</kbd> motion, then a number to pick</span>
+    <span><kbd>U</kbd> on the play sheet: flip the runs to the other side</span>
     <span>At the line on defense: <kbd>V</kbd> shade the coverage, <kbd>B</kbd> show blitz, <kbd>N</kbd> back out</span>
     <span><kbd>I</kbd> on the play sheet: type edges and their tendencies</span>
     <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
@@ -257,6 +258,7 @@ export function presnapAct(act, arg) {
     case 'hotpick': S.psPick = { kind: 'hot', slot: arg }; break;
     case 'hot': ok = hotRoute(lp, S.psPick?.slot, arg); msg = `Hot route: ${S.psPick?.slot} ${arg}`; S.psPick = null; break;
     case 'motion': ok = startMotion(lp, arg); msg = `${arg} in motion`; S.psPick = null; break;
+    case 'flip': ok = flipRun(lp); msg = `Flipped: running ${lp.runSide > 0 ? 'right' : 'left'}`; S.psPick = null; break;
     case 'shade': ok = cycleShade(lp); msg = `Shade: ${SHADES.find(([k]) => k === (lp.shade ?? null))[1]}`; break;
     case 'show': ok = setDisguise(lp, 'show'); msg = lp.disguise === 'show' ? 'Showing blitz' : 'Blitz look off'; break;
     case 'back': ok = setDisguise(lp, 'back'); msg = lp.disguise === 'back' ? 'Backed out' : 'Blitz look back'; break;
@@ -266,11 +268,11 @@ export function presnapAct(act, arg) {
   stage?.drawArt?.();
   render();
 }
-// The keys at the line: V, B and N, and a number for the open picker.
+// The keys at the line: V, B (hot route, or flip on a run) and N, and a number for the open picker.
 function presnapKey(code) {
   const lp = L3.lp;
   const mine = lp.user === lp.o;
-  const keys = { KeyV: mine ? ['open', 'audible'] : ['shade'], KeyB: mine ? ['open', 'hot'] : ['show'], KeyN: mine ? ['open', 'motion'] : ['back'] };
+  const keys = { KeyV: mine ? ['open', 'audible'] : ['shade'], KeyB: mine ? (lp.kind === 'run' ? ['flip'] : ['open', 'hot']) : ['show'], KeyN: mine ? ['open', 'motion'] : ['back'] };
   if (keys[code]) { presnapAct(...keys[code]); return true; }
   const n = /^Digit([1-9])$/.exec(code);
   if (n && S.psPick) {
@@ -856,6 +858,7 @@ export function onKey(e, down) {
     if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; render(); return; }
     if (code === 'KeyT' && !L3.lp && !L3.replay) { e.preventDefault(); userTimeout(); return; }
     if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
+    if (code === 'KeyU' && !L3.lp) { e.preventDefault(); S.runFlip = !S.runFlip; render(); return; }
     if (code === 'Escape') {
       if (S.menuOpen) { S.menuOpen = false; render(); return; }
       if (L3.paused || L3.lp?.phase === 'live') { e.preventDefault(); togglePause(); return; }
