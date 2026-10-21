@@ -36,6 +36,7 @@ for (const call of runs) {
     const lp = createLivePlay(g, call, DEFS[i % DEFS.length], { runSide: side });
     if (globalThis.TRACE) globalThis.TRACE(lp, i);
     R.flip[lp.runSide > 0 ? 1 : 0]++;
+    const hole0 = lp.holeY;
     snap(lp);
     let crossed = null;
     for (let s = 0; s < 60 * 12 && lp.phase === 'live'; s++) {
@@ -50,7 +51,8 @@ for (const call of runs) {
     const want = lp.kept ? -side : side;
     if (crossed) {
       R.cross.push(crossed.y * want); R.when.push(crossed.t);
-      if (crossed.y * want > 0.3 || lp.cut === 'back') R.called++;
+      // Through its hole (an A-gap run hits right next to the center), on its side, or a cutback it read.
+      if (crossed.y * want > 0.3 || Math.abs(crossed.y - hole0) < 1.5 || lp.cut === 'back') R.called++;
       if (lp.cut === 'back') R.cut++;
     }
   }

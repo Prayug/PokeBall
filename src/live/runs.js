@@ -334,7 +334,7 @@ export function designedWant(lp, p) {
   const e = lp.t - (lp.carrierAt ?? 0);
   // Near the line he runs to daylight (the open-field search, which still leans to the hole).
   const edgeRun = K.read === 'edge' && !lp.cut;
-  if (p.x > (edgeRun ? 0.2 : -1.4) || e > 1.6) return false;
+  if (p.x > (edgeRun ? 0.2 : -1.4) || e > 1.2) return false;
   // Gap runs press the hole for a beat, then run to daylight leaning on it.
   if (K.press != null && e > K.press) return false;
   if (lp.kept) {
@@ -368,7 +368,9 @@ export function designedWant(lp, p) {
     }
   }
   if (lp.cut && lp.cut !== 'bang') {
-    seek(p, { x: Math.max(p.x + 1.6, 1.4), y: clamp(lp.holeY, p.y - 4, p.y + 4) }, 1, 0.05);
+    // Plant and go: downhill into the new lane, then daylight (never dancing behind the line).
+    if (p.x > -1.6 || e > 0.9) return false;
+    seek(p, { x: Math.max(p.x + 2.4, 1.4), y: clamp(lp.holeY, p.y - 3, p.y + 3) }, 1, 0.05);
     return true;
   }
   if (lp.cut === 'bang' && p.x > -2.2) return false;
