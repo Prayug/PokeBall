@@ -3,14 +3,14 @@
 import { DEF_PLAYS, OFF_PLAYS, TEMPOS, clockLean, clockText, convertLean, defenseWeights, downText, fgDistance, fgOdds, offenseLean, onsideLean, passWeights, runWeights, xpOdds } from '../engine.js';
 import { CALL_FRONT, DEF_FORMATIONS, FORMATIONS, PLAY_FORMATION } from '../live.js';
 import { formationsFor } from '../formations.js';
-import { diagram, formationName } from '../playbook.js';
+import { diagram, formationName, runSideName } from '../playbook.js';
 import { render } from '../app.js';
 import { S } from '../state.js';
 import { edgeRow, esc, powersRow } from '../ui.js';
 import { SCHEMES, schemePlay } from '../coach.js';
 import { twoPlayer, userSide } from './game.js';
 import { tendencyFit, tendencyLines, typeEdges } from '../scout.js';
-import { HOT_ROUTES, SHADES, audibles, hotCandidates, motionCandidates } from '../live/presnap.js';
+import { HOT_ROUTES, SHADES, audibles, canFlip, hotCandidates, motionCandidates } from '../live/presnap.js';
 import { RECEIVERS } from '../live.js';
 
 // Play families for the call sheet: a short label and a colored edge per group.
@@ -69,6 +69,22 @@ export function callSheet(g) {
   return { onOff, groups: keyed, fit, why };
 }
 
+// The two calls a key away on the sheet: the one that fits the down (Enter) and your last call
+// from this side of the ball (R), each only when it is on the sheet now.
+export function quickCalls(g) {
+  const { onOff, groups, fit } = callSheet(g);
+  const on = new Set(groups.flatMap(([, , cs]) => cs.map((c) => c.call)));
+  const again = g.phase === 'play' ? S.lastCall?.[`${userSide()}:${onOff ? 'off' : 'def'}`] : null;
+  return { fit: on.has(fit) ? fit : null, again: again && on.has(again) ? again : null };
+}
+function quickHtml(g, onOff) {
+  const { fit, again } = quickCalls(g);
+  const name = (c) => esc((onOff ? OFF_PLAYS : DEF_PLAYS)[c]?.name ?? '');
+  const kbd = (k) => (twoPlayer() ? '' : ` <kbd>${k}</kbd>`);
+  if (!fit && !again) return '';
+  return `<span class="cs-quicks">${fit ? `<button class="btn tiny cs-quick fit" data-act="call" data-call="${fit}" title="Call the play that fits this down">Fits: ${name(fit)}${kbd('Enter')}</button>` : ''}${again && again !== fit ? `<button class="btn tiny cs-quick" data-act="call" data-call="${again}" title="Call your last call again">Again: ${name(again)}${kbd('R')}</button>` : ''}</span>`;
+}
+
 // Formations: the offense picks one for its call (or leaves it to the play's own), the defense
 // picks its front (or leaves it to the call's). An AI side mixes its looks.
 export function formFor(call) {
@@ -109,7 +125,7 @@ export function cycleForm(onOff) {
 // move between them, so each card has room for readable play art, the name, one line on
 // what it does, run or pass, and its key. Every call keeps its number key from any tab, and
 // the panel opens on the category of the call that fits the down.
-const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'power', 'counter', 'toss', 'dive', 'draw']],
+const CS_TABS_OFF = [['run', 'Run', ['inside_run', 'outside_run', 'power', 'counter', 'trap', 'toss', 'sweep', 'dive', 'draw']],
   ['qbrun', 'QB runs', ['read_option', 'qb_power', 'qb_draw', 'qb_sneak']],
   ['short', 'Quick', ['slant', 'out', 'stick', 'curl_flat', 'mesh', 'screen', 'bubble']],
   ['mid', 'Intermediate', ['curl', 'smash', 'dagger', 'levels', 'flood', 'y_cross', 'te_seam']],
@@ -148,18 +164,21 @@ export function callSheetHtml(g) {
     const tag = onOff ? { run: 'Run', pass: 'Pass', punt: 'Kick', fg: 'Kick', xp: 'Kick', kickoff: 'Kick', spike: 'Clock', kneel: 'Clock', penalty: 'Flag' }[kind] : { front: 'Man', blitz: 'Blitz', cover: 'Zone' }[kind];
     // After a flag each card says what it leaves: the down and spot, or the play's result.
     const form = kind === 'penalty' ? extra : onOff ? formationName(call, formFor(call)) : DEF_FORMATIONS[frontFor(call)]?.short ?? '';
+    // A run says which way it goes (flipped with U).
+    const way = onOff && kind === 'run' ? runSideName(g, call, formFor(call), !!S.runFlip) : '';
     return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" title="${esc(extra)}" aria-label="${esc(p.name)}: ${esc(extra)}${label ? `, key ${label}` : ''}">
-      <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call))}${label ? `<kbd>${label}</kbd>` : ''}${call === fit ? '<em class="fittag">Fits</em>' : ''}</span>
+      <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call), onOff && kind === 'run' && !!S.runFlip)}${label ? `<kbd>${label}</kbd>` : ''}${call === fit ? '<em class="fittag">Fits</em>' : ''}</span>
       <span class="pname">${p.name}</span>
-      <span class="pc-top"><em class="pc-kind">${tag}</em>${schemePlay(coach, call) ? `<em class="pc-scheme" title="${esc(SCHEMES[coach].name)} plays get a small edge">${esc(SCHEMES[coach].name)}</em>` : ''}${form ? `<span class="pc-form">${esc(form)}</span>` : ''}</span>
+      <span class="pc-top"><em class="pc-kind">${tag}</em>${schemePlay(coach, call) ? `<em class="pc-scheme" title="${esc(SCHEMES[coach].name)} plays get a small edge">${esc(SCHEMES[coach].name)}</em>` : ''}${form ? `<span class="pc-form">${esc(form)}${way ? ` · <b class="pc-way">${way === 'Left' ? '◀ Left' : 'Right ▶'}</b>` : ''}</span>` : ''}</span>
       <span class="pblurb">${esc(extra)}</span></button>`;
   };
   const us = userSide();
-  const who = g.phase === 'penalty' ? 'Your call' : twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)} ${onOff ? 'offense' : 'defense'}${onOff ? '' : ' (the offense has called its play)'}` : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
+  const who = g.phase === 'penalty' ? (twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)}: your call` : 'Your call') : twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)} ${onOff ? 'offense' : 'defense'}${onOff ? '' : ' (the offense has called its play)'}` : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
   const head = `<div class="cs-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>
       <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur && !S.csAll ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
       ${edgesChip(g)}
       ${g.phase === 'play' ? formSelect(onOff) : ''}
+      ${onOff && g.phase !== 'kickoff' && g.phase !== 'penalty' ? `<button class="btn tiny cs-flip" data-act="csflip" aria-pressed="${!!S.runFlip}" title="Run the runs to the other side">Flip runs <kbd>B</kbd></button>` : ''}
       <button class="btn tiny cs-all" data-act="csall" aria-pressed="${!!S.csAll}">${S.csAll ? 'Fewer' : 'All plays'} <kbd>X</kbd></button>
       <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>
     ${why ? `<p class="cs-fit"><em class="fittag">Fits</em> <b>${esc((onOff ? OFF_PLAYS : DEF_PLAYS)[fit].name)}</b> ${esc(why)}</p>` : ''}
@@ -169,22 +188,22 @@ export function callSheetHtml(g) {
   const body = S.csAll
     ? `<div class="cs-book">${tabs.map(([k, label, cs]) => `<section><h4>${label}</h4><div class="cs-cards">${cs.map(card).join('')}</div></section>`).join('')}</div>`
     : `<div class="cs-cards">${tabs.find(([k]) => k === cur)[2].map(card).join('')}</div>`;
-  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff)}${powersRow(g, us)}${body}</div>`;
+  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff, quickHtml(g, onOff))}${powersRow(g, us)}${body}</div>`;
 }
 
 // The clock between plays: running or stopped, your timeouts with the button to call one, and
 // (on offense) the tempo to the next snap. Shared by the 3D call sheet and the 2D play cards.
-export function clockRow(g, onOff) {
-  if (g.phase === 'penalty') return `<div class="cs-clock cs-flag"><span class="flagtxt">${esc(g.pending?.text ?? 'Flag on the play')}</span></div>`;
+export function clockRow(g, onOff, extra = '') {
+  if (g.phase === 'penalty') return `<div class="cs-clock cs-flag"><span class="flagtxt">${esc(g.pending?.text ?? 'Flag on the play')}</span>${extra}</div>`;
   if (g.phase !== 'play') {
     const what = g.phase === 'pat' ? 'Kick the extra point, or run or pass from the 2 for two points' : 'Kick it deep, or onside to try to get the ball back';
-    return `<div class="cs-clock"><span class="muted">${what}</span></div>`;
+    return `<div class="cs-clock"><span class="muted">${what}</span>${extra}</div>`;
   }
   const us = userSide(), left = g.timeouts?.[us] ?? 0;
   const state = g.clockRunning ? `<span class="clk run" title="The clock runs until the snap">Clock running · ${clockText(g.clock)}</span>` : '<span class="clk">Clock stopped</span>';
   const tempo = onOff ? `<label class="cs-formsel cs-tempo"><span>Tempo</span><select id="cs-tempo" aria-label="Tempo">${TEMPOS.map(([k, l]) => `<option value="${k}" ${(S.tempo ?? 'auto') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>` : '';
   return `<div class="cs-clock">${state}<span class="tos" aria-label="${left} timeouts left">${[0, 1, 2].map((i) => `<i class="${i < left ? 'on' : ''}"></i>`).join('')}</span>
-    <button class="btn tiny" data-act="timeout" ${left > 0 ? '' : 'disabled'}>Timeout <kbd>T</kbd></button>${tempo}</div>`;
+    <button class="btn tiny" data-act="timeout" ${left > 0 ? '' : 'disabled'}>Timeout <kbd>T</kbd></button>${tempo}${extra}</div>`;
 }
 // The formation (offense) or front (defense) for the call, as one compact control.
 function formSelect(onOff) {
@@ -258,7 +277,9 @@ export function adjustHtml(lp) {
     const P = S.psPick;
     const moving = lp.motion ? `In motion: ${lp.motion}` : 'Motion';
     row = b('open', 'Audible', 'V', { arg: 'audible', on: P?.kind === 'audible' })
-      + b('open', P?.kind === 'hot' && P.slot ? `Hot route: ${P.slot}` : 'Hot route', 'B', { arg: 'hot', on: P?.kind === 'hot', off: lp.kind !== 'pass' })
+      // On a run, B flips it to the other side instead (there are no routes to change).
+      + (lp.kind === 'run' ? b('flip', `${lp.runSide > 0 ? 'Run right ▶' : '◀ Run left'} · Flip`, 'B', { on: !!lp.flipped, off: !canFlip(lp) })
+        : b('open', P?.kind === 'hot' && P.slot ? `Hot route: ${P.slot}` : 'Hot route', 'B', { arg: 'hot', on: P?.kind === 'hot', off: lp.kind !== 'pass' }))
       + b('open', moving, 'N', { arg: 'motion', on: P?.kind === 'motion', off: !!lp.motion });
   } else {
     const shade = SHADES.find(([k]) => k === (lp.shade ?? null))[1];

@@ -65,6 +65,7 @@ export function renderDraft() {
         ${myTurn && S.setup.clock && !d.autoAll ? `<span class="clocknum" id="pick-clock">${d.clock}</span><span>seconds, then auto-pick</span>` : myTurn ? '<span>Take your time</span>' : '<span class="dots">AI drafting</span>'}
       </div>
       <div class="head-actions">
+        ${!myTurn || d.autoAll ? `<button class="btn primary" data-act="draftskip">${d.autoAll ? 'Finish the draft now' : 'Skip to my pick'}</button>` : ''}
         <button class="btn" data-act="autodraft">${d.autoAll ? 'Stop auto-draft' : 'Auto-draft the rest'}</button>
       </div>
     </div>
@@ -164,6 +165,20 @@ export function draftTick() {
       }
     }, 1000);
   }
+}
+// Skip ahead: the AI makes every pick up to your next one at once (with auto-draft on, every pick
+// left, yours too), instead of one at a time.
+export function draftSkip() {
+  const L = S.league;
+  if (!L || L.phase !== 'draft') return;
+  clearTimers();
+  while (L.phase === 'draft') {
+    const pk = LG.currentPick(L);
+    if (L.teams[pk.team].user && !S.draft.autoAll) break;
+    const c = LG.aiChoosePick(L, pk.team);
+    LG.makePick(L, c.id, c.slot);
+  }
+  afterPick();
 }
 function afterPick() {
   save();

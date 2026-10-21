@@ -7,7 +7,7 @@
 // z across the field. A live play's own frame (x downfield from the line, y across) maps to
 // the world through world(): x_w = los + dir * x, z_w = dir * y.
 import * as THREE from 'three';
-import { sfx, tickAudio } from './audio.js';
+import { bark, sfx, tickAudio } from './audio.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { SPRITE_INDEX } from './sprites3d.js';
 import { PLAYERS } from './ratings.js';
@@ -23,6 +23,7 @@ import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
 import { positionName } from './formations.js';
 import { flightAt, SIDE as SIDE_W, isGun } from './live.js';
+import { keepTrack } from './live/runs.js';
 
 const reduceMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const RECEIVER_KEYS = ['WR1', 'WR2', 'WR3', 'TE', 'RB'];
@@ -425,20 +426,16 @@ export class Stage {
           if (pts.length > 1) add(pts, 0.3, ART_COLORS[i], 0.92, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow');
         });
       } else {
-        // Run: the lane the carrier takes and who each blocker takes.
-        const c = lp.carrier ?? lp.off.RB;
-        if (c) {
-          const hole = lp.holeY ?? 0;
-          const dir = lp.play.dir;
-          const lane = dir === 'counter' ? [W(c.home.x, c.home.y), W(c.home.x + 0.5, -Math.sign(hole) * 2), W(-3, hole * 0.4), W(1.5, hole), W(6, hole * 1.05)]
-            : dir === 'toss' || dir === 'outside' ? [W(c.home.x, c.home.y), W(-3.5, hole * 0.6), W(0, hole), W(6, hole * 1.05)]
-              : [W(c.home.x, c.home.y), W(-3.5, hole * 0.35), W(1.5, hole), W(6, hole * 1.05)];
-          add(lane, 0.42, '#ffd23f', 0.92, 'arrow');
-        }
-        // A pulling guard and a lead fullback show their paths to the hole.
+        // Run: the carrier's track (the one he runs, see live/runs.js), the pullers' paths and the
+        // lead blockers'.
+        const c = lp.carrier ?? lp.off.RB, hole = lp.holeY ?? 0;
+        const track = c?.track ?? (lp.play.dir === 'sneak' ? [{ x: 3, y: 0 }] : null);
+        if (c && track) add([W(c.home.x, c.home.y), ...track.map((w) => W(w.x, w.y))], 0.42, '#ffd23f', 0.92, 'arrow');
+        if (lp.play.dir === 'read' && lp.off.QB) add([W(lp.off.QB.home.x, lp.off.QB.home.y), ...keepTrack(lp).map((w) => W(w.x, w.y))], 0.24, '#ffd23f', 0.6, 'arrow');
         for (const b of Object.values(lp.off)) {
-          if (b.pull) add([W(b.home.x, b.home.y), W(b.pull.via.x, b.pull.via.y), W(1.5, (lp.holeY ?? 0) * 0.95)], 0.2, '#ffffff', 0.85, 'bar');
-          else if (b.role === 'lead') add([W(b.home.x, b.home.y), W(0.8, (lp.holeY ?? 0) * 0.85)], 0.2, '#ffffff', 0.85, 'bar');
+          const to = b.assign ? W(Math.min(1.5, b.assign.home.x - 0.6), b.assign.home.y) : W(1.5, hole * 0.95);
+          if (b.pull) add([W(b.home.x, b.home.y), ...b.pull.path.map((w) => W(w.x, w.y)), to], 0.2, '#ffffff', 0.85, 'bar');
+          else if (b.role === 'lead') add([W(b.home.x, b.home.y), to], 0.2, '#ffffff', 0.85, 'bar');
         }
         for (const k of ['LT', 'LG', 'C', 'RG', 'RT', 'TE']) {
           const b = lp.off[k];
@@ -482,17 +479,18 @@ export class Stage {
         case 'catch': case 'int':
           if (a) { a.act = { kind: 'secure', t0: t, dur: 0.45 }; a.flash = 0.5; this.burst(a.pos, e.kind === 'int' ? '#ff7a59' : '#ffffff', 0.8); }
           sfx('catch');
-          if (e.kind === 'int') { sfx('groan'); this.stadium.cheer(0.7); this.rig.shake = Math.max(this.rig.shake, 0.15); }
+          // (The crowd's reaction, for whichever side it cheers, is the booth's: screens/booth.js.)
+          if (e.kind === 'int') { this.stadium.cheer(0.7); this.rig.shake = Math.max(this.rig.shake, 0.15); }
           break;
         case 'handoff': if (a) a.act = { kind: 'secure', t0: t, dur: 0.35 }; break;
         case 'broken':
           if (b) {
-            const hard = e.how === 'truck';
+            const hard = e.how === 'truck' || /trucks/.test(e.text ?? '');
             b.act = { kind: 'whiff', t0: t, dur: hard ? 1.0 : 0.8 };
             b.fallDir = this.localDir(b, a ? b.pos.x - a.pos.x : 1, a ? b.pos.z - a.pos.z : 0, hard ? 1 : -1);
             b.flash = hard ? 0.5 : 0.2;
             if (hard) this.rig.shake = Math.max(this.rig.shake, 0.3);
-            sfx(hard ? 'bighit' : 'hit');
+            sfx(hard ? 'bighit' : /jukes|spins/.test(e.text ?? '') ? 'juke' : 'hit');
             if (a) this.burst(a.pos.clone().lerp(b.pos, 0.5), hard ? '#ffd23f' : '#ffffff', hard ? 1.1 : 0.7);
           }
           break;
@@ -527,7 +525,7 @@ export class Stage {
           sfx('whistle');
           this.dropFlag(a?.pos ?? this.ball.position);
           break;
-        case 'incomplete': if (a) a.act = { kind: 'miss', t0: t, dur: 0.7 }; sfx('groan'); break;
+        case 'incomplete': if (a) a.act = { kind: 'miss', t0: t, dur: 0.7 }; break;
         case 'typefx': this.typeFx(a, b, e.fx, e.type); break;
         case 'power':
           // A power changed the play: its name bursts over the player in his type colour.
@@ -579,11 +577,17 @@ export class Stage {
     // Every dead ball gets the whistle, however it ended.
     if (lp.phase === 'dead' && this.whistled !== lp) { this.whistled = lp; sfx('whistle'); }
     const td = lp.phase === 'dead' && lp.end?.how === 'td';
-    if (td && !this.celebrate) { this.celebrate = t; this.confetti(this.actorOf(lp.carrier)?.pos, lp.g.teams[lp.carrier.ti].color); this.stadium.cheer(1); sfx('cheer'); }
+    if (td && !this.celebrate) { this.celebrate = t; this.confetti(this.actorOf(lp.carrier)?.pos, lp.g.teams[lp.carrier.ti].color); this.stadium.cheer(1); }
     // The cadence clock: seconds since both teams were set. The quarterback's calls and the
     // line's reactions to them run off it (see Animator.apply).
+    const cad0 = this.cadenceLp === lp ? this.cadence ?? 0 : 0;
     this.cadence = lp.phase === 'pre' && lp.set ? (this.cadenceLp === lp ? (this.cadence ?? 0) + dt : 0) : 0;
     this.cadenceLp = lp;
+    // The quarterback's calls, on the beat the line dips to (see Animator): "Set!", then "Hut!".
+    if (lp.phase === 'pre' && lp.set && !lp.preview && !lp.kick && this.cadence > 1) {
+      const beat = Math.floor((this.cadence - 1) / 1.4), was = cad0 > 1 ? Math.floor((cad0 - 1) / 1.4) : -1;
+      if (beat !== was) bark(beat === 0 ? 'set' : beat % 3 === 1 ? 'blue' : 'hut', 0.8);
+    }
     let held = null;
     const obstacles = this.obstacles ?? (this.obstacles = []);
     obstacles.length = 0;

@@ -11,7 +11,7 @@
 // in a two-player game a single pad is player two's, and with two pads the first is player one's.
 import { render } from '../app.js';
 import { S } from '../state.js';
-import { L3, closeHelp, cycleCamera, inputFor, padKey, recall, stage, stopReplay, togglePause } from './live3d.js';
+import { L3, closeHelp, cycleCamera, inputFor, padKey, recall, skipBeat, stage, stopReplay, togglePause } from './live3d.js';
 import { csMove } from './callsheet.js';
 import { twoPlayer } from './game.js';
 
@@ -76,6 +76,8 @@ function poll(gp, who) {
     if (lp && lp.phase !== 'dead') togglePause();
     else if (inGame) { S.menuOpen = !S.menuOpen; render(); }
   }
+  // A after the whistle skips the rest of the result and the walk to the line.
+  if (inGame && down(A) && (lp?.phase === 'dead' || !lp) && skipBeat()) return;
   if (lp && !L3.paused) {
     src.padStick = { up: upv, right };
     const ti = twoPlayer() ? who : lp.user;

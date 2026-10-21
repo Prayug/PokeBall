@@ -32,19 +32,23 @@ export function renderSeason() {
       <p class="eyebrow">Season ${L.season ?? 1} · Week ${L.week + 1} of ${L.schedule.length}</p>
       <div class="vs">${teamBlock(L.teams[gm.away])}<span class="at">at</span>${teamBlock(L.teams[gm.home])}</div>
       <p class="muted">${esc(opp.name)} coach: ${esc(opp.coachName)}${SCHEMES[me.coach] && me.coach !== 'balanced' ? ` · You: ${esc(SCHEMES[me.coach].name)}` : ''}</p>
-      <div class="actions"><button class="btn primary" data-act="playweek">Play the game</button><button class="btn" data-act="simweek">Simulate it</button></div>
+      ${weekActions(L, 'Play the game')}
     </div>${reviewHtml(L)}${tradeCardHtml(L)}${deskLinkHtml(L)}${scoutHtml(L, me.id, opp.id)}`;
   } else if (L.phase === 'playoffs') {
     const P_ = L.playoffs;
     const mine = P_.games.find((g) => g.home === me.id || g.away === me.id);
     main = `<div class="card matchup"><p class="eyebrow">${roundLabel(L, P_.round, true)}</p>
       ${bracketHtml(L)}
-      <div class="actions">${mine ? '<button class="btn primary" data-act="playweek">Play your playoff game</button><button class="btn" data-act="simweek">Simulate it</button>'
+      <div class="actions">${mine ? weekActions(L, 'Play your playoff game', false)
         : `<p class="muted">${P_.round === 0 && P_.byes?.includes(me.id) ? 'You have a bye this round: rest up and watch who you get.' : 'You missed this round. Watch it play out.'}</p><button class="btn primary" data-act="simweek">Simulate the round</button>`}</div></div>
       ${P_.games.map((g) => (g === mine || (!mine && isFinalRound(L, P_.round)) ? rivalryCardHtml(L, g.home, g.away, P_.round) : '')).join('')}
       ${mine ? scoutHtml(L, me.id, mine.home === me.id ? mine.away : mine.home) : ''}`;
   } else if (L.phase === 'done') {
     main = championHtml(L, st);
+  } else if (L.phase === 'grades') {
+    // The draft is done and the season has not started: start it from here too.
+    main = `<div class="card matchup"><p class="eyebrow">Season ${L.season ?? 1} · Draft complete</p><h2>Ready for week 1</h2>
+      <div class="actions"><button class="btn primary" data-act="startseason">Start the season</button><button class="btn" data-act="go" data-to="depth">Edit depth chart</button></div></div>`;
   } else if (L.phase === 'offseason') {
     main = `<div class="card matchup"><p class="eyebrow">Season ${L.season} offseason</p><h2>Training camp is open</h2>
       <div class="actions"><button class="btn primary" data-act="go" data-to="offseason">Make your cuts</button></div></div>`;
@@ -71,6 +75,18 @@ export function renderSeason() {
       </div>
     </div>
   </section>`;
+}
+
+// Play or sim this week's game. A game already under way is resumed (or simmed from where it
+// stands) rather than started again; in the regular season the rest of it can be simmed in one go.
+function weekActions(L, label, wrap = true) {
+  const g = S.game, live = g && !g.final && S.gameMeta && !S.gameMeta.quick;
+  const rest = L.phase === 'season' && L.week < L.schedule.length - 1 && !live
+    ? `<button class="btn ghost" data-act="simseason" title="Simulate your games and everyone else's to the end of the regular season">Sim to the playoffs</button>` : '';
+  const btns = live
+    ? `<button class="btn primary" data-act="playweek">Resume the game</button><button class="btn" data-act="simweek">Simulate the rest</button><span class="small muted">${esc(g.teams[1].abbr)} ${g.score[1]}, ${esc(g.teams[0].abbr)} ${g.score[0]} · ${quarterText(g.quarter)} ${clockText(g.clock)}</span>`
+    : `<button class="btn primary" data-act="playweek">${label}</button><button class="btn" data-act="simweek">Simulate it</button>${rest}`;
+  return wrap ? `<div class="actions">${btns}</div>` : btns;
 }
 
 function scoutHtml(L, myId, oppId) {
@@ -296,7 +312,7 @@ function resultLine(r, i) {
   return r.box ? `<li class="${mine}"><button class="resline" data-act="openresult" data-i="${i}">${inner}<span class="open">Box score</span></button></li>` : `<li class="${mine}">${inner}</li>`;
 }
 
-export function finishLeagueGame() {
+export function finishLeagueGame({ go = true } = {}) {
   const L = S.league, g = S.game, meta = S.gameMeta;
   if (!g?.final || !meta) return;
   if (meta.playoff) {
@@ -309,7 +325,7 @@ export function finishLeagueGame() {
     LG.advanceWeek(L);
   }
   S.game = null; S.gameMeta = null;
-  setScreen('season');
+  if (go) setScreen('season');
 }
 export function simPlayoffOthers(L, skip) {
   for (const gm of L.playoffs.games) {

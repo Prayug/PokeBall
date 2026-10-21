@@ -180,11 +180,13 @@ export function coverWant(lp, p) {
   }
   // Run reads: linebackers and safeties fill once the ball is handed off (handled by pursuit).
   if (lp.kind === 'run' && !lp.carrierSet && ['MLB', 'OLB', 'SS'].includes(p.slot)) {
-    // A counter's jab step pulls them the wrong way for a beat.
-    const fooled = lp.play.dir === 'counter' && lp.t < 0.55 ? -1 : 1;
     // A draw shows pass: they drop to their coverage depth until the handoff.
     if (lp.play.dir === 'draw' || lp.play.dir === 'qbdraw') return seek(p, { x: p.home.x + 2.5, y: p.home.y }, 0.55);
-    return seek(p, { x: Math.max(1.5, p.x - 1), y: lp.holeY * 0.5 * fooled }, 0.5);
+    // They read the backfield's flow, not the hole: a counter's jab step or a zone's lateral
+    // track pulls them that way, which is what opens the cutback.
+    const r = lp.carrier;
+    const flow = r ? clamp(r.y + r.vy * 0.6, -8, 8) : lp.holeY * 0.5;
+    return seek(p, { x: Math.max(1.5, p.x - 1), y: flow * 0.8 }, 0.5);
   }
   if (lp.play.pa && lp.t < 0.6 && ['MLB', 'OLB', 'SS'].includes(p.slot)) return seek(p, { x: 1.5, y: p.y }, 0.6);
   // A zone defender reads the quarterback: when the passer's arm starts forward, the one whose

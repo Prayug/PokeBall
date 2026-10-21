@@ -3,9 +3,12 @@
 // so the card shows exactly what the Pokémon will run.
 import { createLivePlay, RECEIVERS, FORMATIONS, PLAY_FORMATION } from './live.js';
 import { OFF_PLAYS } from './engine.js';
+import { keepTrack } from './live/runs.js';
 
 export const ART_COLORS = ['#ffd23f', '#4fc3f7', '#ff7a59', '#c792ff', '#7fdc93'];
 const cache = new Map();
+// The side each run diagram was drawn to (+1 right, -1 left), by the diagram's cache key.
+const sides = new Map();
 
 export function formationName(call, form = null) {
   const k = OFF_PLAYS[call]?.kind;
@@ -16,9 +19,10 @@ export function formationName(call, form = null) {
 
 // Diagram for a call. side: 'off' draws the offense's assignments, 'def' the defense's.
 // form: the formation (offense) or front (defense) it will be run from, if not the default.
-export function diagram(g, call, side, form = null) {
+// flip: a run called to the other side (see live/runs.js).
+export function diagram(g, call, side, form = null, flip = false) {
   const lk = (ti) => Object.values(g.teams[ti].lineup).join(',');
-  const key = `${side}:${call}:${form}:${g.poss}:${lk(0)}|${lk(1)}`;
+  const key = `${side}:${call}:${form}:${flip ? 'f' : ''}:${g.poss}:${lk(0)}|${lk(1)}`;
   let svg = cache.get(key);
   if (svg) return svg;
   if (side === 'off' && !['run', 'pass'].includes(OFF_PLAYS[call]?.kind)) { svg = kickArt(OFF_PLAYS[call]?.kind, OFF_PLAYS[call]); cache.set(key, svg); return svg; }
@@ -27,7 +31,7 @@ export function diagram(g, call, side, form = null) {
   const spot = g.spot, call0 = g.call;
   g.spot = 50;
   let lp;
-  try { lp = side === 'off' ? createLivePlay(g, call, 'base', { formation: form }) : createLivePlay(g, 'slant', call, { defFormation: form }); } finally { g.rng = saved; g.spot = spot; g.call = call0; }
+  try { lp = side === 'off' ? createLivePlay(g, call, 'base', { formation: form, aiSide: false, flip }) : createLivePlay(g, 'slant', call, { defFormation: form }); } finally { g.rng = saved; g.spot = spot; g.call = call0; }
   // Play frame to SVG: downfield is up, the field's width across.
   const X = (p) => (p.y).toFixed(2), Y = (p) => (-p.x).toFixed(2);
   const parts = [];
@@ -61,20 +65,21 @@ export function diagram(g, call, side, form = null) {
       });
       if (O.QB) parts.push(path(lp.play.boot ? [O.QB.home, { x: lp.dropX, y: 1 }, { x: lp.dropX + 2.5, y: (O.TE ? -Math.sign(O.TE.home.y) : 1) * 8 }] : [O.QB.home, { x: lp.dropX, y: O.QB.home.y }], '#ffffff', 0.45, lp.play.boot ? 'arrow' : '', '0.8 0.6'));
     } else {
+      // The carrier's track is the one he runs on the field (see live/runs.js).
       const c = lp.carrier ?? O.RB, hole = lp.holeY ?? 0, dir = lp.play.dir;
-      const lane = dir === 'counter' ? [c?.home, { x: (c?.home.x ?? -5) + 0.5, y: -Math.sign(hole) * 2 }, { x: -3, y: hole * 0.4 }, { x: 1.5, y: hole }, { x: 7, y: hole * 1.05 }]
-        : dir === 'toss' || dir === 'outside' ? [c?.home, { x: -3.5, y: hole * 0.6 }, { x: 0, y: hole }, { x: 7, y: hole * 1.05 }]
-          : [c?.home, { x: -3.5, y: hole * 0.35 }, { x: 1.5, y: hole }, { x: 7, y: hole * 1.05 }];
-      if (dir === 'qbdraw' && c) lane.splice(1, 0, { x: c.home.x - 1.6, y: c.home.y });
-      if (c) parts.push(path(lane, '#ffd23f', 1.3, 'arrow'));
-      // Read option: the give (dashed) and the keep to the side of the unblocked end.
+      const track = c?.track ?? (dir === 'sneak' ? [{ x: 3, y: 0 }] : null);
+      if (c && track) parts.push(path([c.home, ...track], '#ffd23f', 1.3, 'arrow'));
+      // The toss: the pitch out to the back.
+      if (dir === 'toss' && O.QB && track) parts.push(path([O.QB.home, track[0]], '#ffd23f', 0.5, '', '0.8 0.6'));
+      // Read option: the give (solid) and the keep around the unblocked end (dashed).
       if (dir === 'read' && O.QB) {
-        parts.push(path([O.QB.home, { x: O.QB.home.x + 0.5, y: -Math.sign(hole || 1) * 4 }, { x: 1, y: -Math.sign(hole || 1) * 8.5 }, { x: 6, y: -Math.sign(hole || 1) * 9 }], '#ffd23f', 0.8, 'arrow', '1 0.7'));
+        parts.push(path([O.QB.home, ...keepTrack(lp)], '#ffd23f', 0.8, 'arrow', '1 0.7'));
         if (lp.readEnd) parts.push(`<circle cx="${X(lp.readEnd.home)}" cy="${Y(lp.readEnd.home)}" r="1.6" fill="none" stroke="#ff5a4f" stroke-width="0.4"/>`);
       }
+      // Pullers run flat behind the line, then up to their man; lead blockers go through the hole.
       for (const b of Object.values(O)) {
-        if (b.pull) parts.push(path([b.home, b.pull.via, { x: 2, y: hole * 0.95 }], '#ffffff', 0.6, 'bar'));
-        else if (b.role === 'lead') parts.push(path([b.home, { x: 1, y: hole * 0.85 }], '#ffffff', 0.6, 'bar'));
+        if (b.pull) parts.push(path([b.home, ...b.pull.path, b.assign ? { x: Math.min(1.5, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1.5, y: hole }], '#ffffff', 0.6, 'bar'));
+        else if (b.role === 'lead') parts.push(path([b.home, b.assign ? { x: Math.min(2, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1, y: hole * 0.85 }], '#ffffff', 0.6, 'bar'));
       }
       for (const k of ['LT', 'LG', 'C', 'RG', 'RT', 'TE', 'WR1', 'WR2', 'WR3']) {
         const b = O[k];
@@ -103,9 +108,20 @@ export function diagram(g, call, side, form = null) {
     parts.push(`<path d="M${(x - s).toFixed(2)} ${(y - s).toFixed(2)}L${(x + s).toFixed(2)} ${(y + s).toFixed(2)}M${(x + s).toFixed(2)} ${(y - s).toFixed(2)}L${(x - s).toFixed(2)} ${(y + s).toFixed(2)}" class="x ${side === 'def' ? 'on' : ''}"/>`);
   }
   svg = `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true">${parts.join('')}</svg>`;
-  if (cache.size > 200) cache.clear();
+  if (cache.size > 200) { cache.clear(); sides.clear(); }
+  if (lp.kind === 'run') sides.set(key, lp.runSide);
   cache.set(key, svg);
   return svg;
+}
+
+// The side a run call goes, as its card shows it: 'Left' or 'Right' (the offense's left and
+// right), or '' for anything else.
+export function runSideName(g, call, form = null, flip = false) {
+  if (OFF_PLAYS[call]?.kind !== 'run' || OFF_PLAYS[call]?.dir === 'sneak') return '';
+  diagram(g, call, 'off', form, flip);
+  const lk = (ti) => Object.values(g.teams[ti].lineup).join(',');
+  const s = sides.get(`off:${call}:${form}:${flip ? 'f' : ''}:${g.poss}:${lk(0)}|${lk(1)}`);
+  return s > 0 ? 'Right' : s < 0 ? 'Left' : '';
 }
 
 function kickArt(kind, P = {}) {
