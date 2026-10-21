@@ -7,7 +7,7 @@ import { initAudio, setSound } from './audio.js';
 import { cameraDefaults } from './camera3d.js';
 import * as LG from './league.js';
 import { S, clearTimers, deleteSlot, loadPrefs, loadSaved, migrateStorage, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
-import { download, user } from './ui.js';
+import { download, esc, teamBadge, user } from './ui.js';
 import { importSave, loadSnapshot, renderHome } from './screens/home.js';
 import { boardRowsHtml, detailHtml, draftTick, renderDraft, renderGrades, userDraft } from './screens/draft.js';
 import { depthClick, renderDepth } from './screens/depth.js';
@@ -18,7 +18,7 @@ import { copyShare, loadShared, openSharedText, readShareFromUrl } from './scree
 import { renderFreeAgency } from './screens/freeagency.js';
 import { renderRecords } from './screens/records.js';
 import { drawKitPreview, kitAct, kitInput, renderKit } from './screens/kit.js';
-import { cleanKit } from './kits.js';
+import { cleanKit, inkOn, kitOf } from './kits.js';
 import { deskClear, deskCounter, deskPick, deskPropose, deskTeam, deskToggle, deskUseCounter, renderTrades } from './screens/trades.js';
 import * as TR from './trades.js';
 import * as FA from './freeagency.js';
@@ -74,9 +74,11 @@ function renderTop() {
     items.push(['records', 'Records'], ['kit', 'Franchise']);
   }
   if (S.game && !S.game.final) items.push(['game', 'Live game']);
+  const me = L && user();
   return `<header class="top">
     <button class="brand" data-act="home" aria-label="Home"><span class="ball" aria-hidden="true"></span>PokeBall</button>
     <nav>${items.map(([k, label]) => `<button class="nav ${S.screen === k ? 'on' : ''}" data-act="go" data-to="${k}">${label}</button>`).join('')}</nav>
+    ${me ? `<span class="top-team">${teamBadge(me)}<span><b>${esc(me.name)}</b><small>Season ${L.season ?? 1}</small></span></span>` : ''}
   </header>`;
 }
 
@@ -311,6 +313,7 @@ function onSubmit(e) {
 }
 
 // ---------- render ----------
+let lastScreen = null;
 export function render() {
   applyGrowth(S.screen === 'game' && S.gameMeta?.quick ? {} : S.league?.growth ?? {});
   let body;
@@ -332,7 +335,14 @@ export function render() {
   const y = window.scrollY;
   const boardScroll = document.querySelector('.board .tablewrap')?.scrollTop;
   const focusId = document.activeElement?.id;
-  app.innerHTML = renderTop() + `<main>${body}</main>`;
+  // The franchise's colors theme every screen: the top bar's stripe, the panels' edge, the active tab.
+  const team = user() ?? { color: S.setup.color || '#e5402b', kit: S.setup.kit, name: S.setup.name, abbr: S.setup.abbr };
+  const kit = kitOf(team), root = document.documentElement.style;
+  root.setProperty('--me', kit.color); root.setProperty('--me2', kit.color2); root.setProperty('--me-ink', inkOn(kit.color));
+  // A new screen slides in; a re-render of the same screen (a draft pick, a toggle) does not.
+  const enter = S.screen !== lastScreen && S.screen !== 'game';
+  lastScreen = S.screen;
+  app.innerHTML = renderTop() + `<main class="scr-${S.screen}${enter ? ' enter' : ''}">${body}</main>`;
   document.body.classList.toggle('g3d-on', S.screen === 'game' && !!stage);
   if (S.screen === 'game') mountStage();
   if (S.screen === 'kit') drawKitPreview();
