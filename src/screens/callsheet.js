@@ -162,7 +162,7 @@ export function callSheetHtml(g) {
       <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur && !S.csAll ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
       ${edgesChip(g)}
       ${g.phase === 'play' ? formSelect(onOff) : ''}
-      ${onOff && g.phase !== 'kickoff' && g.phase !== 'penalty' ? `<button class="btn tiny cs-flip" data-act="csflip" aria-pressed="${!!S.runFlip}" title="Run the runs to the other side">Flip runs <kbd>U</kbd></button>` : ''}
+      ${onOff && g.phase !== 'kickoff' && g.phase !== 'penalty' ? `<button class="btn tiny cs-flip" data-act="csflip" aria-pressed="${!!S.runFlip}" title="Run the runs to the other side">Flip runs <kbd>B</kbd></button>` : ''}
       <button class="btn tiny cs-all" data-act="csall" aria-pressed="${!!S.csAll}">${S.csAll ? 'Fewer' : 'All plays'} <kbd>X</kbd></button>
       <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>
     ${why ? `<p class="cs-fit"><em class="fittag">Fits</em> <b>${esc((onOff ? OFF_PLAYS : DEF_PLAYS)[fit].name)}</b> ${esc(why)}</p>` : ''}

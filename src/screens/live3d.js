@@ -34,7 +34,7 @@ function keysHelp() {
     <span><kbd>R</kbd> spin move</span>
     <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
     <span>At the line on offense: <kbd>V</kbd> audible, <kbd>B</kbd> hot route (on a run: flip it to the other side), <kbd>N</kbd> motion, then a number to pick</span>
-    <span><kbd>U</kbd> on the play sheet: flip the runs to the other side</span>
+    <span><kbd>B</kbd> on the play sheet or at the line: flip the runs to the other side</span>
     <span>At the line on defense: <kbd>V</kbd> shade the coverage, <kbd>B</kbd> show blitz, <kbd>N</kbd> back out</span>
     <span><kbd>I</kbd> on the play sheet: type edges and their tendencies</span>
     <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
@@ -858,7 +858,7 @@ export function onKey(e, down) {
     if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; render(); return; }
     if (code === 'KeyT' && !L3.lp && !L3.replay) { e.preventDefault(); userTimeout(); return; }
     if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
-    if (code === 'KeyU' && !L3.lp) { e.preventDefault(); S.runFlip = !S.runFlip; render(); return; }
+    if (code === 'KeyB' && !L3.lp) { e.preventDefault(); S.runFlip = !S.runFlip; render(); return; }
     if (code === 'Escape') {
       if (S.menuOpen) { S.menuOpen = false; render(); return; }
       if (L3.paused || L3.lp?.phase === 'live') { e.preventDefault(); togglePause(); return; }
