@@ -8,6 +8,7 @@ import { CAMERA_LIMITS, CAMERA_MODES, CAMERA_SHOTS } from '../camera3d.js';
 import * as LG from '../league.js';
 import { quickGame, render, setScreen } from '../app.js';
 import { S, reduceMotion, save, savePrefs, timers } from '../state.js';
+import { soundPanelHtml } from './sound.js';
 import { P, edgeRow, esc, ovr, powersRow, sprite, teamBadge, typeChips } from '../ui.js';
 import { adjustHtml, aiFormation, aiFront, callSheet, callSheetHtml, clockRow, formFor, frontFor } from './callsheet.js';
 import { DIFFICULTY, DIFFICULTY_LEVELS, applyDifficulty } from '../difficulty.js';
@@ -268,11 +269,11 @@ function menuHtml(g, simBtns, coachBox) {
     <h4>Skip ahead</h4><div class="gm-row">${simOff ? simBtns.replaceAll('data-act="sim"', 'data-act="sim" disabled') : simBtns}</div>
     <h4>Camera <kbd>C</kbd></h4><div class="gm-row seg">${CAMERA_MODES.map(([k, l]) => `<button class="btn tiny ${S.cam === k ? 'on' : ''}" data-act="cam" data-cam="${k}" aria-pressed="${S.cam === k}">${l}</button>`).join('')}</div>
     <h4>Graphics</h4><div class="gm-row seg">${[['auto', 'Auto'], ['high', 'High'], ['low', 'Fast']].map(([k, l]) => `<button class="btn tiny ${S.quality === k ? 'on' : ''}" data-act="quality" data-q="${k}" aria-pressed="${S.quality === k}">${l}</button>`).join('')}</div>
-    <label class="check"><input type="checkbox" id="g-sound" ${S.sound ? 'checked' : ''}> Sound: crowd, whistle and hits</label>
     <label class="check"><input type="checkbox" id="g-wx" ${S.weatherFx ? 'checked' : ''}> Weather effects (${WEATHER[g.weather].name})</label>
     <label class="check"><input type="checkbox" id="g-names" ${S.names ? 'checked' : ''}> Name and position over your player</label>
     <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}> Team markers under every player</label>
     <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}> Debug view: position labels, formation check, camera calibration <kbd>\`</kbd></label>
+    <h4>Sound</h4>${S.soundOpen ? '<p class="small muted">Open in the speaker panel above.</p>' : soundPanelHtml()}
     <div class="gm-row"><button class="btn tiny" data-act="help">Controls <kbd>?</kbd></button><button class="btn tiny" data-act="replay" ${replayReady() ? '' : 'disabled'}>Replay last play <kbd>Y</kbd></button></div>
     <div class="gm-row"><button class="btn tiny" data-act="film" ${filmReady() ? '' : 'disabled'}>Film room <kbd>J</kbd></button><button class="btn tiny" data-act="challenge" ${challengeReady() ? '' : 'disabled'}>${challengeText(g)}</button></div>
     <button class="btn tiny" data-act="details">Box score and play-by-play</button>
