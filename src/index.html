@@ -633,6 +633,8 @@ body.g3d-on main { max-width: none; }
 .cs-head .cs-all { margin-left: auto; }
 /* The clock between plays: running or stopped, timeouts, the timeout button and the tempo. */
 .cs-clock { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 0 2px 8px; font: 600 12px/1.2 var(--f-data); color: #c9d3cc; }
+.cs-clock .cs-quicks { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.cs-quick.fit { border-color: var(--amber); }
 .cs-clock .clk { text-transform: uppercase; letter-spacing: 0.05em; }
 .cs-clock .clk.run { color: var(--amber); }
 .cs-clock .clk.run::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--amber); animation: clk-pulse 1s ease-in-out infinite; }
