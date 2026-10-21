@@ -138,7 +138,14 @@ export function passBlockWant(lp, p) {
   }
   p.aim = m;
   if (!m) {
-    // Nobody to block: settle into the cup and look for work.
+    // Nobody to block: settle into the cup and look for work. A back behind the line sets up
+    // at the quarterback's shoulder instead, not in front of him where he would wall off the drop.
+    if (!['LT', 'LG', 'C', 'RG', 'RT'].includes(p.slot) && p.x < qb.x + 3) {
+      let side = p.y - qb.y;
+      if (Math.abs(side) < 0.3) for (const q of lp.players) if (q.side === 'def' && q.role === 'rush' && Math.abs(q.y) > Math.abs(side)) side = q.y;
+      seek(p, { x: Math.max(qb.x, lp.dropX) + 1, y: qb.y + sgn(side || 1) * 1.9 }, 0.5, 0.6);
+      return;
+    }
     const s = pocketSpot(lp, p, { x: p.x + 4, y: p.y });
     seek(p, s, 0.35, 0.6);
     return;
@@ -148,6 +155,12 @@ export function passBlockWant(lp, p) {
   const dm = dist(m, s);
   const ax = qb.x - m.x, ay = qb.y - m.y, l = len(ax, ay) || 1;
   const front = { x: m.x + (ax / l) * (m.r + p.r + 0.15), y: m.y + (ay / l) * (m.r + p.r + 0.15) };
+  // A second blocker coming to the same man takes the other shoulder of the double team instead
+  // of the same spot, so the two of them don't stand pressed into each other.
+  if (lp.players.some((b) => b !== p && b.side === 'off' && b.aim === m && dist(b, front) < dist(p, front))) {
+    const sd = sgn(p.y - m.y || 1);
+    front.x -= 0.2; front.y += sd * (p.r + 0.25);
+  }
   // Close to him, mirror at full speed so a quick rusher can't just run around.
   const close = dm < 2.2 || dist(p, m) < 2;
   seek(p, close ? front : { x: (s.x * 2 + front.x) / 3, y: (s.y * 2 + front.y) / 3 }, close ? 1 : 0.85, 0.4);
@@ -239,6 +252,7 @@ export const SEP_MAX = 0.12;
 export function separate(lp, passes = 2) {
   const ps = lp.players;
   const holds = (p) => !!(p.eng || p.carrier);
+  const row = ps.map((p) => rightOfWay(lp, p));
   for (let it = 0; it < passes; it++) {
     for (let i = 0; i < ps.length; i++) {
       for (let j = i + 1; j < ps.length; j++) {
@@ -261,12 +275,29 @@ export function separate(lp, passes = 2) {
         // A free teammate and the carrier share the shove; neither bulldozes the other.
         const mate = a.side === b.side && (a.carrier || b.carrier);
         if (mate && !a.eng && !b.eng) ka = a.carrier ? 0.35 : 0.65;
+        // The passer in his drop (or whoever a person is steering) brushes past a free teammate:
+        // the teammate is moved out of his lane, sideways to it, and he keeps his feet.
+        const pa = row[i] && !row[j] && a.side === b.side && !b.eng && !inTackle(lp, b);
+        const pb = row[j] && !row[i] && a.side === b.side && !a.eng && !inTackle(lp, a);
+        if (pa || pb) {
+          const P = pa ? a : b, O = pa ? b : a, s = pa ? 1 : -1;
+          const [lx, ly] = aside(lp, P, O, ux * s, uy * s);
+          P.x -= ux * s * over * 0.1; P.y -= uy * s * over * 0.1;
+          O.x += lx * over * 0.95; O.y += ly * over * 0.95;
+          slide(O, -lx, -ly);
+          continue;
+        }
+        // A receiver in his route and a defender in coverage: the man running the route has the
+        // right to his path, so the defender gives most of the ground, and the receiver works
+        // off the contact instead of being stopped by it.
+        const route = (p) => p.role === 'route' && !lp.thrown && !lp.carrierSet;
+        if (a.side !== b.side && !a.eng && !b.eng && (route(a) || route(b))) ka = route(a) ? 0.3 : 0.7;
         a.x -= ux * over * ka; a.y -= uy * over * ka;
         b.x += ux * over * (1 - ka); b.y += uy * over * (1 - ka);
         // A body pressed into another loses the speed it had into it (a free player running
         // into a block slides off it instead of grinding in and being shoved back each step).
-        if (!a.eng && !inTackle(lp, a) && ka > 0 && !(mate && a.carrier)) slide(a, ux, uy);
-        if (!b.eng && !inTackle(lp, b) && ka < 1 && !(mate && b.carrier)) slide(b, -ux, -uy);
+        if (!a.eng && !inTackle(lp, a) && ka > 0 && !(mate && a.carrier)) { slide(a, ux, uy, route(a) && b.side !== a.side); touch(lp, a, b, ux, uy); }
+        if (!b.eng && !inTackle(lp, b) && ka < 1 && !(mate && b.carrier)) { slide(b, -ux, -uy, route(b) && b.side !== a.side); touch(lp, b, a, -ux, -uy); }
       }
     }
   }
@@ -276,11 +307,12 @@ export function separate(lp, passes = 2) {
 // into it (a soft contact, over a few frames), and he works around it toward the side he wants,
 // turning no faster than his feet allow (half his grip, since he also steers in kin; a pass
 // rusher working an edge is all feet), so he slides off a body instead of grinding into it.
-export function slide(p, ux, uy) {
+export function slide(p, ux, uy, fight = false) {
   const vn = p.vx * ux + p.vy * uy;
   if (vn <= 0) return;
   const s = len(p.vx, p.vy) || 1;
-  const k = 1 - 0.7 * (vn / s);
+  // A receiver fighting through a defender's hands gives up less of his speed to the contact.
+  const k = 1 - (fight ? 0.35 : 0.7) * (vn / s);
   p.vx *= k; p.vy *= k;
   const tx = -uy, ty = ux, w = p.want ?? p;
   const side = sgn((p.vx * tx + p.vy * ty) * 3 + (w.vx * tx + w.vy * ty) || 1);
@@ -288,8 +320,121 @@ export function slide(p, ux, uy) {
   if (sn < 0.3) { p.vx += tx * side * vn * 0.3; p.vy += ty * side * vn * 0.3; return; }
   const cur = Math.atan2(p.vy, p.vx), want = Math.atan2(ty * side, tx * side);
   let d = want - cur; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
-  const a = cur + sgn(d) * Math.min(Math.abs(d), ((p.grip ?? 16) * (p.role === 'rush' ? 1.2 : 0.5) / Math.max(sn, 1.6)) * DT);
+  const a = cur + sgn(d) * Math.min(Math.abs(d), ((p.grip ?? 16) * (p.role === 'rush' || fight ? 1.2 : 0.5) / Math.max(sn, 1.6)) * DT);
   p.vx = Math.cos(a) * sn; p.vy = Math.sin(a) * sn;
+}
+
+// Who teammates make room for: the quarterback holding the ball in his drop on a pass (before
+// the throw, the handoff or the scramble), and whoever a person is steering.
+export function rightOfWay(lp, p) {
+  if (p.eng || p.stun > 0) return false;
+  if (isManual(lp, p)) return true;
+  const qb = lp.off?.QB;
+  return p === qb && lp.kind === 'pass' && lp.ball?.holder === qb && !lp.thrown && !lp.carrierSet;
+}
+
+// The way for O to step out of P's lane: sideways to where P is headed (what the stick asks for
+// when a person steers him), on the side O is already on; (nx, ny) is from P to O. Straight
+// away when P is standing still.
+function aside(lp, P, O, nx, ny) {
+  const w = isManual(lp, P) && P.input && (P.input.mx || P.input.my) ? { vx: P.input.mx, vy: P.input.my } : len(P.vx, P.vy) > 0.5 ? P : null;
+  if (!w) return [nx, ny];
+  const s = len(w.vx, w.vy), ux = w.vx / s, uy = w.vy / s;
+  const lat = -nx * uy + ny * ux;
+  const side = Math.abs(lat) > 0.08 ? sgn(lat) : sideOf(O, ux, uy);
+  const ahead = clamp(nx * ux + ny * uy, 0, 1);
+  // Mostly sideways when he is in front, along the normal once he is beside.
+  let lx = nx * (1 - ahead) + -uy * side * (0.4 + ahead), ly = ny * (1 - ahead) + ux * side * (0.4 + ahead);
+  const l = len(lx, ly) || 1;
+  return [lx / l, ly / l];
+}
+// Which way a body dead in someone's lane steps: the way he already wants to go, else away
+// from the middle of the field, else to his own side of the formation.
+function sideOf(O, ux, uy) {
+  const w = O.want ?? O;
+  const lat = -(w.vx ?? 0) * uy + (w.vy ?? 0) * ux;
+  if (Math.abs(lat) > 0.3) return sgn(lat);
+  const h = O.home?.y ?? O.y, y = Math.abs(h) > 0.3 ? sgn(h) : O.slot === 'RB' ? 1 : -1;
+  return sgn(y * ux || 1);
+}
+
+// An AI teammate in the lane of a body with the right of way (the passer in his drop, or the
+// player you steer) gets out of it before they meet: he stops walking into it and sidesteps to
+// the near side, so a back checking the blitz or releasing from behind the quarterback never
+// becomes a wall in his drop. A blocker on his way to a man (p.aim) only yields to the passer.
+export function giveWay(lp, p, vx, vy) {
+  if (p.eng || p.carrier) return [vx, vy];
+  for (const P of lp.players) {
+    if (P === p || P.side !== p.side || !rightOfWay(lp, P)) continue;
+    if (p.aim && P.carrier) continue;
+    const rx = p.x - P.x, ry = p.y - P.y;
+    if (rx * rx + ry * ry > 36) continue;
+    const manual = isManual(lp, P) && P.input && (P.input.mx || P.input.my);
+    const wx = manual ? P.input.mx * P.top : P.vx, wy = manual ? P.input.my * P.top : P.vy;
+    const s = len(wx, wy), need = p.r + P.r + 0.45;
+    if (s < 0.5) continue;
+    const ux = wx / s, uy = wy / s;
+    // Where they would be closest if both kept going.
+    const along = rx * ux + ry * uy, lat = -rx * uy + ry * ux;
+    const look = 1 + s * 0.45;
+    if (along < -0.3 || along > look || Math.abs(lat) >= need) continue;
+    const side = Math.abs(lat) > 0.08 ? sgn(lat) : sideOf(p, ux, uy);
+    const k = (1 - Math.abs(lat) / need) * (1 - Math.max(0, along) / look);
+    // Nothing of his own speed back into the lane, nothing toward the passer.
+    const vl = -vx * uy + vy * ux, va = vx * ux + vy * uy;
+    const nl = side * Math.max(vl * side, p.top * (0.35 + 0.65 * k)), na = va < 0 ? va * (1 - k) : va;
+    vx = ux * na - uy * nl; vy = uy * na + ux * nl;
+  }
+  return [vx, vy];
+}
+
+// Contact is remembered for a beat: who p is pressed against, and from which way.
+// Pressed between two (a receiver caught in the line), he works off the sum of the contacts.
+function touch(lp, p, q, ux, uy) {
+  const T = p.touch;
+  if (T && T.t === lp.t && T.q !== q) {
+    const sx = T.ux + ux, sy = T.uy + uy, l = len(sx, sy);
+    if (l > 0.2) { T.ux = sx / l; T.uy = sy / l; }
+    T.n++;
+    return;
+  }
+  p.touch = { q, ux, uy, t: lp.t, n: 1 };
+}
+
+// Two teammates on offense pressed together (two blockers come to the same man, a back setting up
+// beside a tackle) part: the part of where each wants to go that runs into the other is turned
+// along the other's edge, to one side, and he keeps that side until the contact is over, so the
+// two don't stand mirroring each other. (A receiver against a defender fights through in slide();
+// rushers and pursuers working around blockers are the blocking game's business.)
+export function skirt(lp, p, vx, vy) {
+  const T = p.touch;
+  if (!T || p.side !== 'off' || T.q.side !== 'off' || lp.t - T.t > 0.05 || T.q === p.aim || T.q === p.eng || p.carrier || isManual(lp, p)) { if (T && lp.t - T.t > 0.25) { p.touch = null; p.skirt = 0; } return [vx, vy]; }
+  const vn = vx * T.ux + vy * T.uy;
+  if (vn <= 0) return [vx, vy];
+  const tx = -T.uy, ty = T.ux;
+  if (!p.skirt || p.skirtFrom !== T.q) {
+    // The side he is already leaning to, else the one the other body isn't heading for.
+    const lean = vx * tx + vy * ty, other = (T.q.vx ?? 0) * tx + (T.q.vy ?? 0) * ty;
+    p.skirt = Math.abs(lean) > 0.4 ? sgn(lean) : Math.abs(other) > 0.4 ? -sgn(other) : sgn((p.y - T.q.y) * tx + (p.x - T.q.x) * ty || 1);
+    p.skirtFrom = T.q;
+  }
+  const vt = vx * tx + vy * ty;
+  const nt = p.skirt * Math.max(vt * p.skirt, vn * 0.95);
+  return [T.ux * vn * 0.15 + tx * nt, T.uy * vn * 0.15 + ty * nt];
+}
+
+// A cover man plays his receiver from where he is (a step off, a hip on him), not through him:
+// he matches what the receiver is doing, but does not drive into his body.
+export function noPush(p, r) {
+  const w = p.want;
+  if (!w || !r) return;
+  const dx = r.x - p.x, dy = r.y - p.y, d = len(dx, dy), reach = p.r + r.r + 0.5;
+  if (d > reach || d < 1e-6) return;
+  const nx = dx / d, ny = dy / d;
+  const rel = (w.vx - (r.vx ?? 0)) * nx + (w.vy - (r.vy ?? 0)) * ny;
+  if (rel <= 0) return;
+  const k = clamp((reach - d) / 0.5, 0, 1);
+  w.vx -= nx * rel * k; w.vy -= ny * rel * k;
 }
 
 export function unengage(p) { const q = p.eng; if (q) { q.eng = null; q.shed = null; } p.eng = null; p.shed = null; }

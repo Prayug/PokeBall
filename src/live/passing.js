@@ -153,7 +153,9 @@ export function qbBrain(lp) {
     if (r === cur) continue;
     const s = scoreOf(r);
     if (s == null) continue;
-    const seen = s - 1.6; // off-read throws need more
+    // Off-read throws need more, except on a money down a man open past the sticks: the
+    // quarterback knows where the line to gain is and is looking for him.
+    const seen = s - (must && r.openState === 'OPEN' && r.lead.x >= line - 0.3 ? 0.5 : 1.6);
     if (!best || seen > best.score) best = { r, score: seen };
   }
   // Early in the read only a clearly open man gets the ball; the bar drops as he holds it.
@@ -221,7 +223,7 @@ export function routeWant(lp, p) {
     p.want = { vx: (dx / d) * sp, vy: (dy / d) * sp };
     return;
   }
-  if (p.jam > 0) { p.jam -= DT; p.want = { vx: 0.6, vy: 0 }; return; }
+  if (p.jam > 0) p.jam -= DT;
   const r = p.route;
   const live = !!lp.players;   // (futureRoute runs this on a bare copy to lead the receiver)
   // The quarterback is out of the pocket and still looking to throw: the scramble drill.
