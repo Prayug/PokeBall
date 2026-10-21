@@ -12,7 +12,7 @@ import { OFF_PLAYS, aiTempo, chance, clamp, eff, nm, oobStops, rand, rep, setCal
 import { bodyOf } from './body.js';
 import { diffOf, diffUser } from './difficulty.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
-import { dist, DT, event, finish, inTackle, integrate, isManual, kin, len, note, passBlockWant, pocketSpot, RECEIVERS, seek, SEP_MAX, separate, setCarrier, sgn, SIDE, slide, slowDown, steer, sticks, traitNotes, unengage } from './live/core.js';
+import { dist, DT, event, finish, inTackle, integrate, isManual, kin, len, note, passBlockWant, pocketSpot, RECEIVERS, seek, SEP_MAX, separate, setCarrier, sgn, SIDE, slide, slowDown, steer, sticks, traitNotes, unengage, giveWay, skirt } from './live/core.js';
 import { DEF_SCHEMES, coverWant, pursueWant, rushWant, setupDefense } from './live/defense.js';
 import { PLAY_ROUTES, airJumps, ballFlight, buildRoute, contest, coverageRead, looseBall, qbBrain, releasePoint, routeWant, snapFlight, startJump, startThrow, throwAway, windup } from './live/passing.js';
 import { atSnap, shiftStep } from './live/presnap.js';
@@ -492,6 +492,7 @@ export function step(lp, input = null) {
   for (const p of lp.players) move(lp, p, DT);
   separate(lp);
   blocks(lp);
+  jams(lp);
   separate(lp, 1);
   wrapHold(lp);
   for (const p of lp.players) orient(lp, p);
@@ -610,6 +611,9 @@ function actionOf(lp, p, sp) {
     if (p.contact === 'SHEDDING') return p.side === lp.carrierTeam ? 'BLOCKED' : 'SHED';
     return p.side === lp.carrierTeam ? 'BLOCK' : 'BLOCKED';
   }
+  // A jam at the line is a hand fight, drawn like one.
+  if (p.jam > 0) return 'BLOCKED';
+  if (p.jamming > 0) return 'BLOCK';
   if (lp.t < 0.3 && sp > 0.2) return 'SNAP_REACT';
   if (lp.ball.state === 'held' && lp.ball.holder === p && !(p === lp.off.QB && lp.kind === 'pass' && !lp.carrierSet)) return 'CARRY';
   if (sp < 0.35) return 'IDLE';
@@ -918,7 +922,12 @@ function move(lp, p, dt) {
   // In the air: no steering, he carries what speed he took off with and lands.
   if (p.jump != null) {
     p.jump += dt;
-    if (p.jump < p.jumpT) { p.vx *= 1 - dt * 0.6; p.vy *= 1 - dt * 0.6; integrate(p, dt); return; }
+    if (p.jump < p.jumpT) {
+      p.vx *= 1 - dt * 0.6; p.vy *= 1 - dt * 0.6;
+      // A leap for a ball at the sideline comes down short of the bench.
+      if (Math.abs(p.y) > SIDE + 1 && p.vy * p.y > 0) p.vy *= 0.9;
+      integrate(p, dt); return;
+    }
     p.jump = null; p.vx *= 0.5; p.vy *= 0.5;
   }
   if (p.stun > 0) { p.stun -= dt; slowDown(p, dt, 9); return; }
@@ -930,6 +939,8 @@ function move(lp, p, dt) {
   const tired = p.carrier ? clamp((Math.abs(p.x - (p.runFrom ?? p.x)) - 12) * 0.004, 0, 0.1) : 0;
   const chase = p.role === 'pursue' ? (lp.carrier && dist(p, lp.carrier) < 8 ? 1.06 : 1.03) : 1;
   let top = p.top * (p.slow > 0 ? 0.6 : 1) * (p.carrier ? 0.96 - tired : chase);
+  // Held up in a jam: still working into his route, at a crawl, until he gets free.
+  if (p.jam > 0) top *= 0.4;
   if (p.wx?.fade) top *= 1 - clamp((lp.t - 3) * p.wx.fade, 0, 0.06);
   vx *= chase; vy *= chase;
   if (p.juke > 0.15) {
@@ -956,6 +967,7 @@ function move(lp, p, dt) {
   }
   p.slow = Math.max(0, p.slow - dt);
   if (!isManual(lp, p) && !p.carrier) [vx, vy] = steer(lp, p, vx, vy);
+  if (!isManual(lp, p)) { [vx, vy] = giveWay(lp, p, vx, vy); [vx, vy] = skirt(lp, p, vx, vy); }
   // Routes and pursuit bend along the sideline instead of running out over it.
   if (!p.carrier && Math.abs(p.y) > SIDE - 1.5 && vy * p.y > 0) vy *= clamp((SIDE + 0.5 - Math.abs(p.y)) / 2, 0, 1);
   // A ball carrier and a pass rusher with a lane are all feet: they cut a little harder.
@@ -1157,6 +1169,32 @@ function ease(p, x, y, speed = 6) {
   p.x += dx; p.y += dy;
 }
 const SQUARE_K = 1 - Math.exp(-DT * 10);
+
+// The jam at the line. A corner pressed on his man gets his hands on him as he comes off the
+// ball, once: win it (strength and coverage against the receiver's strength, quickness and
+// speed) and the receiver is held up for a beat, still running his route but at a crawl; lose it
+// and the receiver is clean into his route while the corner loses a step. Either way the two
+// come apart: nobody stays stuck on the other.
+function jams(lp) {
+  if (lp.kind !== 'pass' || lp.thrown || lp.carrierSet || lp.t > 0.9) return;
+  const press = !!DEF_SCHEMES[lp.defCall]?.press;
+  for (const d of lp.players) {
+    if ((d.jamming = Math.max(0, (d.jamming ?? 0) - DT)) > 0) continue;
+    const r = d.man;
+    if (d.side !== 'def' || d.role !== 'cover' || !r || r.role !== 'route' || r.jammed || r.wp > 0 || d.stun > 0) continue;
+    if (!(press || r.x - (r.home?.x ?? r.x) < 1.5) || d.x > 3 || dist(d, r) > d.r + r.r + 0.2) continue;
+    r.jammed = true;
+    const db = d.a.str * 0.4 + d.a.cov * 0.6, wr = r.a.str * 0.35 + r.a.agi * 0.35 + r.a.spd * 0.3;
+    const edge = (db - wr) / 100 + (press ? 0.08 : 0);
+    if (chance(lp.g, clamp(0.4 + edge * 1.4, 0.12, 0.8))) {
+      r.jam = d.jamming = clamp(0.2 + edge * 0.6, 0.15, 0.42);
+      event(lp, 'jam', '', d, r);
+    } else {
+      d.slow = Math.max(d.slow ?? 0, 0.35);
+      event(lp, 'release', '', r, d);
+    }
+  }
+}
 
 function engage(lp, b, d) { b.eng = d; d.eng = b; b.engT = 0; d.engT = 0; chip(lp, b); chip(lp, d); }
 

@@ -2,7 +2,7 @@
 // assignments at the line, and what each defender wants each step (rush, cover, pursue).
 import { clamp, rep } from '../engine.js';
 import { frontX } from '../formations.js';
-import { DT, RECEIVERS, dist, len, mustGain, perceive, seek, sgn, slowDown, sticks } from './core.js';
+import { DT, RECEIVERS, dist, len, mustGain, noPush, perceive, seek, sgn, slowDown, sticks } from './core.js';
 
 // Defensive calls as data: who rushes (blitz), who drops from the line into coverage (drop),
 // zone spots { slot: [depth, across, radius] } (across is toward the defender's own side for
@@ -220,6 +220,7 @@ export function coverWant(lp, p) {
     const l = len(vx, vy), cap = p.top;
     if (l > cap) { vx *= cap / l; vy *= cap / l; }
     p.want = { vx, vy };
+    noPush(p, r);
     void g;
     return;
   }
@@ -253,6 +254,7 @@ function zoneWant(lp, p) {
   // Deep zones never let a receiver get behind them.
   if (z.x >= 15) tx = Math.max(tx, px + 2.5);
   seek(p, { x: tx, y: ty }, 1, 0.6);
+  noPush(p, threat);
 }
 
 // Pursuit with leverage. The defender with the outside position on the carrier keeps it
