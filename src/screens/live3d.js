@@ -17,7 +17,7 @@ import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from
 import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
 import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
 import { boothAfter } from '../broadcast.js';
-import { afterPlay as broadcastAfter, layersHtml, onCall as broadcastCall, onFlow as broadcastFlow, resetBroadcast } from './broadcast.js';
+import { afterPlay as broadcastAfter, afterReview as broadcastReview, layersHtml, onCall as broadcastCall, onFlow as broadcastFlow, resetBroadcast } from './broadcast.js';
 
 function keysHelp() {
   return `<div class="keygrid">
@@ -307,14 +307,15 @@ function commitPlay() {
   save();
   render();
   showBanner(resultBanner(entry, lp, b));
-  broadcastAfter(g, b, stage);
-  powerFlash(entry);
+  powerFlash(entry, broadcastAfter(g, b, stage));
 }
 
-// A power switching on is called out over the field as well as on the result card.
-function powerFlash(entry) {
+// A power switching on is called out over the field as well as on the result card; after the
+// broadcast's stinger (`wait` ms) when one is wiping across the middle of the screen.
+function powerFlash(entry, wait = 0) {
   const on = (entry?.powers ?? []).find((c) => c.on);
   if (!on) return;
+  if (wait) { clearTimeout(timers.power); timers.power = setTimeout(() => powerFlash(entry), wait); return; }
   flash(`${P(on.id).name}: ${POWER_OF[on.id].name}!`, 'power');
   L3.flashT = performance.now() + 2600;
   sfx('power');
@@ -351,7 +352,7 @@ export function afterLivePlay(entry) {
   render();
   if (!entry || !g) { autoAdvance(); return; }
   // No live play follows to clear it, so the card leaves once the result beat is over.
-  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); broadcastAfter(g, b, stage); powerFlash(entry); }
+  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); powerFlash(entry, broadcastAfter(g, b, stage)); }
   autoAdvance();
 }
 
@@ -365,6 +366,7 @@ export function resetBetweenGames() {
   if (L3.replay) stopReplay();
   hideBanner();
   resetBroadcast();
+  clearTimeout(timers.power);
   L3.flow = null;
   if (stage) setFlow('PLAY_SELECTION');
 }
@@ -757,6 +759,7 @@ function finishReview() {
   if (out.verdict === 'reversed') {
     const B = resultBanner(out.entry, null, rv.before);
     if (B) showBanner({ ...B, head: `Reversed · ${B.head}`, text: note.text });
+    broadcastReview(g, rv.before, stage, true);
   } else {
     showBanner({ head: note.head, tone: 'muted', yds: '', clock: '', notes: [], possession: false, text: note.text, next: `${downText(g)} at ${spotText(g)}` });
   }

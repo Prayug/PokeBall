@@ -4,6 +4,7 @@
 //     powers' streaks and on/off state included
 //   - a lost challenge costs the challenge and a timeout; a won one keeps the timeout
 //   - the booth takes the last two minutes and close scoring plays and turnovers, coaches the rest
+//   - the broadcast's drive charts and stingers follow a reversed call
 //   - the tape plays a recording to the same end, a seek lands on the same step as playing
 //     through, and a clip file round-trips to the same play
 // Usage: node test/review.mjs [games]. Exits non-zero on any failure.
@@ -11,6 +12,7 @@ import { createLeague, aiChoosePick, makePick, teamForGame } from '../src/league
 import { createGame, runPlay, runLivePlay, snapClock, aiOffenseCall, aiDefenseCall, OFF_PLAYS } from '../src/engine.js';
 import { createLivePlay, snap, step, playSeconds } from '../src/live.js';
 import { REVIEW, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../src/review.js';
+import { driveSegs, stingerFor } from '../src/broadcast.js';
 import { CHECKPOINT, advance, clipFromJson, clipJson, makeTape, seekTape } from '../src/film.js';
 
 const N = Number(process.argv[2] ?? 10);
@@ -113,6 +115,11 @@ for (let gi = 0; gi < N; gi++) {
       if (JSON.stringify(ref.pw?.s) !== before.pw) seen.pwDiff++;
       const want = { ...JSON.parse(state(ref)) }, got = JSON.parse(state(g));
       check(JSON.stringify(got) === JSON.stringify(want), `a reversal leaves the game as if ruled right (${R.kind})`);
+      // The broadcast reads the corrected record: the drive charts, and the stinger the play earns.
+      const charts = (gg) => JSON.stringify(gg.drives.map((d) => driveSegs(gg, d)));
+      const sting = (gg) => gg.log.slice(preG.log.length).map((e) => stingerFor(gg, e, { score: preG.score, poss: preG.poss })?.kind).filter(Boolean).join();
+      check(charts(g) === charts(ref), `the drive charts follow a reversed call (${R.kind})`);
+      check(sting(g) === sting(ref), `a reversed call earns the stinger of the true result (${R.kind}: ${sting(g)} vs ${sting(ref)})`);
       if (by != null) check(g.challenges[by] === before.ch[by] - 1 && g.timeouts[by] === before.to[by], 'a won challenge keeps the timeout');
     } else {
       seen.stands++;

@@ -14,7 +14,7 @@ import { chant, crowd, setCrowdBase, stinger as playStinger } from '../audio.js'
 export const BC = { open: false, blimp: false, drive: null, cardAt: null, chantAt: null, timers: {} };
 export function resetBroadcast() {
   for (const k of Object.keys(BC.timers)) clearTimeout(BC.timers[k]);
-  Object.assign(BC, { open: true, blimp: false, drive: null, cardAt: null, chantAt: null, timers: {} });
+  Object.assign(BC, { open: true, blimp: false, drive: null, cardAt: null, chantAt: null, aired: null, timers: {} });
   for (const id of ['bc-open', 'stinger', 'bc-third', 'bc-drive']) hide(id);
 }
 
@@ -31,8 +31,8 @@ const teamVars = (t) => { const k = kitOf(t); return `--team:${t.color};--team2:
 // Both teams (in their kit colors, with timeouts, possession and, in a league, their records),
 // the quarter and clock, down and distance, the play clock and the ball's spot, plus a state
 // tag (a flag, a timeout, the red zone) and a strip under it with the booth's line for the
-// moment. `big` is the larger bug for watching rather than playing.
-export function scorebugHtml(g, { big = false, pclock = 40, scored = [0, 0], live = false } = {}) {
+// moment. Watch mode grows it from CSS (.game.spectate .bcast).
+export function scorebugHtml(g, { pclock = 40, scored = [0, 0], live = false } = {}) {
   const [H, A] = g.teams;
   const rec = records(g);
   const now = performance.now();
@@ -51,7 +51,7 @@ export function scorebugHtml(g, { big = false, pclock = 40, scored = [0, 0], liv
     <div class="bc-cell bc-down">${downText(g)}</div><div class="bc-cell bc-pc" id="pclock" title="Play clock">:${String(Math.ceil(pclock ?? 40)).padStart(2, '0')}</div>
     <div class="bc-cell bc-spot">${spotText(g)}</div>${tag}`;
   const strip = live || g.final ? '' : boothBefore(g);
-  return `<div class="bcast ${big ? 'big' : ''}" id="bcast"><div class="bc-row">${team(A, 1)}${team(H, 0)}${info}</div>${strip ? `<div class="bc-strip">${esc(strip)}</div>` : ''}</div>`;
+  return `<div class="bcast" id="bcast"><div class="bc-row">${team(A, 1)}${team(H, 0)}${info}</div>${strip ? `<div class="bc-strip">${esc(strip)}</div>` : ''}</div>`;
 }
 
 // ---------- the layers over the field ----------
@@ -136,14 +136,18 @@ function showDrive(g, d) {
 
 // ---------- moments ----------
 // After a play has gone into the game: the stinger, the board, the music and the crowd.
-// `before` is the game as it was at the snap (score, possession, log length, drives).
-export function afterPlay(g, before, stage) {
-  if (!g || !before) return;
+// `before` is the game as it was at the snap (score, possession, log length, drives). Returns
+// how long the stinger holds the middle of the screen, in ms (0 with none).
+export function afterPlay(g, before, stage, { aired = null } = {}) {
+  if (!g || !before) return 0;
   const fresh = g.log.slice(before.logN ?? g.log.length - 1);
   const rank = { td: 5, to: 4, fg: 3, final: 6, quarter: 2 };
   let best = null;
   for (const e of fresh) { const st = stingerFor(g, e, before); if (st && (!best || rank[st.kind] > rank[best.kind])) best = st; }
   const homeCrowd = g.neutral ? null : 0;
+  // (After a review: what already aired for the play isn't shown twice.)
+  if (best && best.kind === aired) best = null;
+  BC.aired = best?.kind ?? aired;
   if (best) {
     showStinger(best, g);
     playStinger(best.kind);
@@ -154,11 +158,25 @@ export function afterPlay(g, before, stage) {
     if (best.kind === 'final') crowd(1);
   }
   // A game won in overtime ends on the score, not a quarter break: the final follows.
-  if (g.final && best?.kind !== 'final') BC.timers.final = setTimeout(() => { showStinger({ kind: 'final', text: 'Final', ti: g.winner }, g); playStinger('final'); }, best ? 2100 : 0); else if (homeCrowd === g.poss && before.poss === g.poss && g.down === 1 && before.down >= 3 && Math.random() < 0.6) {
+  if (g.final && best?.kind !== 'final' && aired !== 'final') BC.timers.final = setTimeout(() => { BC.aired = 'final'; showStinger({ kind: 'final', text: 'Final', ti: g.winner }, g); playStinger('final'); }, best ? 2100 : 0); else if (homeCrowd === g.poss && before.poss === g.poss && g.down === 1 && before.down >= 3 && Math.random() < 0.6) {
     // A home third-down conversion gets the chant too.
     BC.timers.chant = setTimeout(() => chant(kitOf(g.teams[0]).chant, { times: 1 }), 900);
   }
   if (g.drives.length > (before.drives ?? g.drives.length)) BC.drive = g.drives[g.drives.length - 1];
+  return best ? 1900 : 0;
+}
+
+// A review has settled the last play. A reversed call rewinds the game and puts the play on the
+// books again as it really happened, so the broadcast follows the corrected record: a drive
+// chart queued (or up) for the old result comes down, and the corrected play gets its own
+// stinger, board and chant (a touchdown given on review, a fumble ruled a takeaway). A score
+// taken away needs no graphic of its own: the result card says it was reversed.
+export function afterReview(g, before, stage, reversed) {
+  if (!g || !before || !reversed) return;
+  BC.drive = null;
+  hide('bc-drive');
+  clearTimeout(BC.timers.final);
+  afterPlay(g, before, stage, { aired: BC.aired });
 }
 
 // Each change of the game flow: the open on the first call, the aerial back from a break, the
