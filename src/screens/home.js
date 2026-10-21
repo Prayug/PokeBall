@@ -8,6 +8,7 @@ import { autoAdvance, difficultyHtml } from './game.js';
 import { SCHEMES, SCHEME_KEYS } from '../coach.js';
 import { sharedInHtml } from './share.js';
 import { LEAGUE_SIZES } from '../geometry.js';
+import { quarterText } from '../engine.js';
 import { TYPE_COLORS } from '../types.js';
 
 function resumeScreen(L, game) {
@@ -76,6 +77,7 @@ export function renderHome() {
         <hr>
         <h2>Quick game</h2>
         <p>Two AI-drafted rosters, kickoff right away. You coach the home side.</p>
+        ${resumeQuickHtml()}
         <div class="actions"><button class="btn" data-act="quick">Play a quick game</button>
           <button class="btn" data-act="quick2">Two players, one screen</button>
           <button class="btn" data-act="watchgame">Watch a game</button>
@@ -94,6 +96,12 @@ export function renderHome() {
       </div>
     </div>
   </section>`;
+}
+// A quick game left for the home screen is still on: one button goes back to it.
+function resumeQuickHtml() {
+  const g = S.game;
+  if (!g || g.final || !S.gameMeta?.quick) return '';
+  return `<div class="actions"><button class="btn primary" data-act="go" data-to="game">Back to your game: ${esc(g.teams[1].abbr)} ${g.score[1]}, ${esc(g.teams[0].abbr)} ${g.score[0]} · ${quarterText(g.quarter)}</button></div>`;
 }
 function slotRow({ n, save }) {
   if (!save) return `<li class="sslot empty"><span class="sn">${n}</span><span class="muted">Empty slot</span></li>`;

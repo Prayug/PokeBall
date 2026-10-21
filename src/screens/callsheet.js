@@ -69,6 +69,22 @@ export function callSheet(g) {
   return { onOff, groups: keyed, fit, why };
 }
 
+// The two calls a key away on the sheet: the one that fits the down (Enter) and your last call
+// from this side of the ball (R), each only when it is on the sheet now.
+export function quickCalls(g) {
+  const { onOff, groups, fit } = callSheet(g);
+  const on = new Set(groups.flatMap(([, , cs]) => cs.map((c) => c.call)));
+  const again = g.phase === 'play' ? S.lastCall?.[`${userSide()}:${onOff ? 'off' : 'def'}`] : null;
+  return { fit: on.has(fit) ? fit : null, again: again && on.has(again) ? again : null };
+}
+function quickHtml(g, onOff) {
+  const { fit, again } = quickCalls(g);
+  const name = (c) => esc((onOff ? OFF_PLAYS : DEF_PLAYS)[c]?.name ?? '');
+  const kbd = (k) => (twoPlayer() ? '' : ` <kbd>${k}</kbd>`);
+  if (!fit && !again) return '';
+  return `<span class="cs-quicks">${fit ? `<button class="btn tiny cs-quick fit" data-act="call" data-call="${fit}" title="Call the play that fits this down">Fits: ${name(fit)}${kbd('Enter')}</button>` : ''}${again && again !== fit ? `<button class="btn tiny cs-quick" data-act="call" data-call="${again}" title="Call your last call again">Again: ${name(again)}${kbd('R')}</button>` : ''}</span>`;
+}
+
 // Formations: the offense picks one for its call (or leaves it to the play's own), the defense
 // picks its front (or leaves it to the call's). An AI side mixes its looks.
 export function formFor(call) {
@@ -155,7 +171,7 @@ export function callSheetHtml(g) {
       <span class="pblurb">${esc(extra)}</span></button>`;
   };
   const us = userSide();
-  const who = g.phase === 'penalty' ? 'Your call' : twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)} ${onOff ? 'offense' : 'defense'}${onOff ? '' : ' (the offense has called its play)'}` : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
+  const who = g.phase === 'penalty' ? (twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)}: your call` : 'Your call') : twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)} ${onOff ? 'offense' : 'defense'}${onOff ? '' : ' (the offense has called its play)'}` : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
   const head = `<div class="cs-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>
       <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur && !S.csAll ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
       ${edgesChip(g)}
@@ -169,22 +185,22 @@ export function callSheetHtml(g) {
   const body = S.csAll
     ? `<div class="cs-book">${tabs.map(([k, label, cs]) => `<section><h4>${label}</h4><div class="cs-cards">${cs.map(card).join('')}</div></section>`).join('')}</div>`
     : `<div class="cs-cards">${tabs.find(([k]) => k === cur)[2].map(card).join('')}</div>`;
-  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff)}${powersRow(g, us)}${body}</div>`;
+  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff, quickHtml(g, onOff))}${powersRow(g, us)}${body}</div>`;
 }
 
 // The clock between plays: running or stopped, your timeouts with the button to call one, and
 // (on offense) the tempo to the next snap. Shared by the 3D call sheet and the 2D play cards.
-export function clockRow(g, onOff) {
-  if (g.phase === 'penalty') return `<div class="cs-clock cs-flag"><span class="flagtxt">${esc(g.pending?.text ?? 'Flag on the play')}</span></div>`;
+export function clockRow(g, onOff, extra = '') {
+  if (g.phase === 'penalty') return `<div class="cs-clock cs-flag"><span class="flagtxt">${esc(g.pending?.text ?? 'Flag on the play')}</span>${extra}</div>`;
   if (g.phase !== 'play') {
     const what = g.phase === 'pat' ? 'Kick the extra point, or run or pass from the 2 for two points' : 'Kick it deep, or onside to try to get the ball back';
-    return `<div class="cs-clock"><span class="muted">${what}</span></div>`;
+    return `<div class="cs-clock"><span class="muted">${what}</span>${extra}</div>`;
   }
   const us = userSide(), left = g.timeouts?.[us] ?? 0;
   const state = g.clockRunning ? `<span class="clk run" title="The clock runs until the snap">Clock running · ${clockText(g.clock)}</span>` : '<span class="clk">Clock stopped</span>';
   const tempo = onOff ? `<label class="cs-formsel cs-tempo"><span>Tempo</span><select id="cs-tempo" aria-label="Tempo">${TEMPOS.map(([k, l]) => `<option value="${k}" ${(S.tempo ?? 'auto') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>` : '';
   return `<div class="cs-clock">${state}<span class="tos" aria-label="${left} timeouts left">${[0, 1, 2].map((i) => `<i class="${i < left ? 'on' : ''}"></i>`).join('')}</span>
-    <button class="btn tiny" data-act="timeout" ${left > 0 ? '' : 'disabled'}>Timeout <kbd>T</kbd></button>${tempo}</div>`;
+    <button class="btn tiny" data-act="timeout" ${left > 0 ? '' : 'disabled'}>Timeout <kbd>T</kbd></button>${tempo}${extra}</div>`;
 }
 // The formation (offense) or front (defense) for the call, as one compact control.
 function formSelect(onOff) {

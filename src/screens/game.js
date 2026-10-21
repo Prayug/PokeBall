@@ -25,7 +25,8 @@ import { driveChartSvg, scorebugHtml } from './broadcast.js';
 export function twoPlayer() { return !!S.gameMeta?.twoPlayer; }
 export function userSide() {
   if (!S.game) return 0;
-  if (twoPlayer()) return S.p2Call ? 1 - S.game.poss : S.game.poss;
+  // After a flag the side it was against decides, alone.
+  if (twoPlayer()) return S.game.phase === 'penalty' && S.game.pending ? S.game.pending.offended : S.p2Call ? 1 - S.game.poss : S.game.poss;
   const uid = S.gameMeta?.userTeamId ?? 0;
   return S.game.teams[0].id === uid ? 0 : 1;
 }
@@ -427,8 +428,15 @@ export function doCall(call) {
   if (!g || g.final || S.busy || L3.lp) return;
   if (stage && ((L3.flow !== 'PLAY_SELECTION' && L3.flow != null) || fieldBusy())) return;
   const us = userSide();
+  // R on the next call sheet calls it again (see quickCalls).
+  const remember = () => { if (g.phase === 'play') (S.lastCall ??= {})[`${us}:${g.poss === us ? 'off' : 'def'}`] = call; };
   if (twoPlayer()) {
+    if (g.phase === 'penalty') {
+      if (OFF_PLAYS[call]?.kind !== 'penalty') return;
+      S.csTab = null; playCall(call, 'base', null, {}); return;
+    }
     if (!(g.poss === us ? OFF_PLAYS : DEF_PLAYS)[call]) return;
+    remember();
     twoPlayerCall(g, call); return;
   }
   // A call from the wrong side's sheet (a stale click, a script) is ignored. The try and the
@@ -436,6 +444,7 @@ export function doCall(call) {
   const mine = g.phase === 'penalty' ? (g.pending?.offended === us ? OFF_PLAYS : {}) : g.phase !== 'play' ? (g.poss === us ? OFF_PLAYS : {}) : g.poss === us ? OFF_PLAYS : DEF_PLAYS;
   if (!mine[call] || (g.phase === 'penalty') !== (OFF_PLAYS[call]?.kind === 'penalty')) return;
   if (g.phase === 'penalty') { S.csTab = null; S.takeOver = false; playCall(call, 'base', null, {}); return; }
+  remember();
   // The AI side may stop the clock before the snap.
   if (aiTimeouts(g) != null) flashTimeout(g);
   const off = g.poss === us ? call : aiOffenseCall(g);
@@ -472,12 +481,14 @@ function playCall(off, def, tempo, opts) {
 // with player one on the home team and player two on the away team.
 function twoPlayerCall(g, call) {
   S.csTab = null; S.csPage = 0;
-  if (!S.p2Call) {
+  // A kickoff or an extra point leaves the other side nothing to call: it lines up at once.
+  const solo = !S.p2Call && ['kickoff', 'xp'].includes(OFF_PLAYS[call]?.kind);
+  if (!S.p2Call && !solo) {
     S.p2Call = { off: call, formation: formFor(call) };
     render();
     return;
   }
-  const { off, formation } = S.p2Call, def = call;
+  const { off, formation } = solo ? { off: call, formation: formFor(call) } : S.p2Call, def = solo ? aiDefenseCall(g) : call;
   S.p2Call = null;
   markBefore();
   if (stage && (['run', 'pass'].includes(OFF_PLAYS[off].kind) || liveKick(OFF_PLAYS[off]))) {
@@ -492,12 +503,12 @@ function twoPlayerCall(g, call) {
 }
 
 // The play clock ran out on the call sheet. On offense that is a delay of game (the full play
-// clock comes off a running game clock, then 5 yards); otherwise the call that fits is made
-// for you, as a coach's default.
+// clock comes off a running game clock, then 5 yards); otherwise, and on Rookie always, the call
+// that fits is made for you, as a coach's default.
 export function playClockOut() {
   const g = S.game;
   if (!g || g.final || S.busy || L3.lp) return;
-  if (g.phase === 'play' && g.poss === userSide()) {
+  if (g.phase === 'play' && g.poss === userSide() && (twoPlayer() || S.difficulty !== 'rookie')) {
     markBefore();
     if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
     const e = delayOfGame(g) ?? g.log[g.log.length - 1];
@@ -549,7 +560,8 @@ export function startGame(game, meta) {
   // Your side's try and kickoff choices wait for your call, and every kickoff and try is played
   // out on the field rather than resolved on the spot.
   const us = game.teams[0].id === (meta?.userTeamId ?? 0) ? 0 : 1;
-  game.manual = [us === 0, us === 1]; game.liveKicks = true; S.gameTab = 'log'; S.busy = false; S.subSel = null; S.p2Call = null;
+  // Two players: both sides are people, so both make their own try, kickoff and penalty calls.
+  game.manual = meta?.twoPlayer ? [true, true] : [us === 0, us === 1]; game.liveKicks = true; S.gameTab = 'log'; S.busy = false; S.subSel = null; S.p2Call = null; S.lastCall = null;
   resetBetweenGames();
   // The first game shows the controls once, and so does the first two-player game.
   S.takeOver = false;

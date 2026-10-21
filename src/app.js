@@ -10,7 +10,7 @@ import * as LG from './league.js';
 import { S, clearTimers, deleteSlot, loadPrefs, loadSaved, migrateStorage, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
 import { download, esc, teamBadge, user } from './ui.js';
 import { importSave, loadSnapshot, renderHome } from './screens/home.js';
-import { boardRowsHtml, detailHtml, draftTick, renderDraft, renderGrades, userDraft } from './screens/draft.js';
+import { boardRowsHtml, detailHtml, draftSkip, draftTick, renderDraft, renderGrades, userDraft } from './screens/draft.js';
 import { depthClick, renderDepth } from './screens/depth.js';
 import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthers } from './screens/season.js';
 import { renderOffseason } from './screens/offseason.js';
@@ -25,7 +25,7 @@ import * as TR from './trades.js';
 import * as FA from './freeagency.js';
 import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, toggleTakeOver, userSide, userTimeout } from './screens/game.js';
 import { applyDifficulty } from './difficulty.js';
-import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, setCamera, setDebug, stage, startReplay, syncOverlays, userChallenge } from './screens/live3d.js';
+import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, resetBetweenGames, setCamera, setDebug, stage, startReplay, syncOverlays, userChallenge } from './screens/live3d.js';
 import { openFilm } from './screens/film.js';
 
 const app = document.getElementById('app');
@@ -38,6 +38,8 @@ export function setScreen(screen) {
   render();
   if (changed) window.scrollTo(0, 0);
   if (screen === 'draft') draftTick();
+  // Leaving the game cleared its timers: coming back picks up an AI call that was waiting.
+  if (screen === 'game' && changed) autoAdvance();
 }
 
 // A quick game: two AI-drafted rosters. Two players: player one takes the home team, player two
@@ -98,7 +100,8 @@ function onClick(e) {
     case 'sndtest': soundTest(); break;
     case 'skip': S.skipOpen = !S.skipOpen; render(); break;
     case 'kit': case 'kitchant': kitAct(act, el); break;
-    case 'home': S.game = S.gameMeta?.quick ? null : S.game; setScreen('home'); break;
+    // A quick game in progress stays open: the home screen and the top bar take you back to it.
+    case 'home': if (S.game?.final && S.gameMeta?.quick) { S.game = null; S.gameMeta = null; } setScreen('home'); break;
     case 'go': setScreen(el.dataset.to); break;
     case 'continue': {
       const n = Number(el.dataset.slot ?? S.slot);
@@ -187,6 +190,7 @@ function onClick(e) {
     case 'draftbtn': { const id = Number(el.dataset.id); const n = L?.pickIndex; userDraft(id, null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
     case 'draftsel': { const id = S.draft.sel, n = L?.pickIndex; userDraft(id, document.getElementById('d-slot')?.value ?? null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
     case 'sort': S.draft.sort = el.dataset.key; render(); break;
+    case 'draftskip': draftSkip(); break;
     case 'autodraft': S.draft.autoAll = !S.draft.autoAll; render(); draftTick(); break;
     case 'startseason': L.phase = 'season'; setScreen('season'); break;
     case 'dslot': case 'dbench': depthClick(el); break;
@@ -197,6 +201,13 @@ function onClick(e) {
       break;
     }
     case 'playweek': case 'simweek': {
+      // The league game already under way: resume it, or sim the rest of it from the score it is at.
+      if (S.game && !S.game.final && S.gameMeta && !S.gameMeta.quick) {
+        if (act === 'playweek') { setScreen('game'); break; }
+        resetBetweenGames(); S.p2Call = null;
+        simUntil(S.game, 'game'); finishLeagueGame();
+        break;
+      }
       const me = user();
       const playoff = L.phase === 'playoffs';
       const gm = playoff ? L.playoffs.games.find((g) => g.home === me.id || g.away === me.id) : LG.userGame(L);
@@ -207,6 +218,21 @@ function onClick(e) {
       const meta = { playoff, userTeamId: me.id };
       if (act === 'simweek') { applyDifficulty(game, S.difficulty, me.id); S.game = game; S.gameMeta = meta; simUntil(game, 'game'); finishLeagueGame(); }
       else startGame(game, meta);
+      break;
+    }
+    case 'simseason': {
+      // Sim every week left in the regular season, then show the playoff picture.
+      if (L?.phase !== 'season' || (S.game && !S.game.final && !S.gameMeta?.quick)) break;
+      const me = user();
+      if (S.gameMeta?.quick) { S.game = null; S.gameMeta = null; }
+      while (L.phase === 'season') {
+        const gm = LG.userGame(L);
+        if (!gm) { LG.simWeekOthers(L, me.id); LG.advanceWeek(L); continue; }
+        const game = LG.startLeagueGame(L, gm.home, gm.away, false);
+        applyDifficulty(game, S.difficulty, me.id); S.game = game; S.gameMeta = { playoff: false, userTeamId: me.id };
+        simUntil(game, 'game'); finishLeagueGame({ go: false });
+      }
+      setScreen('season');
       break;
     }
     case 'finishgame': finishLeagueGame(); break;
