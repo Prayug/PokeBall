@@ -17,6 +17,7 @@ import { SHADES, audibles, cycleShade, hotRoute, setDisguise, startMotion } from
 import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
 import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
 import { boothAfter } from '../broadcast.js';
+import { boothAfter as callAfter, boothFlow, boothHush, boothLive, boothReset, boothReview, captionHtml } from './booth.js';
 import { afterPlay as broadcastAfter, afterReview as broadcastReview, layersHtml, onCall as broadcastCall, onFlow as broadcastFlow, resetBroadcast } from './broadcast.js';
 
 function keysHelp() {
@@ -24,7 +25,7 @@ function keysHelp() {
     <span><kbd>1</kbd>-<kbd>8</kbd> between plays: call that play on the open page · <kbd>←</kbd> <kbd>→</kbd> turn the page</span>
     <span><kbd>Enter</kbd> between plays: call the play that fits the down · <kbd>R</kbd> call your last call again</span>
     <span><kbd>Space</kbd> after the whistle: skip the result and the walk back to the line</span>
-    <span><kbd>C</kbd> change camera (gameplay, tactical, broadcast, player) · <kbd>M</kbd> menu · <kbd>Esc</kbd> change the play</span>
+    <span><kbd>C</kbd> change camera (gameplay, tactical, broadcast, player) · <kbd>M</kbd> menu · <kbd>U</kbd> mute · <kbd>Esc</kbd> change the play</span>
     <span><kbd>Space</kbd> snap (hurries everyone to the line), juke with the ball, dive to tackle</span>
     <span><kbd>W A S D</kbd> or arrows: move your player</span>
     <span><kbd>Shift</kbd> sprint</span>
@@ -96,6 +97,7 @@ function setFlow(st) {
   if (L3.trace.length > 400) L3.trace.shift();
   stage?.setState?.(st);
   broadcastFlow(st, g, stage, L3.lp);
+  boothFlow(st, g, L3.lp);
   const d = document.getElementById('dbg-state');
   if (d) d.textContent = st;
 }
@@ -121,7 +123,7 @@ export function ensureStage() {
   stageWrap = document.createElement('div');
   stageWrap.className = 'stagewrap';
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
-    <div class="lower3" id="lower3" aria-live="polite"></div>
+    <div class="lower3" id="lower3" aria-live="polite"></div>${captionHtml()}
     ${layersHtml()}
     <div class="ov-badge" id="replay-badge" hidden>Replay</div>
     <div class="hud-acts"><button class="hud-replay" id="chal-btn" data-act="challenge" hidden>Challenge <kbd>G</kbd></button>
@@ -310,6 +312,7 @@ function commitPlay() {
   render();
   showBanner(resultBanner(entry, lp, b));
   powerFlash(entry, broadcastAfter(g, b, stage));
+  callAfter(g, entry, b, lp);
 }
 
 // A power switching on is called out over the field as well as on the result card; after the
@@ -354,7 +357,7 @@ export function afterLivePlay(entry) {
   render();
   if (!entry || !g) { autoAdvance(); return; }
   // No live play follows to clear it, so the card leaves once the result beat is over.
-  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); powerFlash(entry, broadcastAfter(g, b, stage)); }
+  if (stage) { showBanner(resultBanner(entry, null, b)); hideBanner(3000); powerFlash(entry, broadcastAfter(g, b, stage)); callAfter(g, entry, b, null); }
   autoAdvance();
 }
 
@@ -368,6 +371,7 @@ export function resetBetweenGames() {
   if (L3.replay) stopReplay();
   hideBanner();
   resetBroadcast();
+  boothReset(S.game);
   clearTimeout(timers.power);
   L3.flow = null;
   if (stage) setFlow('PLAY_SELECTION');
@@ -582,6 +586,7 @@ function loop(now) {
         L3.rec?.log.push(inp);
         L3.acc -= DT;
       }
+      boothLive(lp);
       if (lp.phase === 'dead') {
         if (!L3.committed) commitPlay();
         L3.deadT += dt;
@@ -631,6 +636,8 @@ function loop(now) {
       if (L3.pclock <= 0) { L3.pclock = 40; playClockOut(); }
     }
   }
+  // A replay or the film room has the field: the booth lets the tape run without calling it.
+  if (FILM.open || L3.replay) { if (!L3.hushed) { L3.hushed = true; boothHush(); } } else L3.hushed = false;
   if (g && !g.final) setFlow(flowNow(now));
   // The game clock runs during the play and stops on the whistle.
   const gc = document.getElementById('gclock');
@@ -762,7 +769,9 @@ function finishReview() {
     const B = resultBanner(out.entry, null, rv.before);
     if (B) showBanner({ ...B, head: `Reversed · ${B.head}`, text: note.text });
     broadcastReview(g, rv.before, stage, true);
+    boothReview(g, true);
   } else {
+    boothReview(g, false);
     showBanner({ head: note.head, tone: 'muted', yds: '', clock: '', notes: [], possession: false, text: note.text, next: `${downText(g)} at ${spotText(g)}` });
   }
   hideBanner(4500);

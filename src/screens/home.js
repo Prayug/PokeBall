@@ -9,6 +9,7 @@ import { SCHEMES, SCHEME_KEYS } from '../coach.js';
 import { sharedInHtml } from './share.js';
 import { LEAGUE_SIZES } from '../geometry.js';
 import { quarterText } from '../engine.js';
+import { TYPE_COLORS } from '../types.js';
 
 function resumeScreen(L, game) {
   if (game && !game.final) return 'game';
@@ -37,11 +38,11 @@ export function renderHome() {
   const showcase = [130, 248, 135, 65, 448, 445].filter((id) => PLAYERS[id]);
   return `<section class="home">
     ${sharedInHtml()}
-    <div class="hero">
+    <div class="hero"><span class="hero-ball" aria-hidden="true"></span>
       <p class="eyebrow">Gen 1 to 9 · 22 positions · 8 to 16-team leagues</p>
       <h1>Draft Pokémon. Coach football.</h1>
       <p class="lede">Every rating comes from real base stats: Speed makes receivers, Defense and HP make linemen, Sp. Atk makes quarterbacks. Type matchups decide the trenches.</p>
-      <div class="showcase">${showcase.map((id) => `<figure>${sprite(id)}<figcaption>${esc(P(id).name)}<b>${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</b></figcaption></figure>`).join('')}</div>
+      <div class="showcase">${showcase.map((id) => `<figure style="--tc:${TYPE_COLORS[P(id).types[0]]}">${sprite(id)}<figcaption>${esc(P(id).name)}<b>${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</b></figcaption></figure>`).join('')}</div>
     </div>
     <div class="cards">
       <form class="card setup" id="setup-form">
