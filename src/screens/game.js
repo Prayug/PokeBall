@@ -211,7 +211,7 @@ function watchChip() {
 
 // Broadcast scoreboard: the scorebug from the broadcast package (screens/broadcast.js).
 function broadcastBar(g) {
-  return scorebugHtml(g, { pclock: L3.pclock, scored: L3.scoreFlash, live: !!L3.lp && L3.lp.phase !== 'pre', big: !!S.bigBug });
+  return scorebugHtml(g, { pclock: L3.pclock, scored: L3.scoreFlash, live: !!L3.lp && L3.lp.phase !== 'pre' });
 }
 
 function tickerHtml(g) {
