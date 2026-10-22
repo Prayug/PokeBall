@@ -3,7 +3,7 @@ import { SLOT, unitRatings } from '../ratings.js';
 import { kickingUnit } from '../engine.js';
 import { render } from '../app.js';
 import { S, save } from '../state.js';
-import { P, esc, ovr, powerTag, rangeLine, sprite, user } from '../ui.js';
+import { P, esc, ovr, powerTag, rangeLine, roleHtml, sprite, user } from '../ui.js';
 
 function conditionTag(id) {
   const inj = S.league?.injuries?.[id];
@@ -31,10 +31,14 @@ export function renderDepth() {
     const id = me.lineup[k];
     if (id == null) return `<button class="dslot ${SLOT[k].side} ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}"><span class="slot">${k}</span><span class="dn muted">Open</span></button>`;
     const p = P(id);
-    const misfit = p.best[0] !== k && p.ovr[p.best[0]] - p.ovr[k] >= 6;
+    const gap = p.ovr[p.best[0]] - p.ovr[k];
+    const misfit = p.best[0] !== k && gap >= 6;
+    const note = SLOT[k].group === p.primary
+      ? `Best at ${p.best[0]} ${p.ovr[p.best[0]]}`
+      : `Best at ${p.primary} · ${p.best[0]} ${p.ovr[p.best[0]]}`;
     return `<button class="dslot ${SLOT[k].side} ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}">
-      <span class="slot">${k}</span>${sprite(id, 'md')}<span class="dn">${esc(p.name)}</span>${ovr(p.ovr[k])}
-      ${misfit ? `<span class="fitnote">Best at ${p.best[0]} ${p.ovr[p.best[0]]}</span>` : ''}${powerTag(id, k)}${conditionTag(id)}</button>`;
+      <span class="slot">${k}</span>${sprite(id, 'md')}<span class="dn">${esc(p.name)}</span>${roleHtml(p)}${ovr(p.ovr[k])}
+      ${misfit ? `<span class="fitnote">${note}</span>` : ''}${powerTag(id, k)}${conditionTag(id)}</button>`;
   };
   return `<section class="depth">
     <p class="eyebrow">${esc(me.name)}</p>
@@ -51,7 +55,7 @@ export function renderDepth() {
       ${FORMATION.map(cell).join('')}
     </div></div>
     <div class="card"><h3>Bench</h3><div class="benchrow">${me.bench.length ? me.bench.map((id) => `<button class="dslot bench" data-act="dbench" data-id="${id}">${sprite(id, 'md')}<span class="dn">${esc(P(id).name)}</span>
-      ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 28 rounds to carry 4 backups.</p>'}</div></div>
+      ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}${roleHtml(P(id))}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 28 rounds to carry 4 backups.</p>'}</div></div>
     ${Object.keys(S.league.injuries ?? {}).some((id) => me.roster.includes(Number(id))) ? '<p class="small muted">Injured Pokémon miss games until they heal. Leave them in the lineup and the best healthy backup covers each game; with no bench, a starter from the other side of the ball plays both ways.</p>' : ''}
     ${Object.keys(S.league.condition ?? {}).length ? '<p class="small muted">Sore Pokémon start the next game below full energy, and the bench subs in as they tire. A Pokémon who is out sits the next game when the bench can cover him; with no bench he plays hurt.</p>' : ''}
     <div class="actions"><button class="btn" data-act="autodepth">Auto-arrange for best overall</button>

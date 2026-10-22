@@ -92,35 +92,44 @@ function buildPlayers() {
   const dist = Object.fromEntries(keys.map((k) => [k, base.map((p) => p.stats[k]).sort((a, b) => a - b)]));
   const wDist = base.map((p) => p.weight).sort((a, b) => a - b);
   const hDist = base.map((p) => p.height).sort((a, b) => a - b);
-  const bstDist = base.map((p) => keys.reduce((t, k) => t + p.stats[k], 0)).sort((a, b) => a - b);
-  // Raw attribute mixes from stat percentiles, height and weight.
+  // Raw attribute mixes from stat percentiles, height and weight. A build lifts only the
+  // attributes of that build: a physical Pokémon is not also a quarterback, and base-stat
+  // total is not added to every attribute.
   const raws = new Map();
   for (const p of POKEMON) {
     const q = Object.fromEntries(keys.map((k) => [k, percentile(dist[k], p.stats[k])]));
     const w = percentile(wDist, p.weight), h = percentile(hDist, p.height);
-    // Overall power (base stat total) lifts everything a little: a fully trained Pokémon
-    // beats a gimmick with one big stat.
-    const bst = percentile(bstDist, keys.reduce((t, k) => t + p.stats[k], 0));
-    const str = 0.55 * q.atk + 0.35 * w + 0.1 * q.hp;
+    const phys = 0.48 * q.atk + 0.24 * w + 0.18 * q.def + 0.1 * q.hp;
+    const spec = 0.64 * q.spa + 0.36 * q.spd;
+    const fast = 0.74 * q.spe + 0.26 * (1 - w);
+    const axes = [phys, spec, fast].sort((a, b) => b - a);
+    const gap = Math.max(0, axes[0] - axes[1]);
+    // The leading build gets the lift, and only as clearly as it leads the other two.
+    const lift = (axis) => (axis === axes[0] && gap > 0.04 ? 0.2 * gap + 0.06 * axis : 0);
+    // A true all-rounder has no hole to tax. The lift is theirs alone, so Mew and Arceus
+    // clear the pool instead of sitting in the middle of every curve. Everyone else stays a specialist.
+    const round = isWildcard(p) ? 0.2 + Math.max(0, (bstOf(p) - 600) / 1200) : 0;
+    const str = 0.58 * q.atk + 0.28 * w + 0.14 * q.hp;
     raws.set(p.id, {
-      spd: 0.8 * q.spe + 0.2 * (1 - w) + 0.1 * bst,
-      str: str + 0.1 * bst,
-      blk: 0.45 * q.def + 0.25 * q.hp + 0.25 * w + 0.1 * bst,
-      rush: 0.45 * q.atk + 0.35 * q.spe + 0.2 * str + 0.1 * bst,
-      arm: 0.65 * q.spa + 0.35 * q.atk + 0.1 * bst,
-      acc: 0.6 * q.spd + 0.4 * q.spa + 0.1 * bst,
-      hnd: 0.45 * q.spa + 0.3 * q.spe + 0.25 * h + 0.1 * bst,
-      cov: 0.5 * q.spe + 0.3 * q.spd + 0.2 * q.def + 0.1 * bst,
-      tkl: 0.4 * q.atk + 0.35 * q.def + 0.25 * w + 0.1 * bst,
-      sta: 0.75 * q.hp + 0.25 * q.def + 0.1 * bst,
-      // Live-play movement and reads: getting to top speed (light and quick), cutting and
-      // turning (quick, light and compact), and reading the play (Sp. Def and Sp. Atk).
-      acl: 0.6 * q.spe + 0.25 * (1 - w) + 0.15 * q.atk + 0.1 * bst,
-      agi: 0.55 * q.spe + 0.3 * (1 - w) + 0.15 * (1 - h) + 0.1 * bst,
-      awr: 0.45 * q.spd + 0.35 * q.spa + 0.2 * q.def + 0.1 * bst,
-      // Kicking: leg power from Attack and Sp. Atk, accuracy from composure (Sp. Def) and touch.
-      kpw: 0.5 * q.atk + 0.35 * q.spa + 0.15 * q.spe + 0.1 * bst,
-      kac: 0.5 * q.spd + 0.3 * q.spa + 0.2 * (1 - w) + 0.1 * bst,
+      spd: 0.84 * q.spe + 0.16 * (1 - w) + lift(fast) + round,
+      str: str + lift(phys) + round,
+      blk: 0.48 * q.def + 0.22 * q.hp + 0.3 * w + lift(phys) + round,
+      rush: 0.5 * q.atk + 0.32 * q.spe + 0.18 * q.def + round,
+      arm: 0.8 * q.spa + 0.2 * q.atk + lift(spec) + round,
+      acc: 0.58 * q.spa + 0.42 * q.spd + lift(spec) + round,
+      hnd: 0.52 * q.spa + 0.28 * h + 0.2 * q.spe + lift(spec) + round,
+      cov: 0.68 * q.spe + 0.2 * (1 - w) + 0.12 * q.def + lift(fast) + round,
+      tkl: 0.42 * q.atk + 0.33 * q.def + 0.25 * w + lift(phys) + round,
+      sta: 0.72 * q.hp + 0.28 * q.def + round,
+      // Getting to top speed, and cutting: speed and lightness, not a special-attack bonus.
+      acl: 0.66 * q.spe + 0.28 * (1 - w) + 0.06 * q.atk + lift(fast) + round,
+      agi: 0.6 * q.spe + 0.26 * (1 - w) + 0.14 * (1 - h) + lift(fast) + round,
+      // Reads come from composure (Sp. Def) and size, not from the same mix as accuracy.
+      awr: 0.55 * q.spd + 0.25 * q.def + 0.2 * q.hp + round,
+      // Kicking is its own job. Power is Attack and weight. Accuracy is a narrow composure mix,
+      // so a fast special attacker is not also a 99 kicker. All-rounders are not exempt from that split.
+      kpw: 0.62 * q.atk + 0.38 * w,
+      kac: 0.86 * q.spd + 0.14 * q.hp,
     });
   }
   const rawDist = Object.fromEntries(Object.keys(ATTRS).map((k) => [k, base.map((p) => raws.get(p.id)[k]).sort((a, b) => a - b)]));
@@ -156,7 +165,7 @@ function buildPlayers() {
     CURVES[s.key] = sorted;
     for (const id of ids) out[id].ovr[s.key] = curvedOverall(out[id].attrs, s.key);
   }
-  for (const id of ids) out[id].best = SLOT_KEYS.slice().sort((a, b) => out[id].ovr[b] - out[id].ovr[a]);
+  for (const id of ids) specialize(out[id]);
   return out;
 }
 
@@ -171,6 +180,90 @@ const CURVES = {};
 function curvedOverall(attrs, slot) {
   const z = zScore(CURVES[slot], slotScore(attrs, slot));
   return Math.max(1, Math.min(99, Math.round(OVR_MID + OVR_SD * z)));
+}
+
+// The usual pseudo-legendaries: one extra group at full value, and nothing else.
+const PSEUDO = /^(Dragonite|Tyranitar|Salamence|Metagross|Garchomp|Hydreigon|Goodra|Kommo-o|Dragapult|Baxcalibur)$/;
+const statList = (p) => Object.values(p.stats);
+const bstOf = (p) => statList(p).reduce((a, b) => a + b, 0);
+// A wildcard is a legendary with a very high base-stat total and no dump stat: Mew, Arceus,
+// Mewtwo and the other true all-rounders. A one-dimensional legendary stays elite at one group.
+function isWildcard(p) {
+  if (!p.legendary) return false;
+  const vals = statList(p), bst = bstOf(p);
+  if (bst < 600) return false;
+  const min = Math.min(...vals), mean = bst / vals.length;
+  return min >= 80 && min >= mean * 0.72;
+}
+function isPseudo(p) {
+  return !p.legendary && bstOf(p) >= 590 && bstOf(p) <= 610 && PSEUDO.test(p.name);
+}
+
+// Same-family flex: corner and safety, kicker and punter, end and outside linebacker.
+// Receiver and tight end are a step down from that. Left and right tackle are one group.
+function family(primary, bestSlot, slotKey) {
+  const g = SLOT[slotKey].group;
+  if (g === primary) return 'home';
+  if ((primary === 'CB' && g === 'S') || (primary === 'S' && g === 'CB')) return 'flex';
+  if ((primary === 'K' && g === 'P') || (primary === 'P' && g === 'K')) return 'flex';
+  if ((bestSlot === 'LE' || bestSlot === 'DE') && slotKey === 'OLB') return 'flex';
+  if (bestSlot === 'OLB' && (slotKey === 'LE' || slotKey === 'DE')) return 'flex';
+  if ((primary === 'WR' && g === 'TE') || (primary === 'TE' && g === 'WR')) return 'step';
+  return 'other';
+}
+function hasFamily(primary, bestSlot) {
+  return primary === 'CB' || primary === 'S' || primary === 'WR' || primary === 'TE' || primary === 'K' || primary === 'P'
+    || bestSlot === 'LE' || bestSlot === 'DE' || bestSlot === 'OLB';
+}
+function byJob(p) {
+  return (a, b) => p.ovr[b] - p.ovr[a] || slotScore(p.attrs, b) - slotScore(p.attrs, a);
+}
+// After the per-slot curve: one primary group, a specialization tax on the others.
+// Wildcards skip the tax but keep only two groups at 95 or better.
+const CAP = { flex: 94, step: 86, other: 82, wild: 94, fifth: 94 };
+function specialize(p) {
+  const ranked = SLOT_KEYS.slice().sort(byJob(p));
+  const bestSlot = ranked[0];
+  const primary = SLOT[bestSlot].group;
+  const groups = {};
+  for (const s of SLOTS) {
+    const sc = slotScore(p.attrs, s.key);
+    if (groups[s.group] == null || sc > groups[s.group]) groups[s.group] = sc;
+  }
+  const order = Object.entries(groups).sort((a, b) => b[1] - a[1]).map(([g]) => g);
+  const second = order.find((g) => g !== primary);
+  const wild = isWildcard(p);
+  const pseudo = !wild && isPseudo(p);
+  p.primary = primary;
+  p.wildcard = wild;
+  p.pseudo = pseudo;
+  p.flex = !wild && (pseudo || hasFamily(primary, bestSlot));
+  const keep = new Set([primary]);
+  if ((wild || pseudo) && second) keep.add(second);
+  for (const s of SLOTS) {
+    if (keep.has(s.group)) continue;
+    if (wild) { p.ovr[s.key] = Math.min(p.ovr[s.key], CAP.wild); continue; }
+    if (pseudo) { p.ovr[s.key] = Math.min(p.ovr[s.key], CAP.other); continue; }
+    const rel = family(primary, bestSlot, s.key);
+    if (rel === 'flex') p.ovr[s.key] = Math.min(p.ovr[s.key], CAP.flex);
+    else if (rel === 'step') p.ovr[s.key] = Math.min(p.ovr[s.key], CAP.step);
+    else p.ovr[s.key] = Math.min(p.ovr[s.key], CAP.other);
+  }
+  // A non-wildcard is 99 in one job, not 95-plus at a fifth slot.
+  if (!wild) {
+    const slots = SLOT_KEYS.slice().sort(byJob(p));
+    for (let i = 4; i < slots.length; i++) if (p.ovr[slots[i]] >= 95) p.ovr[slots[i]] = CAP.fifth;
+  }
+  p.best = SLOT_KEYS.slice().sort(byJob(p));
+}
+
+// What the draft board and the depth chart show: the primary group, plus Flex or Wildcard.
+export function roleLabel(p) {
+  if (!p) return '';
+  const g = p.primary || (p.best?.[0] && SLOT[p.best[0]]?.group) || '';
+  if (p.wildcard) return `${g} · Wildcard`;
+  if (p.flex) return `${g} · Flex`;
+  return g;
 }
 
 export const PLAYERS = buildPlayers();
@@ -193,7 +286,7 @@ export function applyGrowth(growth = {}) {
     const add = growth[key] ?? {};
     for (const k of Object.keys(p.baseAttrs)) p.attrs[k] = Math.max(10, Math.min(99, p.baseAttrs[k] + (add[k] ?? 0)));
     for (const s of SLOTS) p.ovr[s.key] = curvedOverall(p.attrs, s.key);
-    p.best = SLOT_KEYS.slice().sort((a, b) => p.ovr[b] - p.ovr[a]);
+    specialize(p);
   }
 }
 

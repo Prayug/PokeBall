@@ -1,6 +1,6 @@
 // Game simulation: one play at a time, resolved as one-on-one matchups.
 // Deterministic for a given seed. No DOM access.
-import { PLAYERS, OFF_SLOTS, DEF_SLOTS, unitRatings } from './ratings.js';
+import { PLAYERS, OFF_SLOTS, DEF_SLOTS, SLOT, unitRatings } from './ratings.js';
 import { TYPE_TRAITS, ABILITIES, WEATHER, bestMatchup, matchupModifier } from './types.js';
 import { initPowers, powerBonus, tickPowers } from './powers.js';
 import { PARITY, formFor } from './parity.js';
@@ -244,6 +244,13 @@ export function eff(g, ti, id, attr, ctx = {}) {
   if (g.quarter >= 3 && lead > PARITY.coastFrom) m *= 1 - Math.min(PARITY.coastMax, (lead - PARITY.coastFrom) * PARITY.coastPerPoint);
   m *= 0.85 + 0.15 * energyOf(g, ti, id) / 100;
   if (ab?.special === 'truant' && g.playNo % 2 === 1) m *= 0.6;
+  // Lined up outside his primary group (and not a wildcard): the attributes that slot cares
+  // about come down about 8%, so the depth-chart number and the player on the field agree.
+  if (!p.wildcard && p.primary && g?.teams?.[ti]?.lineup) {
+    const slots = [];
+    for (const [slot, pid] of Object.entries(g.teams[ti].lineup)) if (pid === id) slots.push(slot);
+    if (slots.length && slots.every((s) => SLOT[s]?.group !== p.primary) && slots.some((s) => SLOT[s]?.w && attr in SLOT[s].w)) v *= 0.92;
+  }
   return v * m;
 }
 

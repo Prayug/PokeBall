@@ -5,7 +5,7 @@ import * as LG from '../league.js';
 import { SCHEMES, coachLabel } from '../coach.js';
 import { render, setScreen } from '../app.js';
 import { S, clearTimers, save, timers } from '../state.js';
-import { ATTR_SHORT, P, abilityText, bar, esc, ovr, powerHtml, sprite, teamBadge, typeChips, user } from '../ui.js';
+import { ATTR_SHORT, P, abilityText, bar, esc, ovr, powerHtml, roleHtml, sprite, teamBadge, typeChips, user } from '../ui.js';
 import { shareCardHtml } from './share.js';
 import * as TR from '../trades.js';
 
@@ -38,7 +38,7 @@ export function boardRowsHtml() {
     const p = P(id);
     const block = LG.blockReason(L, me, id);
     return `<tr class="${S.draft.sel === id ? 'sel' : ''}" data-act="select" data-id="${id}">
-      <td class="pk">${sprite(id, 'sm')}<span><b>${esc(p.name)}</b>${p.legendary ? '<i class="leg">Legendary</i>' : ''}<span class="types">${typeChips(p.types)}</span></span></td>
+      <td class="pk">${sprite(id, 'sm')}<span><b>${esc(p.name)}</b>${p.legendary ? '<i class="leg">Legendary</i>' : ''}${roleHtml(p)}<span class="types">${typeChips(p.types)}</span></span></td>
       <td class="fit"><span class="slot">${fit.slot}</span>${ovr(fit.v)}</td>
       ${Object.keys(ATTRS).map((k) => `<td class="num a-${k}">${p.attrs[k]}</td>`).join('')}
       <td><button class="btn tiny ${myTurn && !block ? 'primary' : ''}" data-act="draftbtn" data-id="${id}" ${myTurn && !block ? '' : 'disabled'} title="${block ? esc(block) : ''}">${block ? 'Blocked' : 'Draft'}</button></td>
@@ -121,7 +121,7 @@ export function detailHtml() {
   const bestOpen = LG.bestOpenSlot(me, id);
   const edge = LG.rivalEdge(L, id);
   const s = p.stats;
-  return `<div class="dhead">${sprite(id, 'lg')}<div><h3>${esc(p.name)}</h3><div class="types">${typeChips(p.types)}</div>
+  return `<div class="dhead">${sprite(id, 'lg')}<div><h3>${esc(p.name)}</h3>${roleHtml(p)}<div class="types">${typeChips(p.types)}</div>
       <p class="small muted">Gen ${p.gen} · ${(p.height / 10).toFixed(1)} m · ${(p.weight / 10).toFixed(1)} kg</p></div></div>
     <p class="small"><b>${esc(p.ability)}.</b> ${esc(abilityText(id))}</p>
     ${p.types.map((t) => `<p class="small"><b>${t} trait.</b> ${TYPE_TRAITS[t].text}</p>`).join('')}
