@@ -29,10 +29,16 @@ for (const [n, [sig, base]] of Object.entries(SIGNATURES)) {
   ok(!!p, `signature for a Pokémon in the pool: ${n}`);
   if (p) ok(POWER_OF[p.id]?.name === sig && POWER_OF[p.id].base === base, `${n} carries ${sig}`);
 }
-// A carrier's power works at its natural position group.
+// A carrier's power works in its group. A signature still belongs to that Pokémon even when
+// their best job is now a different group; it only fires in the group it was written for.
 for (const [id, w] of assigned) {
-  const slot = PLAYERS[id].best.find((k) => k !== 'K' && k !== 'P');
-  ok(groupOfSlot(slot) === w.group, `${PLAYERS[id].name}'s ${w.name} works at its best spot`);
+  if (w.signature) {
+    const slot = PLAYERS[id].best.find((k) => groupOfSlot(k) === w.group) ?? (w.group === 'QB' ? 'QB' : w.group === 'skill' ? 'WR1' : w.group === 'line' ? 'LT' : w.group === 'rush' ? 'LE' : 'CB1');
+    ok(worksAt(Number(id), slot), `${PLAYERS[id].name}'s ${w.name} works in its group`);
+  } else {
+    const slot = PLAYERS[id].best.find((k) => k !== 'K' && k !== 'P');
+    ok(groupOfSlot(slot) === w.group, `${PLAYERS[id].name}'s ${w.name} works at its best spot`);
+  }
 }
 const zard = byName('Charizard');
 ok(powerText(zard.id).signature && powerText(zard.id).name === 'Blast Burn', 'Charizard: Blast Burn, signature');

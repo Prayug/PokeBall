@@ -244,8 +244,9 @@ function assign() {
     const slot = naturalSlot(p);
     const group = groupOfSlot(slot);
     const sig = SIGNATURES[p.name];
-    if (sig && POWERS[sig[1]].group === group) { out[key] = boosted(POWERS[sig[1]], sig[0]); continue; }
-    if (p.ovr[slot] < POWER_CUTOFF) continue;
+    // A signature stays with that Pokémon. It still only fires in its own group (worksAt).
+    if (sig) { out[key] = boosted(POWERS[sig[1]], sig[0]); continue; }
+    if (!slot || p.ovr[slot] < POWER_CUTOFF) continue;
     const pool = Object.values(POWERS).filter((w) => w.group === group);
     const pick = pool.find((w) => w.types.includes(p.types[0])) ?? pool.find((w) => p.types.some((t) => w.types.includes(t))) ?? pool[pool.length - 1];
     out[key] = pick;
