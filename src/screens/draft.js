@@ -7,6 +7,7 @@ import { render, setScreen } from '../app.js';
 import { S, clearTimers, save, timers } from '../state.js';
 import { ATTR_SHORT, P, abilityText, bar, esc, ovr, powerHtml, roleHtml, sprite, teamBadge, typeChips, user } from '../ui.js';
 import { shareCardHtml } from './share.js';
+import { send as netSend } from '../net.js';
 import * as TR from '../trades.js';
 
 // ---------- draft ----------
@@ -137,6 +138,7 @@ export function detailHtml() {
 }
 
 export function draftTick() {
+  if (S.online) return;
   clearTimers();
   const L = S.league;
   if (!L || L.phase !== 'draft' || S.screen !== 'draft') return;
@@ -265,6 +267,7 @@ export function tradeKickingHtml(L, deal = L.trade) {
 }
 
 export function userDraft(id, slot) {
+  if (S.online) { netSend({ t: 'pick', id, slot }); return; }
   const L = S.league;
   if (id == null || L.phase !== 'draft') return;
   const pk = LG.currentPick(L);

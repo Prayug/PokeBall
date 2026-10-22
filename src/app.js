@@ -26,6 +26,8 @@ import * as FA from './freeagency.js';
 import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, toggleTakeOver, userSide, userTimeout } from './screens/game.js';
 import { applyDifficulty } from './difficulty.js';
 import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, resetBetweenGames, setCamera, setDebug, stage, startReplay, syncOverlays, userChallenge } from './screens/live3d.js';
+import { renderLobby } from './screens/lobby.js';
+import { bindUI, create as netCreate, join as netJoin, joinFromHash, send as netSend } from './net.js';
 import { openFilm } from './screens/film.js';
 
 const app = document.getElementById('app');
@@ -82,6 +84,7 @@ function renderTop() {
     <button class="brand" data-act="home" aria-label="Home"><span class="ball" aria-hidden="true"></span>PokeBall</button>
     <nav>${items.map(([k, label]) => `<button class="nav ${S.screen === k ? 'on' : ''}" data-act="go" data-to="${k}">${label}</button>`).join('')}</nav>
     ${me ? `<span class="top-team">${teamBadge(me)}<span><b>${esc(me.name)}</b><small>Season ${L.season ?? 1}</small></span></span>` : ''}
+    ${S.online && S.net?.code ? `<span class="top-team"><b>#${S.net.mode === 'league' ? 'online' : 'play'}=${esc(S.net.code)}</b><small id="net-ping">${S.net.ping != null ? `${S.net.ping} ms` : '…'}</small></span>` : ''}
     ${soundButtonHtml()}
   </header>`;
 }
@@ -96,6 +99,15 @@ function onClick(e) {
   // A click anywhere else closes the sound panel.
   if (S.soundOpen && act !== 'sound' && act !== 'sndtest' && !el.closest('.sndpop')) S.soundOpen = false;
   switch (act) {
+    case 'onlinequick': netCreate('quick', { name: 'Home' }); break;
+    case 'onlineleague': netCreate('league', setupFromForm()); break;
+    case 'onlinejoin': netJoin((document.getElementById('net-code')?.value || '').trim().toUpperCase()); break;
+    case 'onlineready': netSend({ t: 'readygame' }); break;
+    case 'onlineforfeit': netSend({ t: 'forfeit' }); break;
+    case 'onlinerematch': netSend({ t: 'rematch' }); break;
+    case 'onlinesim': netSend({ t: 'sim' }); break;
+    case 'netcopy': { const link = `${location.origin}${location.pathname}${location.search}#${S.net?.mode === 'league' ? 'online' : 'play'}=${S.net?.code || ''}`; navigator.clipboard?.writeText(link); break; }
+    case 'claimteam': netSend({ t: 'claim', team: Number(el.dataset.team) }); break;
     case 'sound': S.soundOpen = !S.soundOpen; if (S.soundOpen) S.menuOpen = false; render(); break;
     case 'sndtest': soundTest(); break;
     case 'skip': S.skipOpen = !S.skipOpen; render(); break;
@@ -192,7 +204,7 @@ function onClick(e) {
     case 'sort': S.draft.sort = el.dataset.key; render(); break;
     case 'draftskip': draftSkip(); break;
     case 'autodraft': S.draft.autoAll = !S.draft.autoAll; render(); draftTick(); break;
-    case 'startseason': L.phase = 'season'; setScreen('season'); break;
+    case 'startseason': if (S.online) { netSend({ t: 'startseason' }); break; } L.phase = 'season'; setScreen('season'); break;
     case 'dslot': case 'dbench': depthClick(el); break;
     case 'autodepth': {
       const me = user();
@@ -201,6 +213,7 @@ function onClick(e) {
       break;
     }
     case 'playweek': case 'simweek': {
+      if (S.online) { netSend({ t: act === 'playweek' ? 'readygame' : 'sim' }); break; }
       // The league game already under way: resume it, or sim the rest of it from the score it is at.
       if (S.game && !S.game.final && S.gameMeta && !S.gameMeta.quick) {
         if (act === 'playweek') { setScreen('game'); break; }
@@ -365,6 +378,7 @@ export function render() {
     case 'kit': body = renderKit(); break;
     case 'trades': body = L && L.schedule.length ? renderTrades() : renderHome(); break;
     case 'game': ensureStage(); body = renderGame(); break;
+    case 'lobby': body = renderLobby(); break;
     default: body = renderHome();
   }
   const y = window.scrollY;
@@ -423,10 +437,25 @@ function start(data) {
   initPads();
   if (S.shareIn) S.screen = 'home';
   if (S.streamer && !S.shareIn) { quickGame({ spectate: true }); return; }
+  joinFromHash();
   render();
   if (S.screen === 'draft') draftTick();
   if (S.screen === 'game') autoAdvance();
   window.claude?.hot?.snapshot?.(() => ({ state: { league: S.league, game: S.game, gameMeta: S.gameMeta, screen: S.screen } }));
 }
 
+function setupFromForm() {
+  const f = document.getElementById('setup-form');
+  if (!f) return { name: S.setup.name, abbr: S.setup.abbr, rounds: S.setup.rounds, legendaries: S.setup.legendaries, typeCap: S.setup.typeCap, clock: S.setup.clock, scheme: S.setup.scheme };
+  return {
+    name: f.querySelector('#f-name')?.value.trim() || 'Pallet Starters',
+    abbr: (f.querySelector('#f-abbr')?.value.trim() || 'PAL').toUpperCase().slice(0, 3),
+    rounds: Number(f.querySelector('input[name="rounds"]:checked')?.value ?? 24),
+    legendaries: !!f.querySelector('#f-legend')?.checked,
+    typeCap: !!f.querySelector('#f-typecap')?.checked,
+    clock: !!f.querySelector('#f-clock')?.checked,
+    scheme: f.querySelector('input[name="scheme"]:checked')?.value ?? 'balanced',
+  };
+}
+bindUI({ render, setScreen });
 if (window.claude?.hot?.ready) window.claude.hot.ready(start); else start(window.claude?.hot?.data ?? {});

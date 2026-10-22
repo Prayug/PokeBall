@@ -17,6 +17,7 @@ import { powerColor, powerLine } from '../powers.js';
 import { L3, afterLivePlay, challengeReady, fieldBusy, markBefore, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
 import { filmReady } from './film.js';
 import { driveChartSvg, scorebugHtml } from './broadcast.js';
+import { send as netSend } from '../net.js';
 
 // ---------- game ----------
 // A two-player quick game: player one has the home team, player two the away team, and each
@@ -37,6 +38,12 @@ export function spectating() { return !twoPlayer() && (S.gameMeta?.spectate ?? !
 export function aiCalls() { return S.coach || (spectating() && !S.takeOver); }
 export function needsUser(g) {
   if (g.final) return false;
+  if (S.online) {
+    const us = userSide();
+    if (g.phase === 'penalty') return g.pending?.offended === us;
+    if (g.phase === 'pat' || g.phase === 'kickoff') return g.poss === us;
+    return true;
+  }
   if (twoPlayer()) return true;
   if (spectating() && !S.takeOver) return false;
   // Taking a call in Watch mode hands you the next decision that is yours, as in Play.
@@ -201,7 +208,7 @@ export function renderGame() {
     ${controls}
     <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
     <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>
-    <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
+    <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.${S.online ? ` Ping <b id="net-ping">${S.net?.ping != null ? `${S.net.ping} ms` : '…'}</b>.` : ''}</p>
   </section>`;
 }
 
@@ -425,6 +432,12 @@ function animatePlay(entry, done) {
 
 export function doCall(call) {
   const g = S.game;
+  if (S.online) {
+    if (!g || g.final || L3.net) return;
+    netSend({ t: 'call', call, formation: g.poss === userSide() ? formFor(call) : null, front: g.poss !== userSide() ? frontFor(call) : null, flip: !!S.runFlip });
+    S.runFlip = false;
+    return;
+  }
   if (!g || g.final || S.busy || L3.lp) return;
   if (stage && ((L3.flow !== 'PLAY_SELECTION' && L3.flow != null) || fieldBusy())) return;
   const us = userSide();
@@ -529,6 +542,7 @@ export function playClockOut() {
 
 // Your timeout, from the button or T between plays.
 export function userTimeout() {
+  if (S.online) { netSend({ t: 'timeout' }); return; }
   const g = S.game;
   if (!g || g.final || S.busy || L3.lp) return;
   if (callTimeout(g, userSide())) { flashTimeout(g); save(); render(); }
@@ -542,6 +556,7 @@ export const STREAM_NEXT_MS = 15000;
 // Auto mode: the AI calls downs until a decision is yours, and plays them out. In either mode
 // the other side's own kickoffs and tries are played out on the field the same way.
 export function autoAdvance() {
+  if (S.online) return;
   clearTimeout(timers.auto);
   const g = S.game;
   const kicks = g && (g.phase === 'pat' || g.phase === 'kickoff');

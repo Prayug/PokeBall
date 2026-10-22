@@ -12,7 +12,10 @@ node -e '
 const fs = require("fs");
 const html = fs.readFileSync("src/index.html", "utf8");
 const js = fs.readFileSync("dist/app.js", "utf8").replace(/<\/script/gi, "<\\/script");
-fs.writeFileSync("dist/index.html", html.replace("<!--APP-->", () => "<script>" + js + "</script>"));
+const server = process.env.POKEBALL_SERVER || "";
+const prelude = "<script>globalThis.POKEBALL_SERVER=" + JSON.stringify(server) + ";</script>";
+fs.writeFileSync("dist/index.html", html.replace("<!--APP-->", () => prelude + "<script>" + js + "</script>"));
 console.log("dist/index.html", (fs.statSync("dist/index.html").size / 1024).toFixed(0) + " KB");
 '
 [ -d dist/models3d ] || echo 'dist/models3d/ is missing: run "npm run models" to download the 3D models'
+if compgen -G 'booth/*.mp3' > /dev/null; then mkdir -p dist/booth && cp booth/*.mp3 dist/booth/; fi

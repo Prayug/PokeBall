@@ -67,6 +67,7 @@ export function renderHome() {
         <label class="check"><input type="checkbox" id="f-clock" ${st.clock ? 'checked' : ''}> 60-second pick clock</label>
         <label>Save to${slotSelect('f-slot', slots, target)}</label>
         <button class="btn primary" type="submit">Start the draft</button>
+        <button class="btn" type="button" data-act="onlineleague">Online league</button>
       </form>
       <div class="card side ${slots.some((x) => x.save) ? 'has-saves' : ''}">
         <h2>Your leagues</h2>
@@ -81,7 +82,10 @@ export function renderHome() {
         <div class="actions"><button class="btn" data-act="quick">Play a quick game</button>
           <button class="btn" data-act="quick2">Two players, one screen</button>
           <button class="btn" data-act="watchgame">Watch a game</button>
+          <button class="btn" data-act="onlinequick">Quick match online</button>
           <button class="btn ghost" data-act="go" data-to="kit">Franchise kit</button></div>
+        <div class="actions"><input id="net-code" maxlength="8" placeholder="Room code" aria-label="Room code"><button class="btn" data-act="onlinejoin">Join</button></div>
+        ${S.netMsg ? `<p class="small bad">${esc(S.netMsg)}</p>` : ''}
         <p class="small muted">Two players: one keyboard (WASD and the arrows) or gamepads. Player 1 has the home team, player 2 the away team, and each of you calls and plays your own side.</p>
         <p class="small muted">Watch: the AI calls and plays both sides, under a big scoreboard. Press O to call the next play yourself. For a stream, open the game with <code>?watch</code> on the address and every final rolls into the next game.</p>
         <hr>

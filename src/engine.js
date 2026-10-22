@@ -153,7 +153,7 @@ function makeSide(t) {
   };
 }
 
-export function createGame({ home, away, seed = Date.now(), playoff = false, weather = null, neutral = false, injuries = false }) {
+export function createGame({ home, away, seed = Date.now(), playoff = false, weather = null, neutral = false, injuries = false, liveKicks = false }) {
   const g = {
     seed, rng: seed >>> 0 || 1, playoff, neutral, form: formFor(seed),
     teams: [makeSide(home), makeSide(away)],
@@ -171,6 +171,8 @@ export function createGame({ home, away, seed = Date.now(), playoff = false, wea
     challenges: [1, 1],
   };
   g.venue = venueFor(g.teams[0], { seed, playoff, neutral });
+  // Set before the opening kick, so an online game can wait on that kickoff the way later ones do.
+  if (liveKicks) g.liveKicks = true;
   if (!weather) g.weather = pickWeather(g);
   initPowers(g);
   const receiver = chance(g, 0.5) ? 0 : 1;

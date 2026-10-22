@@ -1,5 +1,6 @@
 dist/app.js
 node_modules/
+data/
 __pycache__/
 test-browser-out/
 dist/models3d/
