@@ -124,6 +124,11 @@ export class Stage {
     // Landing spot of a pass and its flight path.
     this.target = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.85, 32), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.7, depthWrite: false, fog: false }));
     this.target.rotation.x = -Math.PI / 2; this.target.position.y = 0.04; S.add(this.target);
+    // Where a kickoff or a punt comes down. A unit ring (one yard across) scaled from about
+    // three yards wide as it leaves the foot down to about a yard as the hang time runs out.
+    // Onside kicks are a short hop, not a deep landing, so they draw nothing.
+    this.kickRing = new THREE.Mesh(new THREE.RingGeometry(0.78, 1, 64), new THREE.MeshBasicMaterial({ color: '#ffb547', transparent: true, opacity: 0.9, depthWrite: false, fog: false, side: THREE.DoubleSide }));
+    this.kickRing.rotation.x = -Math.PI / 2; this.kickRing.position.y = 0.05; this.kickRing.renderOrder = 3; this.kickRing.visible = false; S.add(this.kickRing);
     this.arcPts = new Float32Array(41 * 3);
     const ag = new THREE.BufferGeometry(); ag.setAttribute('position', new THREE.BufferAttribute(this.arcPts, 3));
     this.arc = new THREE.Line(ag, new THREE.LineDashedMaterial({ color: '#ffffff', dashSize: 0.6, gapSize: 0.45, transparent: true, opacity: 0.55, fog: false }));
@@ -570,7 +575,7 @@ export class Stage {
     this.updateFx(t, dt);
     tickAudio(dt);
     if (lp) this.stadium.setBoard(lp.g, now);
-    if (!lp) { this.stadium.update(t, dt, this.rig.look); if (this.blimp) this.blimpShot(now); this.renderer.render(this.scene, this.camera); return; }
+    if (!lp) { this.kickRing.visible = false; this.stadium.update(t, dt, this.rig.look); if (this.blimp) this.blimpShot(now); this.renderer.render(this.scene, this.camera); return; }
     const pre = lp.phase === 'pre';
     this.art.visible = pre;
     this.readEvents(lp, t);
@@ -900,6 +905,18 @@ export class Stage {
       }
       this.arc.geometry.attributes.position.needsUpdate = true;
       this.arc.computeLineDistances();
+    }
+    // Kickoff and punt: the spot is already fixed when the foot hits the ball. This only draws it.
+    const K = lp.kick, Fk = K?.F;
+    const kickAir = !!(Fk && !K.onside && (K.ko || K.punt) && b.state === 'air' && K.stage === 'air');
+    this.kickRing.visible = kickAir;
+    if (kickAir) {
+      const u = clampN((lp.t - Fk.t0) / Math.max(0.05, Fk.T), 0, 1);
+      const ease = u * u * (3 - 2 * u);
+      const radius = 1.5 + (0.5 - 1.5) * ease;
+      this.world(Fk.tx, Fk.ty, 0.05, this.kickRing.position);
+      this.kickRing.scale.set(radius, radius, 1);
+      this.kickRing.material.opacity = 0.5 + 0.4 * (1 - ease);
     }
   }
 

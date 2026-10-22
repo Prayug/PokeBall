@@ -512,9 +512,10 @@ function hudTip(lp) {
   if (lp.kick) {
     if (lp.phase === 'pre') return lp.user === lp.o ? `Space ${lp.kick.ko ? 'kick off' : 'snap'} · the kick goes on its own · Esc change call` : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
     if (lp.phase === 'dead') return '';
-    if (c && c === lp.kick.returner && !c.carrier) return 'Get under it · arrows move · Shift sprint';
-    if (c && !c.carrier && c.side === 'off') return 'Cover the kick · arrows move · Shift sprint · Space dive';
-    if (!c) return lp.kick.kickedAt != null ? 'Kick away' : lp.kick.ko ? 'The kicker runs up…' : 'The long snap…';
+    const ring = lp.kick.F && !lp.kick.onside && (lp.kick.ko || lp.kick.punt) && lp.ball.state === 'air';
+    if (c && c === lp.kick.returner && !c.carrier) return `${ring ? 'The ring is where the ball comes down' : 'Get under it'} · arrows move · Shift sprint`;
+    if (c && !c.carrier && c.side === 'off') return `${ring ? 'The ring is where the ball comes down' : 'Cover the kick'} · arrows move · Shift sprint · Space dive`;
+    if (!c) return lp.kick.kickedAt != null ? (ring ? 'The ring is where the ball comes down' : 'Kick away') : lp.kick.ko ? 'The kicker runs up…' : 'The long snap…';
   }
   if (lp.phase === 'pre') {
     if (!c) return 'Coach mode · Space to snap now · Esc to change the call';
