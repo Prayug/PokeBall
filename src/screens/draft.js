@@ -172,7 +172,7 @@ export function draftTick() {
 // left, yours too), instead of one at a time.
 export function draftSkip() {
   const L = S.league;
-  if (!L || L.phase !== 'draft') return;
+  if (!L || L.phase !== 'draft' || S.online) return;
   clearTimers();
   while (L.phase === 'draft') {
     const pk = LG.currentPick(L);

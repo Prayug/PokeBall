@@ -121,6 +121,8 @@ function handle(msg) {
 }
 function route(phase) {
   if ((phase === 'pre' || phase === 'live') && S.screen === 'game') return;
+  // A friend who has not claimed a team stays in the lobby, where the open teams are.
+  if (S.net?.mode === 'league' && S.net.yourTeam == null) { ui.setScreen('lobby'); return; }
   if (phase === 'draft') ui.setScreen('draft');
   else if (phase === 'grades') ui.setScreen('grades');
   else if (phase === 'season' || phase === 'playoffs') { if (S.screen === 'game') S.game = null; ui.setScreen('season'); }
