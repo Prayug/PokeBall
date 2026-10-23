@@ -629,6 +629,28 @@ function beginPlay(t, spec, clock = true) {
   publish(rootOf(t));
 }
 
+// What the page needs to draw a body the way the play moves it: a juke, a spin, a truck, a
+// dive, a block, a shed, a fall. Only what is set goes out, and other bodies go as side:slot.
+const ANIM = ['dive', 'stun', 'truck', 'spin', 'juke', 'fallU', 'stunFall', 'sprinting', 'jukeSide', 'spinDir', 'recover', 'contact', 'caughtAt'];
+const key = (p) => (p && p.slot ? `${p.side}:${p.slot}` : null);
+function packAnim(p) {
+  let a = null;
+  for (const k of ANIM) {
+    const v = p[k];
+    if (v == null || v === false || (typeof v === 'number' && (v <= -1 || (v === 0 && (k === 'stun' || k === 'recover'))))) continue;
+    (a ??= {})[k] = typeof v === 'number' ? round(v) : v;
+  }
+  if (p.eng) (a ??= {}).eng = key(p.eng);
+  if (p.shed) (a ??= {}).shed = { ...p.shed };
+  return a;
+}
+// The tackle and the throwing motion, with the bodies in them as side:slot.
+function packRefs(o) {
+  if (!o) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(o)) out[k] = v && typeof v === 'object' && v.slot ? key(v) : v;
+  return out;
+}
 function packWho(p) {
   if (!p || p.id == null) return null;
   return { id: p.id, slot: p.slot, side: p.side, ti: p.ti, x: round(p.x), y: round(p.y), power: p.power || null };
@@ -643,9 +665,12 @@ function packSnap(t, all = false) {
   return {
     t: 'snap', n: lp.events.length, phase: lp.phase, set: !!lp.set, simT: lp.t,
     ball: { state: lp.ball.state, x: round(lp.ball.x), y: round(lp.ball.y), z: round(lp.ball.z ?? 0), vx: round(lp.ball.vx), vy: round(lp.ball.vy), vz: round(lp.ball.vz), holder: holder ? `${holder.side}:${holder.slot}` : null },
-    bodies: lp.players.map((p) => ({ side: p.side, slot: p.slot, x: round(p.x), y: round(p.y), vx: round(p.vx), vy: round(p.vy), fx: round(p.fx), fy: round(p.fy), act: p.act })),
-    kick: lp.kick?.F ? { stage: lp.kick.stage, onside: !!lp.kick.onside, ko: !!lp.kick.ko, punt: !!lp.kick.punt, F: { tx: round(lp.kick.F.tx), ty: round(lp.kick.F.ty), T: lp.kick.F.T, t0: lp.kick.F.t0, sx: round(lp.kick.F.sx), sy: round(lp.kick.F.sy), z0: lp.kick.F.z0, zc: lp.kick.F.zc, vz: lp.kick.F.vz } } : (lp.kick ? { stage: lp.kick.stage, onside: !!lp.kick.onside, ko: !!lp.kick.ko, punt: !!lp.kick.punt } : null),
-    thrown: lp.thrown ? { tx: round(lp.thrown.tx), ty: round(lp.thrown.ty), T: lp.thrown.T, t0: lp.thrown.t0, sx: round(lp.thrown.sx), sy: round(lp.thrown.sy), slot: lp.thrown.target?.slot ?? null } : null,
+    bodies: lp.players.map((p) => ({ side: p.side, slot: p.slot, x: round(p.x), y: round(p.y), vx: round(p.vx), vy: round(p.vy), fx: round(p.fx), fy: round(p.fy), act: p.act,
+      ...(p.jump != null ? { jump: round(p.jump), jumpT: round(p.jumpT), jumpH: round(p.jumpH) } : null), a: packAnim(p) })),
+    tackle: packRefs(lp.tackle), windup: packRefs(lp.windup),
+    kick: lp.kick?.F ? { stage: lp.kick.stage, onside: !!lp.kick.onside, ko: !!lp.kick.ko, punt: !!lp.kick.punt, kickedAt: lp.kick.kickedAt ?? null, F: { tx: round(lp.kick.F.tx), ty: round(lp.kick.F.ty), T: lp.kick.F.T, t0: lp.kick.F.t0, sx: round(lp.kick.F.sx), sy: round(lp.kick.F.sy), z0: lp.kick.F.z0, zc: lp.kick.F.zc, vz: lp.kick.F.vz } } : (lp.kick ? { stage: lp.kick.stage, onside: !!lp.kick.onside, ko: !!lp.kick.ko, punt: !!lp.kick.punt } : null),
+    // The whole flight, so the page draws the ball's arc and the spot it comes down (the circle).
+    thrown: lp.thrown ? { tx: round(lp.thrown.tx), ty: round(lp.thrown.ty), T: lp.thrown.T, t0: lp.thrown.t0, sx: round(lp.thrown.sx), sy: round(lp.thrown.sy), z0: lp.thrown.z0, zc: lp.thrown.zc, vz: lp.thrown.vz, kind: lp.thrown.kind ?? null, away: !!lp.thrown.away, slot: lp.thrown.target?.slot ?? null } : null,
     ctrl: [lp.control ? `${lp.control.side}:${lp.control.slot}` : null, lp.p2?.control ? `${lp.p2.control.side}:${lp.p2.control.slot}` : null],
     events,
   };

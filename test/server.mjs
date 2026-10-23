@@ -155,6 +155,8 @@ try {
     off.send({ t: 'snap' });
     await a.wait((m) => m.t === 'whistle' && count(a, 'whistle') >= plays + 1, 25000);
   }
+  const sn = a.latest('snap');
+  check(sn && 'tackle' in sn && 'windup' in sn && sn.bodies.every((x) => 'a' in x), 'snapshots carry the tackle, the throw and each body\'s moves');
   a.send({ t: 'ping', n: 1 });
   check((await a.wait((m) => m.t === 'pong')).n === 1, 'ping came back');
 
@@ -249,7 +251,7 @@ try {
     c.send({ t: 'result', key: lg.key, g: lg.g });
     return lg;
   }
-  const vsAi = (w) => !L.schedule[w].some((g) => [g.home, g.away].includes(0) && [g.home, g.away].includes(claimedTeam));
+  const vsAi = (w) => !(L.schedule[w] || []).some((g) => [g.home, g.away].includes(0) && [g.home, g.away].includes(claimedTeam));
   async function playWeek() {
     const w = L.week, ph = L.phase;
     if (ph === 'season' && !vsAi(w)) {
