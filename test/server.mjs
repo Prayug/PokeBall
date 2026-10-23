@@ -13,6 +13,7 @@ import path from 'node:path';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pokeball-leagues-'));
 process.env.POKEBALL_LEAGUES = dir;
 process.env.POKEBALL_RECONNECT_MS = '400';
+process.env.POKEBALL_AI_PICK_MS = '1';
 const { listen } = await import('../server/index.js');
 const { rooms, loadLeagues } = await import('../server/sim.js');
 const { simUntil } = await import('../src/engine.js');
@@ -168,89 +169,181 @@ try {
   check(true, 'a play runs after the resume');
   a.close(); b3.close();
 
-  // ---------- league: two games at once ----------
+  // ---------- league: a lobby, a draft, games against the AI on each coach's machine ----------
   const host = client('host');
   await host.open();
   host.send({ t: 'create', mode: 'league', name: 'Host', setup: { name: 'Host Town', clock: false } });
   const lh = await host.wait((m) => m.t === 'hello');
   check(lh.yourTeam === 0, 'the commissioner has team 0');
+  check(lh.phase === 'setup', `a new league waits in the lobby (${lh.phase})`);
   const room = rooms.get(lh.code);
   const L = room.league;
-  // The friend takes a team that does not play team 0 in week 1, so both games run at once.
   const friend = client('friend');
   await friend.open();
   friend.send({ t: 'join', code: lh.code, name: 'Friend' });
   const fh = await friend.wait((m) => m.t === 'hello');
   check(fh.yourTeam == null, 'a friend arrives without a team');
   host.send({ t: 'pick', id: -5 });
+  await sleep(200);
+  check(!!rooms.get(lh.code) && L.pickIndex === 0, 'no pick before the draft starts, and no crash');
+  friend.send({ t: 'startdraft' });
+  await sleep(200);
+  check(!L.online.started, 'only the commissioner starts the draft');
+  const claimedTeam = 1;
+  friend.send({ t: 'claim', team: claimedTeam });
+  await friend.wait((m) => m.t === 'state' && m.yourTeam === claimedTeam);
+  check(true, 'the friend took a team before the draft');
+  host.send({ t: 'startdraft' });
+  await host.wait((m) => m.t === 'state' && m.phase === 'draft');
+  friend.send({ t: 'autodraft', on: true });
+  const { currentPick } = await import('../src/league.js');
+  for (let i = 0; i < 400 && currentPick(L)?.team !== 0; i++) await sleep(5);
+  host.send({ t: 'pick', id: -5 });
   await host.wait((m) => m.t === 'err');
   check(!!rooms.get(lh.code), 'a bad pick is refused, not a crash');
-  // Draft: both humans autopick when on the clock.
-  let claimedTeam = null;
+  // Both coaches on auto-draft; the server makes every pick.
+  host.send({ t: 'autodraft', on: true });
   const deadline = Date.now() + 60000;
-  while (L.phase === 'draft' && Date.now() < deadline) {
-    if (claimedTeam == null && L.pickIndex > 0) {
-      claimedTeam = 1;
-      friend.send({ t: 'claim', team: claimedTeam });
-      await friend.wait((m) => m.t === 'state' && m.yourTeam === claimedTeam);
-    }
-    host.send({ t: 'autopick' });
-    if (claimedTeam != null) friend.send({ t: 'autopick' });
-    await sleep(15);
-  }
+  while (L.phase === 'draft' && Date.now() < deadline) await sleep(50);
   check(L.phase === 'grades', 'the draft finished');
+  const mineOnly = (offer, team) => !offer || offer.send.every((id) => L.teams[team].roster.includes(id));
+  const ho = (await host.wait((m) => m.t === 'league' && m.league.phase === 'grades')).league.trade;
+  const fo = (await friend.wait((m) => m.t === 'league' && m.league.phase === 'grades')).league.trade;
+  check(mineOnly(ho, 0) && mineOnly(fo, claimedTeam), `each coach's trade offer is for their own team (${!!ho}, ${!!fo})`);
+  check(!ho || !fo || JSON.stringify(ho) !== JSON.stringify(fo), 'the two coaches do not get the same offer');
+  // A depth chart: a bad one is ignored, a good one is kept.
+  const t0 = L.teams[0];
+  const before = JSON.stringify(t0.lineup);
+  host.send({ t: 'lineup', lineup: { ...t0.lineup, QB: L.teams[1].roster[0] }, bench: t0.bench });
+  const swapped = { ...t0.lineup };
+  const [k1, k2] = Object.keys(swapped).filter((k) => swapped[k] != null).slice(0, 2);
+  [swapped[k1], swapped[k2]] = [swapped[k2], swapped[k1]];
+  await sleep(100);
+  check(JSON.stringify(t0.lineup) === before, 'a depth chart with someone else\'s Pokémon is refused');
+  host.send({ t: 'lineup', lineup: swapped, bench: t0.bench });
+  await sleep(100);
+  check(t0.lineup[k1] === swapped[k1], 'a depth chart change reaches the server');
   host.send({ t: 'startseason' });
   await host.wait((m) => m.t === 'state' && m.phase === 'season');
-  // Week 1: if the two humans play each other, sim to a week where they do not.
-  const apart = (w) => !L.schedule[w].some((g) => [g.home, g.away].includes(0) && [g.home, g.away].includes(claimedTeam));
-  check(apart(L.week) || true, `week ${L.week + 1}`);
-  while (!apart(L.week)) {
-    host.send({ t: 'readygame' }); friend.send({ t: 'readygame' });
-    await sleep(200);
-    finishTables(room);
-    await host.wait((m) => m.t === 'state' && m.phase === 'season' && room.tables.size === 0, 10000);
+
+  // Games against the AI: the server hands the game over and takes the final back.
+  async function playLocal(c) {
+    const lg = await c.wait((m) => m.t === 'localgame');
+    c.msgs.splice(c.msgs.indexOf(lg), 1);
+    simUntil(lg.g, 'game');
+    c.send({ t: 'result', key: lg.key, g: lg.g });
+    return lg;
   }
+  const vsAi = (w) => !L.schedule[w].some((g) => [g.home, g.away].includes(0) && [g.home, g.away].includes(claimedTeam));
+  async function playWeek() {
+    const w = L.week, ph = L.phase;
+    if (ph === 'season' && !vsAi(w)) {
+      host.send({ t: 'readygame' }); friend.send({ t: 'readygame' });
+      const deadline2 = Date.now() + 5000;
+      while (!room.tables.size && Date.now() < deadline2) await sleep(25);
+      finishTables(room);
+    } else {
+      for (const c of [host, friend]) c.send({ t: 'readygame' });
+      await Promise.all([host, friend].map((c) => {
+        const team = c === host ? 0 : claimedTeam;
+        const plays = pendingFor(team);
+        return plays ? playLocal(c) : null;
+      }));
+    }
+    const deadline3 = Date.now() + 10000;
+    while (L.week === w && L.phase === ph && Date.now() < deadline3) await sleep(25);
+  }
+  const pendingFor = (team) => L.phase === 'season'
+    ? L.schedule[L.week].some((g) => (g.home === team || g.away === team) && !L.results.some((r) => !r.playoff && r.week === L.week && r.home === g.home && r.away === g.away))
+    : null;
+  while (!vsAi(L.week)) await playWeek();
   const week = L.week;
   host.clear(); friend.clear();
   host.send({ t: 'readygame' });
   friend.send({ t: 'readygame' });
-  await host.wait((m) => m.t === 'state' && m.phase === 'between');
-  await friend.wait((m) => m.t === 'state' && m.phase === 'between');
-  check(room.tables.size === 2, `two league games at once (${room.tables.size})`);
-  const hg = await host.wait((m) => m.t === 'game' && m.g);
-  const fg = await friend.wait((m) => m.t === 'game' && m.g);
-  check(hg.g.teams.some((t) => t.id === 0) && !hg.g.teams.some((t) => t.id === claimedTeam), 'the host only hears their own game');
-  check(fg.g.teams.some((t) => t.id === claimedTeam) && !fg.g.teams.some((t) => t.id === 0), 'the friend only hears their own game');
-  // Finish both games; the week advances once both are in.
-  finishTables(room);
-  await host.wait((m) => m.t === 'game' && m.phase === 'final');
-  await friend.wait((m) => m.t === 'game' && m.phase === 'final');
-  await host.wait((m) => m.t === 'state' && room.tables.size === 0 && L.week === week + 1, 10000);
+  const [hl, fl] = await Promise.all([host.wait((m) => m.t === 'localgame'), friend.wait((m) => m.t === 'localgame')]);
+  check(room.local.size === 2 && room.tables.size === 0, `both games against the AI start at once, each on its coach's machine (${room.local.size})`);
+  check(hl.g.teams.some((t) => t.id === 0) && fl.g.teams.some((t) => t.id === claimedTeam), 'each coach gets their own game');
+  // A reload: asking again sends the same game back.
+  host.send({ t: 'readygame' });
+  const again = await host.wait((m) => m.t === 'localgame' && m !== hl);
+  check(again.key === hl.key && room.local.size === 2, 'asking again resends the game in progress');
+  host.clear();
+  // A result that is not final, or for the wrong game, is ignored.
+  friend.send({ t: 'result', key: fl.key, g: { ...fl.g, final: false } });
+  friend.send({ t: 'result', key: hl.key, g: hl.g });
+  await sleep(150);
+  check(room.local.size === 2, 'a half-played or someone else\'s result is ignored');
+  // The host sims to the end; the week waits for the friend, who is not held up by anybody.
+  simUntil(hl.g, 'game');
+  host.send({ t: 'result', key: hl.key, g: hl.g });
+  await sleep(150);
+  check(room.local.size === 1 && L.week === week, 'the host\'s final is recorded and the week waits for the friend');
+  const hostRow = L.results.find((r) => r.week === week && (r.home === 0 || r.away === 0));
+  check(!!hostRow && hostRow.score.join('-') === hl.g.score.join('-'), `a sim to the end counts (${hl.g.score.join('-')})`);
+  friend.send({ t: 'simmine' });
+  await host.wait((m) => m.t === 'state' && L.week === week + 1, 10000);
   check(L.week === week + 1, `the week advanced to ${L.week + 1}`);
   const recorded = L.results.filter((r) => r.week === week && !r.playoff).length;
   check(recorded === L.schedule[week].length, `every game of week ${week + 1} was recorded once (${recorded})`);
-  // Play out the season fast, then the playoffs must advance too.
+  // The week the two coaches meet, they play each other live on the server.
   let guard = 0;
-  while (L.phase === 'season' && guard++ < 40) {
+  while (vsAi(L.week) && L.phase === 'season' && guard++ < 20) await playWeek();
+  if (L.phase === 'season') {
+    host.clear(); friend.clear();
     host.send({ t: 'readygame' }); friend.send({ t: 'readygame' });
-    await sleep(150);
+    const hg = await host.wait((m) => m.t === 'game' && m.g);
+    const fg = await friend.wait((m) => m.t === 'game' && m.g);
+    check(room.tables.size === 1 && hg.g.seed === fg.g.seed, 'the two coaches play each other at one table');
     finishTables(room);
-    await sleep(150);
-    if (process.env.DEBUG) console.log('week', L.week, 'tables', room.tables.size, [...room.tables.values()].map((t) => `${t.phase}/${t.lp?.phase}/${t.lp?.set}/${t.g.final}/${t.paused}/${JSON.stringify(t.seat)}`).join(), 'pending', L.schedule[L.week]?.filter((g) => !L.results.some((r) => !r.playoff && r.week === L.week && r.home === g.home && r.away === g.away)).map((g) => `${g.home}-${g.away}`).join(' '), host.latest('state')?.phase);
+    await host.wait((m) => m.t === 'state' && room.tables.size === 0 && !vsAi(L.week) === false, 10000).catch(() => null);
   }
-  check(L.phase === 'playoffs', `the regular season ended (${L.phase})`);
+  guard = 0;
+  while (L.phase === 'season' && guard++ < 40) await playWeek();
+  // With neither coach in the playoffs the server plays them all out at once.
+  check(L.phase === 'playoffs' || L.phase === 'done', `the regular season ended (${L.phase})`);
   const r0 = L.playoffs?.round;
   guard = 0;
   while (L.phase === 'playoffs' && L.playoffs.round === r0 && guard++ < 20) {
+    host.send({ t: 'simmine' }); friend.send({ t: 'simmine' });
     host.send({ t: 'readygame' }); friend.send({ t: 'readygame' });
-    host.send({ t: 'sim' });
     await sleep(150);
     finishTables(room);
+    for (const x of [...room.local.values()]) { const c = x.team === 0 ? host : friend; simUntil(x.g, 'game'); c.send({ t: 'result', key: x.key, g: x.g }); }
+    host.send({ t: 'sim' });
     await sleep(150);
   }
   check(L.phase === 'done' || L.playoffs.round > r0, `the playoffs moved on (${L.phase} round ${L.playoffs?.round})`);
   const leagueView = host.latest('league').league;
-  check(!leagueView.online?.tokens, 'seat tokens never go to the page');
+  check(!leagueView.online?.tokens && !leagueView.online?.offers, 'seat tokens and other coaches\' offers never go to the page');
+  console.log(`     league message ${Math.round(JSON.stringify(host.latest('league')).length / 1024)} KB`);
+
+  // ---------- head to head: two coaches, two teams ----------
+  const h1 = client('h2h host'), h2 = client('h2h friend');
+  await h1.open(); await h2.open();
+  h1.send({ t: 'create', mode: 'league', name: 'Ash', setup: { name: 'Pallet', clock: false, h2h: true } });
+  const hh = await h1.wait((m) => m.t === 'hello');
+  const hroom = rooms.get(hh.code);
+  check(hh.h2h && hroom.league.teams.length === 2, `a head-to-head league has two teams (${hroom.league.teams.length})`);
+  h1.send({ t: 'startdraft' });
+  await sleep(150);
+  check(!hroom.league.online.started, 'the head-to-head draft waits for the friend');
+  h2.send({ t: 'join', code: hh.code, name: 'Gary' });
+  const h2h = await h2.wait((m) => m.t === 'hello');
+  check(h2h.yourTeam === 1, 'the friend gets the other team right away');
+  h1.send({ t: 'startdraft' });
+  h1.send({ t: 'autodraft', on: true }); h2.send({ t: 'autodraft', on: true });
+  const d2 = Date.now() + 60000;
+  while (hroom.league.phase === 'draft' && Date.now() < d2) await sleep(50);
+  check(hroom.league.phase === 'grades', 'the head-to-head draft finished');
+  h1.send({ t: 'readygame' }); h2.send({ t: 'readygame' });
+  await h1.wait((m) => m.t === 'game' && m.g);
+  check(hroom.tables.size === 1, 'the head-to-head game starts');
+  finishTables(hroom);
+  await h1.wait((m) => m.t === 'game' && m.phase === 'final');
+  await sleep(100);
+  check((hroom.league.online.h2hResults || []).length === 1 && hroom.league.phase === 'grades', 'the result is kept and they can play again');
+  h1.close(); h2.close();
 
   // ---------- restart ----------
   const code = lh.code;

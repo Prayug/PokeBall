@@ -20,9 +20,13 @@
     "broadcast": "node test/broadcast.mjs",
     "powers": "node test/powers.mjs",
     "commentary": "node test/commentary.mjs",
-    "server": "node server/index.js"
+    "server": "node server/index.js",
+    "online": "node server/online.js"
   },
   "dependencies": {
     "three": "0.160.0"
+  },
+  "optionalDependencies": {
+    "cloudflared": "^0.7.3"
   }
 }

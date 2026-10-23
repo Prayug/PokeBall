@@ -101,10 +101,16 @@ function onlineWeekActions(L, label) {
   const mine = games.find((g) => g.home === me || g.away === me);
   const done = mine && L.results.some((r) => r.home === mine.home && r.away === mine.away && (playoff ? r.playoff && r.round === round : !r.playoff && r.week === L.week));
   const ready = (n.players || []).some((p) => p.team === me && p.ready);
-  const live = (n.games || []).map((g) => `<li>${esc(L.teams[g.away]?.abbr ?? '')} ${g.score[1]}, ${esc(L.teams[g.home]?.abbr ?? '')} ${g.score[0]} · ${quarterText(g.quarter)}</li>`).join('');
+  const live = (n.games || []).map((g) => `<li>${esc(L.teams[g.away]?.abbr ?? '')} at ${esc(L.teams[g.home]?.abbr ?? '')}${g.local ? ' · being played' : ` · ${g.score[1]}-${g.score[0]}, ${quarterText(g.quarter)}`}</li>`).join('');
+  const opp = mine ? L.teams[mine.home === me ? mine.away : mine.home] : null;
+  // Your game is under way (on the server against a friend, or here against the AI).
+  const playing = ['between', 'pre', 'live'].includes(n.phase) || (S.game && !S.game.final && S.gameMeta?.online);
   const parts = [];
-  if (mine && !done && label) parts.push(ready ? '<span class="muted">You are ready. Waiting for the other coach.</span>' : `<button class="btn primary" data-act="playweek">${label}</button>`);
-  else if (mine && done) parts.push('<span class="muted">Your game is in. The week moves on when the rest are played.</span>');
+  if (playing) parts.push('<button class="btn primary" data-act="go" data-to="game">Back to your game</button>');
+  else if (mine && !done && label) {
+    parts.push(ready ? `<span class="muted">You are ready. Waiting for ${esc(opp?.coachName ?? 'the other coach')}.</span>` : `<button class="btn primary" data-act="playweek">${opp?.human ? `${label} against ${esc(opp.coachName)}` : label}</button>`);
+    if (n.canSimMine) parts.push('<button class="btn" data-act="onlinesimmine">Simulate it</button>');
+  } else if (mine && done) parts.push('<span class="muted">Your game is in. The week moves on when the rest are played.</span>');
   if (n.waiting) parts.push('<span class="small muted">Your opponent is a friend who is not here right now.</span>');
   if (n.canSim) parts.push('<button class="btn" data-act="onlinesim">Sim a game whose coach is away</button>');
   if (live) parts.push(`<div class="small"><b>Being played now</b><ul class="feed">${live}</ul></div>`);

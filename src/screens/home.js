@@ -84,6 +84,7 @@ export function renderHome() {
           <button class="btn" data-act="quick2">Two players, one screen</button>
           <button class="btn" data-act="watchgame">Watch a game</button>
           <button class="btn" data-act="onlinequick">Quick match online</button>
+          <button class="btn" data-act="onlineh2h" title="You and a friend draft against each other, then play">Head-to-head draft online</button>
           <button class="btn ghost" data-act="go" data-to="kit">Franchise kit</button></div>
         <div class="actions"><input id="net-code" maxlength="8" placeholder="Room code" aria-label="Room code"><button class="btn" data-act="onlinejoin">Join</button></div>
         ${rejoinHtml()}

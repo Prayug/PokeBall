@@ -23,6 +23,9 @@ export const S = {
   online: false, net: null, netMsg: '',
 };
 export const timers = { draft: null, clock: null, auto: null, banner: null };
+// A game the server plays (online, against a person). A league game against the AI is played on
+// this machine like an offline one, and only its final goes to the server.
+export const netGame = () => !!(S.online && S.gameMeta?.online && !S.gameMeta?.local);
 
 // ---------- persistence ----------
 function writeSlot(n, snap) {
@@ -31,7 +34,7 @@ function writeSlot(n, snap) {
 }
 export function save() {
   // An online league lives on the server. The three local slots stay as they were.
-  if (S.online && S.gameMeta?.online) { savePrefs(); return; }
+  if (S.online && S.gameMeta?.online) { S.netSave?.(); savePrefs(); return; }
   const snap = snapshot();
   if (snap.league) {
     try { writeSlot(S.slot, snap); } catch {

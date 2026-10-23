@@ -11,7 +11,9 @@ import { clipJson } from '../src/film.js';
 import { CALL_FRONT, DT, PLAY_FORMATION, createLivePlay, hurry, playSeconds, snap, step } from '../src/live.js';
 import { liveKick } from '../src/live/kicks.js';
 import { audibles, cycleShade, flipRun, hotRoute, setDisguise, startMotion } from '../src/live/presnap.js';
-import { advancePlayoffs, advanceWeek, aiChoosePick, available, blockReason, createLeague, currentPick, makePick, openSlots, quickRosters, recordResult, startLeagueGame, teamForGame } from '../src/league.js';
+import { advancePlayoffs, advanceWeek, aiChoosePick, available, blockReason, createLeague, currentPick, leagueRng, makePick, openSlots, quickRosters, recordResult, startLeagueGame, teamForGame } from '../src/league.js';
+import { acceptTrade, declineTrade, makeTradeOffer, proposeTrade, tradeWindow } from '../src/trades.js';
+import { SLOT_KEYS } from '../src/ratings.js';
 
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const RECONNECT_MS = Number(process.env.POKEBALL_RECONNECT_MS) || 60_000;
@@ -20,7 +22,12 @@ export const RECONNECT_MS = Number(process.env.POKEBALL_RECONNECT_MS) || 60_000;
 const SNAP_MS = 25_000;
 const AI_SNAP_MS = 1_600;
 const PICK_MS = 60_000;
-const SNAP_EVERY_MS = 45;
+const SNAP_EVERY_MS = 33;
+// The AI's picks come one at a time, so everyone sees the board move.
+const AI_PICK_MS = Number(process.env.POKEBALL_AI_PICK_MS) || 250;
+// A coach who is not here when their pick comes up is picked for after a moment.
+const AWAY_PICK_MS = 3_000;
+const WEEKLY_OFFER = 0.5;
 // A quick room nobody is in is closed after this long (a finished one sooner).
 const EMPTY_ROOM_MS = 15 * 60_000;
 const MAX_ROOMS = 400;
@@ -118,17 +125,18 @@ export function createOnlineLeague(setup = {}) {
   const seed = Math.floor(Math.random() * 2 ** 31) || 1;
   const L = createLeague({
     teamName: String(setup.name || 'Pallet Starters').slice(0, 30), abbr: String(setup.abbr || 'PAL').slice(0, 4), rounds: setup.rounds === 28 ? 28 : 24,
-    legendaries: !!setup.legendaries, typeCap: setup.typeCap !== false, numTeams: 8, seed, scheme: setup.scheme || 'balanced',
+    legendaries: !!setup.legendaries, typeCap: setup.typeCap !== false, numTeams: setup.h2h ? 2 : 8, seed, scheme: setup.scheme || 'balanced',
   });
-  L.online = { host: 0, claims: {}, tokens: {}, pickMs: setup.clock === false ? 24 * 60 * 60 * 1000 : PICK_MS };
+  // Nothing is picked until the commissioner starts the draft, so friends can join and claim
+  // their teams first. Head to head: two coaches draft against each other, then play.
+  L.online = { host: 0, claims: {}, tokens: {}, auto: {}, offers: {}, started: false, h2h: !!setup.h2h, pickMs: setup.clock === false ? 24 * 60 * 60 * 1000 : PICK_MS };
+  if (setup.h2h) L.teams[1].coachName = 'Your friend';
   const room = blank(code(), 'league');
   room.league = L;
   room.seed = seed;
   rooms.set(room.code, room);
   // The commissioner's team waits for the first connection (index.js adds it right after).
   room.claims[0] = 'host';
-  room.draftDeadline = Date.now() + L.online.pickMs;
-  drainAiPicks(room);
   return room;
 }
 export function saveLeague(room) {
@@ -153,6 +161,9 @@ export function loadLeagues() {
       if (!L?.teams || !L.online) continue;
       L.online.claims ??= {};
       L.online.tokens ??= {};
+      L.online.auto ??= {};
+      L.online.offers ??= {};
+      L.online.started ??= true;
       L.online.pickMs ??= PICK_MS;
       const room = blank(name.replace(/\.json$/, ''), 'league');
       room.league = L;
@@ -169,7 +180,7 @@ export function loadLeagues() {
 }
 
 function blank(codeName, mode) {
-  const room = { code: codeName, mode, clients: [], seat: {}, claims: {}, phase: 'lobby', tables: new Map(), emptyAt: Date.now() };
+  const room = { code: codeName, mode, clients: [], seat: {}, claims: {}, phase: 'lobby', tables: new Map(), local: new Map(), emptyAt: Date.now(), nextAiPick: 0, pickStart: Date.now() };
   return mode === 'quick' ? gameFields(room) : room;
 }
 
@@ -188,6 +199,9 @@ export function addClient(room, name) {
   } else if (room.league && !room.league.online.tokens[0]) {
     // The first connection to a new league is the commissioner, team 0.
     giveTeam(room, client, 0);
+  } else if (room.league?.online.h2h && !room.league.online.tokens[1]) {
+    // Head to head: the friend who opens the link is the other team.
+    giveTeam(room, client, 1);
   }
   // Drop people who left and hold nothing, so the list does not grow forever. (In place: the
   // league's tables share this array.)
@@ -258,23 +272,130 @@ export function claimTeam(room, client, teamId) {
   publish(room);
 }
 
-function drainAiPicks(room) {
+// ---------- the draft ----------
+// The tick makes the picks: the AI's one at a time, a coach's own when they pick (or on the
+// clock running out, on auto-draft, or a moment after their turn comes if they are away).
+function afterPick(room, now = Date.now()) {
   const L = room.league;
-  if (!L || L.phase !== 'draft') return;
-  let guard = 0;
-  while (L.phase === 'draft' && guard++ < 400) {
-    const pk = currentPick(L);
-    if (!pk) break;
-    if (room.claims[pk.team] != null) break;
-    const c = aiChoosePick(L, pk.team);
-    if (!c) break;
-    makePick(L, c.id, c.slot);
-  }
-  room.draftDeadline = Date.now() + (L.online?.pickMs ?? PICK_MS);
+  room.pickStart = now;
+  room.draftDeadline = now + (L.online?.pickMs ?? PICK_MS);
+  room.nextAiPick = now + AI_PICK_MS;
+  if (L.phase !== 'draft') draftDone(room);
   saveLeague(room);
 }
+function draftStep(room, now) {
+  const L = room.league;
+  if (!L || L.phase !== 'draft' || !L.online.started) return false;
+  const pk = currentPick(L);
+  if (!pk) return false;
+  const human = claimed(room, pk.team);
+  const due = !human ? now >= room.nextAiPick
+    : L.online.auto[pk.team] ? now >= room.nextAiPick
+      : !onlineTeam(room, pk.team) ? now - room.pickStart > AWAY_PICK_MS
+        : now > room.draftDeadline;
+  if (!due) return false;
+  const c = aiChoosePick(L, pk.team);
+  if (!c) return false;
+  makePick(L, c.id, c.slot);
+  afterPick(room, now);
+  return true;
+}
+function draftDone(room) {
+  const L = room.league;
+  // Each coach gets their own trade offer (finishDraft made one for the first team only).
+  L.trade = null;
+  for (const c of room.clients) c.ready = false;
+  if (!L.online.h2h) for (const team of humanTeams(room)) L.online.offers[team] = asTeam(L, team, () => makeTradeOffer(L, aiTeams(room)));
+}
+export function startDraft(room, client) {
+  const L = room.league;
+  if (!L || client.team !== 0 || L.phase !== 'draft' || L.online.started) return;
+  if (L.online.h2h && !claimed(room, 1)) return;
+  L.online.started = true;
+  afterPick(room);
+  publish(room);
+}
+
+// ---------- trades and depth charts ----------
+// The trade code works for "the user's team". Online there is one per coach, so it runs as
+// that coach's team, with only the AI teams as partners.
+const humanTeams = (room) => room.league.teams.filter((t) => claimed(room, t.id)).map((t) => t.id);
+const aiTeams = (room) => room.league.teams.filter((t) => !claimed(room, t.id));
+function asTeam(L, teamId, fn) {
+  const flags = L.teams.map((t) => t.user);
+  const trade = L.trade;
+  for (const t of L.teams) t.user = t.id === teamId;
+  try { return fn(); } finally {
+    L.teams.forEach((t, i) => { t.user = flags[i]; });
+    L.trade = trade;
+  }
+}
+// After a week: last week's offers are off, and about half the coaches get a call from one of
+// three AI teams.
+function weeklyOffers(room) {
+  const L = room.league;
+  if (L.online.h2h) return;
+  L.trade = null;
+  const ai = aiTeams(room);
+  for (const team of humanTeams(room)) {
+    const old = L.online.offers[team];
+    if (old?.status === 'open') old.status = 'expired';
+    L.online.offers[team] = null;
+    if (!tradeWindow(L) || !ai.length) continue;
+    const { r, save } = leagueRng(L);
+    const roll = r();
+    const pick = [];
+    while (pick.length < Math.min(3, ai.length)) { const t = ai[Math.floor(r() * ai.length)]; if (!pick.includes(t)) pick.push(t); }
+    save();
+    if (roll < WEEKLY_OFFER) L.online.offers[team] = asTeam(L, team, () => makeTradeOffer(L, pick));
+  }
+}
+function tradeMsg(room, client, msg) {
+  const L = room.league;
+  const team = client.team;
+  if (!L || team == null || L.online.h2h) return;
+  if (msg.t === 'tradeyes' || msg.t === 'tradeno') {
+    const offer = L.online.offers[team];
+    if (!offer) return;
+    asTeam(L, team, () => {
+      L.trade = offer;
+      if (msg.t === 'tradeyes') acceptTrade(L); else declineTrade(L);
+    });
+  } else if (msg.t === 'propose') {
+    const d = msg.deal || {};
+    const ints = (v) => (Array.isArray(v) ? v.slice(0, 3).map(Number).filter(Number.isInteger) : []);
+    const keys = (v) => (Array.isArray(v) ? v.slice(0, 2).map(String) : []);
+    const partner = Number(d.team);
+    if (!L.teams[partner] || claimed(room, partner)) {
+      send(client, { t: 'traderesult', ok: false, text: 'Trades online are with the AI teams.' });
+      return;
+    }
+    const deal = { team: partner, send: ints(d.send), get: ints(d.get), sendPicks: keys(d.sendPicks), getPicks: keys(d.getPicks) };
+    const res = asTeam(L, team, () => proposeTrade(L, deal));
+    send(client, { t: 'traderesult', ok: !!res.ok, text: res.text, entry: res.entry ?? null });
+  } else return;
+  saveLeague(room);
+  publish(room);
+}
+// A coach's depth chart: the same Pokémon in a new order.
+function setLineup(room, client, msg) {
+  const L = room.league;
+  const t = L?.teams[client.team];
+  if (!t || typeof msg.lineup !== 'object' || !Array.isArray(msg.bench)) return;
+  const lineup = {};
+  for (const k of SLOT_KEYS) lineup[k] = Number(msg.lineup[k]);
+  const bench = msg.bench.map(Number);
+  const ids = [...Object.values(lineup), ...bench];
+  const roster = new Set(t.roster);
+  if (ids.length !== roster.size || new Set(ids).size !== ids.length || !ids.every((id) => roster.has(id))) return;
+  t.lineup = lineup;
+  t.bench = bench;
+  saveLeague(room);
+}
+
 function leaguePhase(room) {
   const p = room.league?.phase;
+  if (p === 'draft' && !room.league.online.started) return 'setup';
   return p === 'draft' || p === 'grades' || p === 'playoffs' || p === 'done' ? p : 'season';
 }
 function validPick(L, team, id, slot) {
@@ -289,17 +410,20 @@ function played(L, gm, week, playoff) {
 function pending(room) {
   const L = room.league;
   if (!L) return [];
+  // Head to head: one game, as many times as they like, once the draft is done.
+  if (L.online?.h2h) return L.phase === 'draft' ? [] : [{ home: 0, away: 1 }];
   if (L.phase === 'season') return (L.schedule[L.week] ?? []).filter((gm) => !played(L, gm, L.week, false));
   if (L.phase === 'playoffs') return (L.playoffs?.games ?? []).filter((gm) => !played(L, gm, L.playoffs.round, true));
   return [];
 }
 const gameKey = (gm) => `${gm.home}-${gm.away}`;
-function atTable(room, gm) { return room.mode === 'league' && room.tables.has(gameKey(gm)); }
+function atTable(room, gm) { return room.mode === 'league' && (room.tables.has(gameKey(gm)) || room.local.has(gameKey(gm))); }
 function claimed(room, teamId) { return room.claims[teamId] != null; }
 function onlineTeam(room, teamId) { return room.clients.some((c) => c.online && c.team === teamId); }
 // A game with a person on it whose owner is not here: the commissioner may sim it.
 function simmable(room) {
-  return pending(room).filter((g) => !atTable(room, g) && [g.home, g.away].some((id) => claimed(room, id) && !onlineTeam(room, id)));
+  if (room.league?.online?.h2h) return [];
+  return pending(room).filter((g) => !room.tables.has(gameKey(g)) && [g.home, g.away].some((id) => claimed(room, id) && !onlineTeam(room, id)));
 }
 
 // AI against AI is decided here. A game with a claimed team waits for those players.
@@ -316,6 +440,7 @@ export function settleWeek(room) {
 }
 function simGame(room, gm, playoff) {
   const L = room.league;
+  room.local.delete(gameKey(gm));
   const g = startLeagueGame(L, gm.home, gm.away, playoff);
   simUntil(g, 'game');
   recordResult(L, g, playoff ? { playoff: true, round: L.playoffs.round } : { week: L.week });
@@ -323,8 +448,8 @@ function simGame(room, gm, playoff) {
 // Every game this week or round is in: on to the next one, and settle its AI games.
 function advanceOnline(room) {
   const L = room.league;
-  if (pending(room).length || room.tables.size) return;
-  if (L.phase === 'season') advanceWeek(L);
+  if (L.online?.h2h || pending(room).length || room.tables.size || room.local.size) return;
+  if (L.phase === 'season') { advanceWeek(L); weeklyOffers(room); }
   else if (L.phase === 'playoffs') advancePlayoffs(L);
   else return;
   for (const c of room.clients) c.ready = false;
@@ -375,12 +500,60 @@ export function readyGame(room, client) {
   }
   const L = room.league;
   if (!L || client.team == null || tableFor(room, client)) { publish(room); return; }
-  const gm = pending(room).find((g) => (g.home === client.team || g.away === client.team) && !atTable(room, g));
+  const mine = (g) => g.home === client.team || g.away === client.team;
+  // A game against the AI that is already on this coach's machine: send it again (a reload).
+  const local = [...room.local.values()].find((x) => x.team === client.team);
+  if (local) { send(client, localMsg(local)); publish(room); return; }
+  const gm = pending(room).find((g) => mine(g) && !atTable(room, g));
   if (!gm) { publish(room); return; }
+  const other = gm.home === client.team ? gm.away : gm.home;
+  // Against the AI: the game runs on the coach's own machine, like an offline game, and the
+  // result comes back when it ends. Nobody waits on anybody, and there is no lag.
+  if (!claimed(room, other)) { startLocal(room, client, gm); return; }
   client.ready = true;
-  const sideReady = (id) => !claimed(room, id) || room.clients.some((c) => c.team === id && c.ready && c.online);
+  const sideReady = (id) => room.clients.some((c) => c.team === id && c.ready && c.online);
   if (sideReady(gm.home) && sideReady(gm.away)) startLeagueLive(room, gm);
   else publish(room);
+}
+
+// ---------- games against the AI, played on the coach's machine ----------
+function startLocal(room, client, gm) {
+  const L = room.league;
+  const playoff = L.phase === 'playoffs';
+  const g = startLeagueGame(L, gm.home, gm.away, playoff, true);
+  const entry = { key: gameKey(gm), team: client.team, gm, g: plain(g), at: Date.now(),
+    meta: { playoff, week: L.week, round: playoff ? L.playoffs.round : null, home: gm.home, away: gm.away } };
+  room.local.set(entry.key, entry);
+  client.ready = false;
+  send(client, localMsg(entry));
+  publish(room);
+}
+const localMsg = (x) => ({ t: 'localgame', key: x.key, g: x.g, meta: x.meta, team: x.team });
+// The final of a game played on the coach's machine.
+function localResult(room, client, msg) {
+  const L = room.league;
+  const x = room.local.get(String(msg.key || ''));
+  const g = msg.g;
+  if (!x || x.team !== client.team || !g || typeof g !== 'object' || !g.final || !Array.isArray(g.teams) || !Array.isArray(g.score)) return;
+  if (g.teams[0]?.id !== x.gm.home || g.teams[1]?.id !== x.gm.away) return;
+  room.local.delete(x.key);
+  recordResult(L, g, x.meta.playoff ? { playoff: true, round: x.meta.round } : { week: x.meta.week });
+  saveLeague(room);
+  if (!pending(room).length) advanceOnline(room);
+  publish(room);
+}
+// Sim a coach's own game against the AI (from the season screen, or one already started).
+function simMine(room, client) {
+  const L = room.league;
+  if (!L || client.team == null || L.online.h2h) return;
+  const gm = pending(room).find((g) => (g.home === client.team || g.away === client.team) && !room.tables.has(gameKey(g)));
+  if (!gm) return;
+  const other = gm.home === client.team ? gm.away : gm.home;
+  if (claimed(room, other)) return;
+  simGame(room, gm, L.phase === 'playoffs');
+  saveLeague(room);
+  if (!pending(room).length) advanceOnline(room);
+  publish(room);
 }
 
 // ---------- the live game ----------
@@ -525,7 +698,8 @@ function finishTable(t) {
   if (t.parent) {
     const L = room.league;
     const m = t.meta;
-    recordResult(L, t.g, m.playoff ? { playoff: true, round: m.round } : { week: m.week });
+    if (!L.online.h2h) recordResult(L, t.g, m.playoff ? { playoff: true, round: m.round } : { week: m.week });
+    else (L.online.h2hResults ??= []).push({ score: [...t.g.score], winner: t.g.winner ?? null, at: Date.now() });
     // The final goes to the two seats; then the table closes and they are back in the league.
     broadcast(t, { t: 'game', g: plain(t.g), meta: m, phase: 'final' });
     room.tables.delete(t.key);
@@ -591,13 +765,7 @@ function stepTable(t, now) {
 // stopped and sent back to the call sheet, so one bad play never takes the server down.
 export function tick(room, now = Date.now()) {
   if (room.mode === 'league' && room.league?.phase === 'draft') {
-    const pk = currentPick(room.league);
-    if (pk && room.claims[pk.team] != null && now > (room.draftDeadline || 0)) {
-      const c = aiChoosePick(room.league, pk.team);
-      if (c) makePick(room.league, c.id, c.slot);
-      drainAiPicks(room);
-      publish(room);
-    }
+    try { if (draftStep(room, now)) publish(room); } catch (err) { console.error(`room ${room.code}: draft:`, err?.stack || err); room.nextAiPick = now + 2000; }
   }
   for (const t of tablesOf(room)) {
     try { stepTable(t, now); } catch (err) {
@@ -633,17 +801,26 @@ export function publish(room) {
 function viewLeague(room, client) {
   const L = plain(room.league);
   // Seat tokens never leave the server.
-  if (L.online) delete L.online.tokens;
-  for (const tm of L.teams) tm.user = tm.id === client.team;
+  if (L.online) {
+    delete L.online.tokens;
+    // Each coach sees their own trade offer.
+    L.trade = L.online.offers?.[client.team] ?? null;
+    delete L.online.offers;
+  }
+  for (const tm of L.teams) { tm.user = tm.id === client.team; tm.human = room.claims[tm.id] != null; if (tm.human && L.online?.claims?.[tm.id]) tm.coachName = L.online.claims[tm.id]; }
   return L;
 }
+// The address friends open, when the server knows one (npm run online sets it from the tunnel,
+// or POKEBALL_PUBLIC_URL on a host). The page falls back to its own address.
+let publicUrl = process.env.POKEBALL_PUBLIC_URL || null;
+export function setPublicUrl(url) { publicUrl = url || null; }
 export function publicState(room, client) {
   const t = tableFor(room, client);
   const you = sideOf(t, client);
   const league = room.mode === 'league';
   const now = Date.now();
   return {
-    code: room.code, mode: room.mode, phase: league ? (t ? t.phase : leaguePhase(room)) : room.phase, you, yourTeam: client?.team ?? null,
+    publicUrl, code: room.code, mode: room.mode, phase: league ? (t ? t.phase : leaguePhase(room)) : room.phase, you, yourTeam: client?.team ?? null,
     players: room.clients.filter((c) => c.online || c.team != null || room.seat[0] === c.id || room.seat[1] === c.id).map((c) => ({
       id: c.id, name: c.name, side: sideOf(t || (league ? null : room), c), team: c.team, ready: !!c.ready, online: !!c.online,
     })),
@@ -656,7 +833,14 @@ export function publicState(room, client) {
     canSim: !!client && client.team === 0 && simmable(room).length > 0,
     reconnectMs: t?.paused ? Math.max(0, RECONNECT_MS - (now - t.pauseAt)) : 0,
     seed: room.seed,
-    games: league ? [...room.tables.values()].map((x) => ({ home: x.gm.home, away: x.gm.away, score: x.g?.score ?? [0, 0], quarter: x.g?.quarter ?? 1 })) : [],
+    games: league ? [...room.tables.values()].map((x) => ({ home: x.gm.home, away: x.gm.away, score: x.g?.score ?? [0, 0], quarter: x.g?.quarter ?? 1 }))
+      .concat([...room.local.values()].map((x) => ({ home: x.gm.home, away: x.gm.away, local: true }))) : [],
+    localGame: league ? [...room.local.values()].find((x) => x.team === client?.team)?.key ?? null : null,
+    h2h: !!room.league?.online?.h2h,
+    started: !!room.league?.online?.started,
+    autoDraft: !!room.league?.online?.auto?.[client?.team],
+    pickLeft: room.league?.phase === 'draft' && room.league.online.started ? Math.max(0, room.draftDeadline - now) : null,
+    canSimMine: league && client?.team != null && !room.league.online.h2h && pending(room).some((g) => (g.home === client.team || g.away === client.team) && !room.tables.has(gameKey(g)) && !claimed(room, g.home === client.team ? g.away : g.home)),
     waiting: league && pending(room).some((g) => (g.home === client?.team || g.away === client?.team) && !atTable(room, g) && [g.home, g.away].some((id) => id !== client?.team && claimed(room, id) && !onlineTeam(room, id))),
   };
 }
@@ -671,9 +855,26 @@ export function onMessage(room, client, msg) {
     return;
   }
   if (msg.t === 'sim') { simWaiting(room, client); return; }
+  if (msg.t === 'simmine') { simMine(room, client); return; }
+  if (msg.t === 'result') { localResult(room, client, msg); return; }
+  if (msg.t === 'startdraft') { startDraft(room, client); return; }
+  if (msg.t === 'autodraft') {
+    if (room.league && client.team != null) { room.league.online.auto[client.team] = !!msg.on; room.nextAiPick = Date.now() + 150; saveLeague(room); publish(room); }
+    return;
+  }
+  if (msg.t === 'tradeyes' || msg.t === 'tradeno' || msg.t === 'propose') { tradeMsg(room, client, msg); return; }
+  if (msg.t === 'lineup') { setLineup(room, client, msg); return; }
+  if (msg.t === 'name') {
+    const name = String(msg.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 22);
+    if (!name) return;
+    client.name = name;
+    if (room.league && client.team != null) { room.league.online.claims[client.team] = name; saveLeague(room); }
+    publish(room);
+    return;
+  }
   if (msg.t === 'leave') { dropClient(room, client); return; }
   if (msg.t === 'startseason') {
-    if (room.league?.phase === 'grades' && client.team === 0) {
+    if (room.league?.phase === 'grades' && client.team === 0 && !room.league.online.h2h) {
       room.league.phase = 'season';
       settleWeek(room);
       saveLeague(room);
@@ -683,13 +884,13 @@ export function onMessage(room, client, msg) {
   }
   if (msg.t === 'pick' || msg.t === 'autopick') {
     const L = room.league;
-    const pk = L?.phase === 'draft' && currentPick(L);
+    const pk = L?.phase === 'draft' && L.online.started && currentPick(L);
     if (!pk || pk.team !== client.team) return;
     const team = L.teams[pk.team];
     const choice = msg.t === 'autopick' ? aiChoosePick(L, pk.team) : validPick(L, team, Number(msg.id), msg.slot == null ? null : String(msg.slot));
     if (!choice) { send(client, { t: 'err', text: 'That Pokémon cannot be drafted.' }); publish(room); return; }
     makePick(L, choice.id, choice.slot && choice.slot !== 'BENCH' ? choice.slot : null);
-    drainAiPicks(room);
+    afterPick(room);
     publish(room);
     return;
   }
@@ -758,6 +959,8 @@ export function hello(room, client) {
   send(client, { t: 'hello', token: client.token, code: room.code, mode: room.mode, ...publicState(room, client) });
   publish(room);
   // Back in the middle of a play: the play as it was snapped, then where everyone is now.
+  const mineLocal = room.local && [...room.local.values()].find((x) => x.team === client.team);
+  if (mineLocal) send(client, localMsg(mineLocal));
   const t = tableFor(room, client);
   if (t?.lp && t.playMsg) {
     send(client, t.playMsg);

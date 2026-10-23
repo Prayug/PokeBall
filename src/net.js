@@ -89,6 +89,15 @@ function forgetSeat(code) {
     } catch { /* storage blocked */ }
   }
 }
+// The link a friend opens: the server's public address when it has one (npm run online),
+// otherwise this page's own address.
+export function roomLink() {
+  const n = S.net || {};
+  const tag = n.mode === 'league' ? 'online' : 'play';
+  let base = `${location.origin}${location.pathname}${location.search}`;
+  if (n.publicUrl) base = n.publicUrl.replace(/\/$/, '') + '/';
+  return n.code ? `${base}#${tag}=${n.code}` : '';
+}
 // The most recent room this browser has a seat in (for "Rejoin" on the home screen).
 export function lastSeat() {
   let best = null;
@@ -149,14 +158,25 @@ function sendWanted() {
   ws.send(JSON.stringify(msg));
 }
 
+// The name friends see next to your team, kept in this browser.
+const NAME_KEY = 'pokeball.coach';
+export function myName() { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } }
+export function setName(name) {
+  name = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 22);
+  if (!name) return;
+  try { localStorage.setItem(NAME_KEY, name); } catch { /* private window */ }
+  if (wanted) wanted.name = name;
+  if (ws && ws.readyState === 1 && seat) ws.send(JSON.stringify({ t: 'name', name }));
+}
 export function create(mode, setup) {
-  begin({ t: 'create', mode, name: setup?.name || 'Home', setup });
+  begin({ t: 'create', mode, name: myName() || 'Commissioner', setup });
 }
 export function join(code, name) {
   code = String(code || '').trim().toUpperCase();
   if (!code) { S.netMsg = 'Type the room code your friend sent.'; ui.render(); return; }
   const saved = savedSeat(code);
-  begin(saved ? { t: 'resume', code, token: saved.token, name } : { t: 'join', code, name: name || 'Away' });
+  name = name || myName();
+  begin(saved ? { t: 'resume', code, token: saved.token, name } : { t: 'join', code, name: name || 'Coach' });
 }
 function begin(msg) {
   // A new room: drop any old one first.
@@ -234,6 +254,8 @@ function handle(msg) {
     S.online = true;
     S.netDown = false;
     S.net = { ...was, ...msg, ping: was.ping ?? null };
+    // The pick clock counts down here between updates.
+    S.net.pickAt = msg.pickLeft != null ? Date.now() + msg.pickLeft : null;
     if (msg.t === 'hello' || S.netMsg === 'Connecting…' || S.netMsg?.startsWith('Connection lost')) S.netMsg = '';
     try {
       const tag = msg.mode === 'league' ? 'online' : 'play';
@@ -244,6 +266,8 @@ function handle(msg) {
   }
   if (msg.t === 'league') {
     S.league = msg.league;
+    const me = msg.league?.teams?.find((t) => t.user);
+    if (me) lastLineup = JSON.stringify([me.lineup, me.bench]);
     S.online = true;
     if (!S.game || S.game.final || !S.gameMeta?.online) S.gameMeta = { ...(S.gameMeta || {}), online: true, quick: true, userTeamId: S.net?.yourTeam ?? 0 };
     if (S.draft) S.draft.clock = msg.clock ?? S.draft.clock;
@@ -269,7 +293,14 @@ function handle(msg) {
   }
   if (msg.t === 'snap') { hooks.snap?.(msg); return; }
   if (msg.t === 'whistle') { hooks.whistle?.(msg); return; }
-  if (msg.t === 'presnap') { hooks.presnap?.(msg); }
+  if (msg.t === 'presnap') { hooks.presnap?.(msg); return; }
+  if (msg.t === 'localgame') {
+    // Already playing it here (a reconnect in the middle of it): carry on.
+    if (S.gameMeta?.local && S.gameMeta.key === msg.key && S.game && !S.game.final) return;
+    ui.startLocal?.(msg, loadLocal(msg.key));
+    return;
+  }
+  if (msg.t === 'traderesult') { ui.tradeResult?.(msg); }
 }
 function gameMeta(g) {
   const side = S.net?.you ?? 0;
@@ -277,9 +308,37 @@ function gameMeta(g) {
 }
 // Follow the room to the screen its phase belongs on, but only when the phase changes, so a
 // state update never pulls someone off the roster or standings they are reading.
+// ---------- league games against the AI, played on this machine ----------
+// The game in progress is kept for the tab, so a reload carries on from the same down.
+function loadLocal(key) {
+  try { const x = JSON.parse(sessionStorage.getItem('pokeball.local') || 'null'); return x?.key === key && x.g && !x.g.final ? x.g : null; } catch { return null; }
+}
+export function report(key, g) {
+  try { sessionStorage.removeItem('pokeball.local'); } catch { /* storage blocked */ }
+  send({ t: 'result', key, g });
+  S.netMsg = '';
+}
+// save() calls this for an online league: the game in progress is kept, and a depth chart
+// change goes to the server.
+let lastLineup = '';
+S.netSave = () => {
+  if (S.gameMeta?.local && S.game && !S.game.final) {
+    try { sessionStorage.setItem('pokeball.local', JSON.stringify({ key: S.gameMeta.key, g: S.game })); } catch { /* storage full */ }
+  }
+  const me = S.league?.teams?.find((t) => t.user);
+  if (!me || S.net?.mode !== 'league') return;
+  const sig = JSON.stringify([me.lineup, me.bench]);
+  if (sig === lastLineup) return;
+  const first = !lastLineup;
+  lastLineup = sig;
+  if (!first) send({ t: 'lineup', lineup: me.lineup, bench: me.bench });
+};
+
 function route(phase, force) {
   const changed = phase !== lastPhase;
   lastPhase = phase;
+  // A game against the AI on this machine stays up until it ends.
+  if (S.gameMeta?.local && S.game && !S.game.final && S.screen === 'game') { softRender(); return; }
   if (!changed && !force) {
     if (S.screen !== 'game' || !['pre', 'live'].includes(phase)) softRender();
     return;
@@ -291,7 +350,8 @@ function route(phase, force) {
   if (phase === 'lobby') { ui.setScreen('lobby'); return; }
   // The final score stays up until they leave it.
   if (S.screen === 'game' && S.game?.final && phase !== 'between') { ui.render(); return; }
-  if (phase === 'draft') ui.setScreen('draft');
+  if (phase === 'setup') ui.setScreen('lobby');
+  else if (phase === 'draft') ui.setScreen('draft');
   else if (phase === 'grades') ui.setScreen('grades');
   else if (phase === 'season' || phase === 'playoffs' || phase === 'done') { if (S.screen === 'game' || S.screen === 'lobby' || S.screen === 'home' || S.screen === 'draft' || S.screen === 'grades') ui.setScreen('season'); else ui.render(); }
   else if (phase === 'between' || phase === 'pre' || phase === 'live') ui.setScreen('game');
