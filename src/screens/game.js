@@ -132,7 +132,7 @@ export function renderGame() {
   const live3d = !!stage;
   const now = performance.now();
   // The call sheet only comes up once the result has been shown and the teams have reset.
-  const decide = !g.final && needsUser(g) && !S.busy && !L3.lp && !(L3.resultUntil > now) && !(L3.resetUntil > now && !L3.preview?.lp?.set);
+  const decide = !g.final && needsUser(g) && !S.busy && !L3.lp && !(L3.resultUntil > now) && !(L3.resetUntil > now && !L3.preview?.lp?.set) && !onlineWaiting();
   const simOff = L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : '';
   const simBtns = `<button class="btn" data-act="sim" data-stop="drive" ${simOff}>Sim drive</button>
         <button class="btn" data-act="sim" data-stop="quarter" ${simOff}>Sim quarter</button>
@@ -147,7 +147,7 @@ export function renderGame() {
     const verdict = g.winner == null ? 'Tie game' : spectating() && S.gameMeta?.spectate ? `${esc(g.teams[g.winner].name)} win` : twoPlayer() ? `Player ${g.winner + 1} wins: ${esc(g.teams[g.winner].name)}` : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose';
     controls = `<div class="card final callcard"><h2>${verdict}, ${Math.max(...g.score)} to ${Math.min(...g.score)}</h2>
       ${S.streamer && S.gameMeta?.quick ? '<p class="small muted">The next game kicks off shortly.</p>' : ''}
-      <div class="actions">${S.gameMeta?.quick ? `<button class="btn primary" data-act="${twoPlayer() ? 'quick2' : S.gameMeta.spectate ? 'watchgame' : 'quick'}">${twoPlayer() ? 'Play another two-player game' : S.gameMeta.spectate ? 'Watch another game' : 'Play another quick game'}</button><button class="btn" data-act="home">Home</button>`
+      <div class="actions">${S.online ? onlineFinalButtons() : S.gameMeta?.quick ? `<button class="btn primary" data-act="${twoPlayer() ? 'quick2' : S.gameMeta.spectate ? 'watchgame' : 'quick'}">${twoPlayer() ? 'Play another two-player game' : S.gameMeta.spectate ? 'Watch another game' : 'Play another quick game'}</button><button class="btn" data-act="home">Home</button>`
         : '<button class="btn primary" data-act="finishgame">Back to the season</button>'}</div></div>`;
   } else {
     let head;
@@ -161,7 +161,7 @@ export function renderGame() {
     } else if (decide) head = playCards(g, { keys: live3d }) + (live3d ? '' : presnapHtml(g) + tendenciesHtml(g));
     else {
       dock = 'wait';
-      head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">${spectating() ? `Watch mode: the AI calls both sides. <button class="btn tiny" data-act="takeover">${S.takeOver ? 'Hand it back' : 'Call next play'}</button>` : 'Auto mode hands you 3rd and 4th downs and the last two minutes'}</span></div>`;
+      head = `${onlineNotice()}<div class="callhead"><h3>${S.online ? onlineWaitText() : S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">${spectating() ? `Watch mode: the AI calls both sides. <button class="btn tiny" data-act="takeover">${S.takeOver ? 'Hand it back' : 'Call next play'}</button>` : 'Auto mode hands you 3rd and 4th downs and the last two minutes'}</span></div>`;
     }
     controls = `<div class="card callcard">${head}${simrow}</div>`;
   }
@@ -183,7 +183,8 @@ export function renderGame() {
     } else if (decide) overlay = callSheetHtml(g);
     else if (spectating()) overlay = watchChip();
     else if (L3.resultUntil > performance.now()) overlay = '';
-    else overlay = `<div class="pill wait"><span>${S.busy ? 'Play in progress' : 'AI calling this down'}</span></div>`;
+    else overlay = `<div class="pill wait"><span>${S.online ? onlineWaitText() : S.busy ? 'Play in progress' : 'AI calling this down'}</span></div>`;
+    if (S.online && (S.netDown || S.net?.paused)) overlay = onlineNotice();
     return `<section class="game g3d ${spectating() ? 'spectate' : ''}">
     <div class="stage-slot" id="stage-slot">
       ${broadcastBar(g)}
@@ -428,6 +429,31 @@ function animatePlay(entry, done) {
     if (carrier) { carrier.classList.add('carrier'); carrier.style.left = `${X(entry.to)}%`; carrier.style.top = '50%'; if (ball) ball.style.top = '50%'; }
   });
   setTimeout(done, 750);
+}
+
+// Online: the call is in and the other side has not called yet (or the connection is down).
+function onlineWaiting() {
+  const n = S.net;
+  return !!(S.online && n && (S.netDown || n.paused || (n.called || []).includes(n.you)));
+}
+function onlineWaitText() {
+  const n = S.net || {};
+  if (S.netDown) return 'Reconnecting to the server…';
+  if (n.paused) return 'Waiting for the other coach to reconnect';
+  return (n.called || []).includes(n.you) ? 'Your call is in. Waiting for the other coach' : 'Waiting for the other coach';
+}
+// A dropped connection or an opponent who left, with the forfeit once it is allowed.
+function onlineNotice() {
+  const n = S.net;
+  if (!S.online || !n) return '';
+  if (S.netDown) return '<div class="pill wait netnote"><span>Connection lost. Reconnecting…</span></div>';
+  if (!n.paused) return '';
+  return `<div class="pill wait netnote"><span>${n.canForfeit ? 'The other coach has not come back.' : 'The other coach dropped. The game is paused for a minute while they reconnect.'}</span>
+    ${n.canForfeit ? '<button class="btn primary" data-act="onlineforfeit">Take the win</button>' : ''}</div>`;
+}
+function onlineFinalButtons() {
+  if (S.net?.mode === 'league') return '<button class="btn primary" data-act="go" data-to="season">Back to the season</button>';
+  return '<button class="btn primary" data-act="onlinerematch">Rematch</button><button class="btn" data-act="home">Leave the room</button>';
 }
 
 export function doCall(call) {

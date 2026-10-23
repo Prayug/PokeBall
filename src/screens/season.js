@@ -40,7 +40,7 @@ export function renderSeason() {
     main = `<div class="card matchup"><p class="eyebrow">${roundLabel(L, P_.round, true)}</p>
       ${bracketHtml(L)}
       <div class="actions">${mine ? weekActions(L, 'Play your playoff game', false)
-        : `<p class="muted">${P_.round === 0 && P_.byes?.includes(me.id) ? 'You have a bye this round: rest up and watch who you get.' : 'You missed this round. Watch it play out.'}</p><button class="btn primary" data-act="simweek">Simulate the round</button>`}</div></div>
+        : `<p class="muted">${P_.round === 0 && P_.byes?.includes(me.id) ? 'You have a bye this round: rest up and watch who you get.' : 'You missed this round. Watch it play out.'}</p>${S.online ? onlineWeekActions(L, '') : '<button class="btn primary" data-act="simweek">Simulate the round</button>'}`}</div></div>
       ${P_.games.map((g) => (g === mine || (!mine && isFinalRound(L, P_.round)) ? rivalryCardHtml(L, g.home, g.away, P_.round) : '')).join('')}
       ${mine ? scoutHtml(L, me.id, mine.home === me.id ? mine.away : mine.home) : ''}`;
   } else if (L.phase === 'done') {
@@ -80,6 +80,7 @@ export function renderSeason() {
 // Play or sim this week's game. A game already under way is resumed (or simmed from where it
 // stands) rather than started again; in the regular season the rest of it can be simmed in one go.
 function weekActions(L, label, wrap = true) {
+  if (S.online) return wrap ? `<div class="actions">${onlineWeekActions(L, label)}</div>` : onlineWeekActions(L, label);
   const g = S.game, live = g && !g.final && S.gameMeta && !S.gameMeta.quick;
   const rest = L.phase === 'season' && L.week < L.schedule.length - 1 && !live
     ? `<button class="btn ghost" data-act="simseason" title="Simulate your games and everyone else's to the end of the regular season">Sim to the playoffs</button>` : '';
@@ -87,6 +88,27 @@ function weekActions(L, label, wrap = true) {
     ? `<button class="btn primary" data-act="playweek">Resume the game</button><button class="btn" data-act="simweek">Simulate the rest</button><span class="small muted">${esc(g.teams[1].abbr)} ${g.score[1]}, ${esc(g.teams[0].abbr)} ${g.score[0]} · ${quarterText(g.quarter)} ${clockText(g.clock)}</span>`
     : `<button class="btn primary" data-act="playweek">${label}</button><button class="btn" data-act="simweek">Simulate it</button>${rest}`;
   return wrap ? `<div class="actions">${btns}</div>` : btns;
+}
+
+// An online league: the server plays the week. Ready up for your game; the commissioner can sim a
+// game whose coach is away; everyone sees which games are being played right now.
+function onlineWeekActions(L, label) {
+  const n = S.net || {};
+  const me = n.yourTeam;
+  const playoff = L.phase === 'playoffs';
+  const round = playoff ? L.playoffs.round : null;
+  const games = playoff ? L.playoffs.games : L.schedule[L.week] ?? [];
+  const mine = games.find((g) => g.home === me || g.away === me);
+  const done = mine && L.results.some((r) => r.home === mine.home && r.away === mine.away && (playoff ? r.playoff && r.round === round : !r.playoff && r.week === L.week));
+  const ready = (n.players || []).some((p) => p.team === me && p.ready);
+  const live = (n.games || []).map((g) => `<li>${esc(L.teams[g.away]?.abbr ?? '')} ${g.score[1]}, ${esc(L.teams[g.home]?.abbr ?? '')} ${g.score[0]} · ${quarterText(g.quarter)}</li>`).join('');
+  const parts = [];
+  if (mine && !done && label) parts.push(ready ? '<span class="muted">You are ready. Waiting for the other coach.</span>' : `<button class="btn primary" data-act="playweek">${label}</button>`);
+  else if (mine && done) parts.push('<span class="muted">Your game is in. The week moves on when the rest are played.</span>');
+  if (n.waiting) parts.push('<span class="small muted">Your opponent is a friend who is not here right now.</span>');
+  if (n.canSim) parts.push('<button class="btn" data-act="onlinesim">Sim a game whose coach is away</button>');
+  if (live) parts.push(`<div class="small"><b>Being played now</b><ul class="feed">${live}</ul></div>`);
+  return parts.join('');
 }
 
 function scoutHtml(L, myId, oppId) {

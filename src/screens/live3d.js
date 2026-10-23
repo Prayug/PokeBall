@@ -677,7 +677,15 @@ function netFrame(lp, dt, now) {
   L3.acc = Math.min(1, Math.max(0, since)) * DT;
   return L3.lp;
 }
-onNet({ play: beginNetPlay, snap: applyNetSnap, whistle: showServerResult, presnap: netPresnap });
+// A dropped connection or leaving the room: a server play this page was showing is over.
+function resetNetPlay() {
+  if (!L3.net) return;
+  L3.lp = null;
+  L3.net = false;
+  L3.netHold = 0;
+  setFlow('PLAY_SELECTION');
+}
+onNet({ play: beginNetPlay, snap: applyNetSnap, whistle: showServerResult, presnap: netPresnap, reset: resetNetPlay });
 
 function loop(now) {
   L3.raf = requestAnimationFrame(loop);

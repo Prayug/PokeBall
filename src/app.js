@@ -27,7 +27,7 @@ import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, tog
 import { applyDifficulty } from './difficulty.js';
 import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, resetBetweenGames, setCamera, setDebug, stage, startReplay, syncOverlays, userChallenge } from './screens/live3d.js';
 import { renderLobby } from './screens/lobby.js';
-import { bindUI, create as netCreate, join as netJoin, joinFromHash, send as netSend } from './net.js';
+import { bindUI, create as netCreate, join as netJoin, joinFromHash, leave as netLeave, send as netSend } from './net.js';
 import { openFilm } from './screens/film.js';
 
 const app = document.getElementById('app');
@@ -84,7 +84,7 @@ function renderTop() {
     <button class="brand" data-act="home" aria-label="Home"><span class="ball" aria-hidden="true"></span>PokeBall</button>
     <nav>${items.map(([k, label]) => `<button class="nav ${S.screen === k ? 'on' : ''}" data-act="go" data-to="${k}">${label}</button>`).join('')}</nav>
     ${me ? `<span class="top-team">${teamBadge(me)}<span><b>${esc(me.name)}</b><small>Season ${L.season ?? 1}</small></span></span>` : ''}
-    ${S.online && S.net?.code ? `<span class="top-team"><b>#${S.net.mode === 'league' ? 'online' : 'play'}=${esc(S.net.code)}</b><small id="net-ping">${S.net.ping != null ? `${S.net.ping} ms` : '…'}</small></span>` : ''}
+    ${S.online && S.net?.code ? `<span class="top-team"><b>#${S.net.mode === 'league' ? 'online' : 'play'}=${esc(S.net.code)}</b><small id="net-ping">${S.netDown ? 'reconnecting…' : S.net.ping != null ? `${S.net.ping} ms` : '…'}</small></span>` : ''}
     ${soundButtonHtml()}
   </header>`;
 }
@@ -102,6 +102,7 @@ function onClick(e) {
     case 'onlinequick': netCreate('quick', { name: 'Home' }); break;
     case 'onlineleague': netCreate('league', setupFromForm()); break;
     case 'onlinejoin': netJoin((document.getElementById('net-code')?.value || '').trim().toUpperCase()); break;
+    case 'onlinerejoin': netJoin(el.dataset.code); break;
     case 'onlineready': netSend({ t: 'readygame' }); break;
     case 'onlineforfeit': netSend({ t: 'forfeit' }); break;
     case 'onlinerematch': netSend({ t: 'rematch' }); break;
@@ -113,7 +114,8 @@ function onClick(e) {
     case 'skip': S.skipOpen = !S.skipOpen; render(); break;
     case 'kit': case 'kitchant': kitAct(act, el); break;
     // A quick game in progress stays open: the home screen and the top bar take you back to it.
-    case 'home': if (S.game?.final && S.gameMeta?.quick) { S.game = null; S.gameMeta = null; } setScreen('home'); break;
+    // Home leaves an online room (Rejoin on the home screen, or the room's link, takes the seat back).
+    case 'home': if (S.online) netLeave({ keepScreen: true }); if (S.game?.final && S.gameMeta?.quick) { S.game = null; S.gameMeta = null; } setScreen('home'); break;
     case 'go': setScreen(el.dataset.to); break;
     case 'continue': {
       const n = Number(el.dataset.slot ?? S.slot);
