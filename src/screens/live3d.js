@@ -110,8 +110,9 @@ export let stage = null;
 let stageWrap = null;
 // Hooks for the browser tests (test/browser.mjs, test/film.mjs): read-only views of the game's
 // state, the foul rates so a test can force a flag, and the officials' miss rates and the film
-// room so one can force a missed call and open the tape.
-if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug, RATES, REVIEW, FILM, openFilm };
+// room so one can force a missed call and open the tape, and the AI's call, so a test can
+// line up a kickoff the other team kicks.
+if (typeof window !== 'undefined') window.__pb = { S, L3, get stage() { return stage; }, setState, doCall, doSnap, setMode, setDebug, RATES, REVIEW, FILM, openFilm, autoAdvance };
 
 export function ensureStage() {
   if (stage || !webglAvailable()) return;
@@ -170,6 +171,8 @@ export function fitStage() {
 function fitDock() {
   const sheet = FILM.open ? FILM.el : document.querySelector('.game.g3d .callsheet:not(.folded)');
   stage?.setInset(sheet ? sheet.offsetHeight + 10 : 0);
+  // The result card sits just above the call sheet rather than on top of its plays.
+  stageWrap?.style.setProperty('--dock', `${sheet && !FILM.open ? sheet.offsetHeight + 10 : 0}px`);
 }
 
 // Between plays, both teams get up and jog from where the last play ended to the new spot.
@@ -181,7 +184,10 @@ function showPreview() {
   if (L3.preview?.key === key && L3.preview.g === g) { stage.setPlay(L3.preview.lp); return; }
   const saved = g.rng;
   const first = !L3.preview && !L3.spots;
-  const lp = createLivePlay(g, g.poss === us ? 'slant' : 'inside_run', 'base', { userSide: us, from: L3.spots ?? undefined });
+  // A kickoff or a try lines up as one between plays, so the camera and the walk up show the
+  // kick, not a scrimmage formation that is never played.
+  const call = g.phase === 'kickoff' ? 'kick_deep' : g.phase === 'pat' ? 'xp' : g.poss === us ? 'slant' : 'inside_run';
+  const lp = createLivePlay(g, call, 'base', { userSide: us, from: L3.spots ?? undefined });
   g.rng = saved;
   lp.control = null; lp.preview = true;
   L3.preview = { key, lp, g, mv: measureVersion };

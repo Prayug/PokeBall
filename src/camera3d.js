@@ -14,6 +14,10 @@
 //              diagonal, panning with the play (and the replay camera).
 //   player:    behind the Pokémon you control (or the ball carrier), far enough back to see
 //              defenders coming. It never turns with the player: it always looks down the field.
+// Every view stands behind your own team: behind the offense when you have the ball, behind
+// your defense (looking back at the quarterback) when you do not, and behind the return team
+// on a kick coming to you. Watching the AI, or two players on one screen, it stays behind the
+// offense (see Stage.setPlay).
 // The rig never leaves the stadium bowl (the end walls and the press box), never sits inside a
 // Pokémon and never rolls.
 import * as THREE from 'three';
@@ -31,7 +35,7 @@ export const CAMERA_ALIASES = { sideline: 'broadcast', qb: 'player' };
 // down (pitch), its vertical field of view, and an extra zoom factor on the fitted distance.
 export const CAMERA_SHOTS = CAMERA_MODES;
 export const CAMERA_DEFAULTS = {
-  gameplay: { pitch: 27, fov: 48, zoom: 1 },
+  gameplay: { pitch: 31, fov: 46, zoom: 1 },
   tactical: { pitch: 60, fov: 40, zoom: 1 },
   broadcast: { pitch: 25, fov: 30, zoom: 1.12 },
   player: { pitch: 26, fov: 52, zoom: 1 },
@@ -44,6 +48,9 @@ export const cameraDefaults = () => JSON.parse(JSON.stringify(CAMERA_DEFAULTS));
 // go back over the stands, like a broadcast camera on the upper deck, but always above the
 // seats (never inside them), and never past the back of the bowl.
 const BOUND_X0 = -40, BOUND_X1 = 140, BOUND_Z = 54;
+// How far behind either end line the gameplay camera may stand before it steepens instead:
+// a few yards in front of the end walls, so they never fill the bottom of the screen.
+const END_X0 = -19, END_X1 = 119;
 export function bowl(pos) {
   pos.x = Math.min(BOUND_X1, Math.max(BOUND_X0, pos.x));
   pos.z = Math.min(BOUND_Z, Math.max(-BOUND_Z, pos.z));
@@ -156,7 +163,8 @@ export class CameraRig {
       extents(place(d), aim, fov, aspect, pts, E);
       const mid = (E.y0 + E.y1) / 2, want = (safe.y0 + safe.y1) / 2;
       const off = mid - want;
-      if (Math.abs(off) < 0.03) break;
+      // Nothing in front of the lens to center on (every point behind it): leave the aim.
+      if (!Number.isFinite(off) || Math.abs(off) < 0.03) break;
       const slide = off * d * 0.45;
       aim.x += hx * slide; aim.z += hz * slide;
     }
@@ -208,13 +216,22 @@ export class CameraRig {
         // Tactical: high over the line of scrimmage, everyone in view, labels on.
         const tac = this.mode === 'tactical';
         const pts = tac ? f.pts : box;
-        const safe = tac ? { x: 0.92, y0: -0.84, y1: 0.7 } : f.pre ? { x: 0.94, y0: -0.86, y1: 0.42 } : { x: 0.86, y0: -0.76, y1: 0.45 };
+        const safe = tac ? { x: 0.92, y0: -0.84, y1: 0.7 } : f.pre ? { x: 0.94, y0: -0.8, y1: 0.42 } : { x: 0.86, y0: -0.76, y1: 0.45 };
         // The pitch eases between shots like everything else, so a whistle tilts the lens down
         // rather than cutting.
-        const pw = C.pitch + (tac ? 0 : SHOT_PITCH[f.state] ?? 0);
-        this.pitch = f.snap || this.pitch == null ? pw : this.pitch + (pw - this.pitch) * (1 - Math.exp(-this.dt * 2.5));
-        const R = this.fit(pts, s, 0, this.pitch, fov, aspect, { x: f.focus.x + s * (tac ? 3 : 2), z: f.focus.z * (tac ? 0.5 : 0.75) },
+        // From behind your own defense the lens sits a little higher, to see over your line
+        // to the quarterback and the routes.
+        const pw = C.pitch + (tac ? 0 : (SHOT_PITCH[f.state] ?? 0) + (f.defView ? 5 : 0));
+        // Near either goal line the shot from behind would stand back in the seats looking at
+        // the end-zone wall: it looks down more steeply instead, so it stays over the end zone.
+        let steep = 0;
+        const fitAt = (extra) => this.fit(pts, s, 0, this.pitch + extra, fov, aspect, { x: f.focus.x + s * (tac ? 3 : 2), z: f.focus.z * (tac ? 0.5 : 0.75) },
           lift(safe), tac ? 24 : SHOT_MIN[f.state] ?? 9, tac ? 95 : 64);
+        this.pitch = f.snap || this.pitch == null ? pw : this.pitch + (pw - this.pitch) * (1 - Math.exp(-this.dt * 2.5));
+        let R = fitAt(0);
+        while (!tac && steep < 24 && (R.pos.x < END_X0 || R.pos.x > END_X1)) { steep += 6; R = fitAt(steep); }
+        this.steep = f.snap || this.steep == null ? steep : this.steep + (steep - this.steep) * (1 - Math.exp(-this.dt * 3));
+        if (Math.abs(this.steep - steep) > 0.5) R = fitAt(this.steep);
         this.place(R, f, C.zoom);
       }
     }
@@ -242,6 +259,13 @@ export class CameraRig {
     this.dt = dt;
     f.snap = snap;
     this.target(f, aspect);
+    // A shot that could not be worked out this frame (a point with no position yet) holds the
+    // last good one rather than sending the lens to nowhere.
+    if (![this.wantPos.x, this.wantPos.y, this.wantPos.z, this.wantLook.x, this.wantLook.z].every(Number.isFinite)) {
+      if (this.good) { this.wantPos.copy(this.good.pos); this.wantLook.copy(this.good.look); }
+      else { this.wantPos.copy(this.pos); this.wantLook.copy(this.look); }
+      if (!Number.isFinite(this.dist)) this.dist = 30;
+    } else (this.good ??= { pos: new THREE.Vector3(), look: new THREE.Vector3() }, this.good.pos.copy(this.wantPos), this.good.look.copy(this.wantLook));
     // Never inside a Pokémon: lift the camera over anything close to it.
     for (const o of obstacles) {
       const d = Math.hypot(this.wantPos.x - o.x, this.wantPos.z - o.z);
