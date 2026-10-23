@@ -576,52 +576,85 @@ function beginNetPlay(msg) {
   stage?.setPlay(lp);
   setFlow(lp.set ? 'PRE_SNAP' : 'FORMATION_SETUP');
 }
+// Per-body animation state the server sends (see packAnim in server/sim.js), and its resting value.
+const NET_ANIM = ['dive', 'stun', 'truck', 'spin', 'juke', 'fallU', 'stunFall', 'sprinting', 'jukeSide', 'spinDir', 'recover', 'contact', 'caughtAt'];
+const NET_ANIM_OFF = { dive: null, stun: 0, truck: -1, spin: -1, juke: -1, fallU: null, stunFall: false, sprinting: false, jukeSide: null, spinDir: null, recover: 0, contact: null, caughtAt: null };
+// How far behind the newest server update the field is drawn: a little over one update, so
+// there is nearly always a next one to move toward.
+const NET_DELAY = 0.05;
+// The server's play clock as this page sees it: it runs on the wall clock between updates and
+// is pulled gently toward each update's time (snapped when it is far off).
+function netClockSync(t) {
+  if (L3.netClock == null || Math.abs(t - L3.netClock) > 0.25) L3.netClock = t;
+  else L3.netClock += (t - L3.netClock) * 0.1;
+}
+// Bodies and ball between two updates: the field draws px→x at the fraction L3.acc / DT.
+function placeNet(lp, a, b, u) {
+  for (const [p, q] of b.pos) { const o = a.pos.get(p) ?? q; p.px = o[0]; p.py = o[1]; p.x = q[0]; p.y = q[1]; }
+  const ball = lp.ball;
+  if (ball && b.ball) { const o = a.ball ?? b.ball; ball.px = o[0]; ball.py = o[1]; ball.pz = o[2]; ball.x = b.ball[0]; ball.y = b.ball[1]; ball.z = b.ball[2]; }
+  L3.acc = u * DT;
+}
 function applyNetSnap(msg) {
   const lp = L3.lp;
   if (!lp || !L3.net) return;
   const by = (side, slot) => lp.players.find((p) => p.side === side && p.slot === slot);
   const mineKey = msg.ctrl?.[S.net?.you ?? 0];
-  // Every body, yours too, is drawn from the server's positions, eased from where it was drawn
-  // to where the server says it is over the time to the next update. Yours is led by the round
-  // trip (your stick reached the server half a ping ago, and its answer took the other half),
-  // so it does not trail your stick; nothing is guessed and then pulled back.
-  const now = performance.now();
-  const gap = lp._snapAt ? now - lp._snapAt : 33;
-  L3.snapGap = Math.min(120, Math.max(16, (L3.snapGap ?? 33) * 0.8 + gap * 0.2));
-  const lead = Math.min(0.25, (S.net?.ping ?? 0) / 1000);
-  const drawn = (p) => { const f = Math.min(1, Math.max(0, L3.acc / DT)); return { x: (p.px ?? p.x) + (p.x - (p.px ?? p.x)) * f, y: (p.py ?? p.y) + (p.y - (p.py ?? p.y)) * f }; };
+  // Every body is drawn from the server's positions, played back a beat behind on the server's
+  // own clock (see netFrame), so uneven arrival never shows as stutter. Yours is led by the
+  // round trip and that beat, so it keeps up with your stick; nothing is guessed and then
+  // pulled back.
+  const t1 = msg.simT ?? lp.t;
+  netClockSync(t1);
+  const lead = Math.min(0.3, (S.net?.ping ?? 0) / 1000 + NET_DELAY);
+  const frame = { t: t1, pos: new Map(), ball: null };
   for (const b of msg.bodies || []) {
     const p = by(b.side, b.slot);
     if (!p) continue;
-    const from = lp._seenSnap ? drawn(p) : { x: b.x, y: b.y };
     const mine = mineKey === `${b.side}:${b.slot}`;
-    p.px = from.x; p.py = from.y;
-    p.x = b.x + (mine ? b.vx * lead : 0); p.y = b.y + (mine ? b.vy * lead : 0);
+    frame.pos.set(p, [b.x + (mine ? b.vx * lead : 0), b.y + (mine ? b.vy * lead : 0)]);
     p.vx = b.vx; p.vy = b.vy; p.fx = b.fx; p.fy = b.fy;
     if (b.act) p.act = b.act;
+    // A leap for the ball: the server's jump clock, so the body goes up on this screen too.
+    if (b.jump != null) { p.jump = b.jump; p.jumpT = b.jumpT; p.jumpH = b.jumpH; } else p.jump = null;
+    // The moves and contact that drive the animations (a juke, a spin, a block, a fall).
+    const a = b.a || {};
+    for (const k of NET_ANIM) p[k] = a[k] ?? NET_ANIM_OFF[k];
+    p.eng = a.eng ? by(...a.eng.split(':')) : null;
+    p.shed = a.shed ?? null;
     if (mine) lp.control = p;
   }
-  lp._seenSnap = true;
   const ball = lp.ball;
   if (msg.ball && ball) {
-    const f = lp._seenSnap ? Math.min(1, Math.max(0, L3.acc / DT)) : 1;
-    ball.px = (ball.px ?? ball.x) + (ball.x - (ball.px ?? ball.x)) * f; ball.py = (ball.py ?? ball.y) + (ball.y - (ball.py ?? ball.y)) * f; ball.pz = (ball.pz ?? ball.z) + (ball.z - (ball.pz ?? ball.z)) * f;
-    ball.state = msg.ball.state; ball.x = msg.ball.x; ball.y = msg.ball.y; ball.z = msg.ball.z;
+    frame.ball = [msg.ball.x, msg.ball.y, msg.ball.z];
+    ball.state = msg.ball.state;
     ball.vx = msg.ball.vx; ball.vy = msg.ball.vy; ball.vz = msg.ball.vz;
     ball.holder = msg.ball.holder ? by(...msg.ball.holder.split(':')) : null;
   }
+  // The tackle and the throwing motion, with their bodies.
+  const refs = (o) => { if (!o) return null; const out = { ...o }; for (const k of ['c', 'q', 'r']) if (typeof out[k] === 'string') out[k] = by(...out[k].split(':')) ?? null; return out; };
+  lp.tackle = refs(msg.tackle);
+  lp.windup = refs(msg.windup);
+  // The pass in flight: its arc, and the circle where it comes down.
+  if (msg.thrown) {
+    const T = msg.thrown;
+    lp.thrown = { ...(lp.thrown || {}), ...T, target: T.slot ? by('off', T.slot) ?? null : null };
+  } else if (msg.thrown === null) lp.thrown = null;
   if (msg.kick && lp.kick) {
     lp.kick.stage = msg.kick.stage;
     lp.kick.onside = !!msg.kick.onside;
     lp.kick.ko = !!msg.kick.ko;
     lp.kick.punt = !!msg.kick.punt;
+    if (msg.kick.kickedAt != null) lp.kick.kickedAt = msg.kick.kickedAt;
     if (msg.kick.F) lp.kick.F = { ...(lp.kick.F || {}), ...msg.kick.F };
   }
   if (msg.phase === 'live' || msg.phase === 'pre' || msg.phase === 'dead') lp.phase = msg.phase;
-  lp.t = msg.simT ?? lp.t;
-  lp._simT = lp.t;
-  lp._simAt = performance.now();
-  lp._snapAt = lp._simAt;
+  // Keep the last few updates, oldest first, for netFrame to play back between.
+  const buf = (lp._netBuf ??= []);
+  if (buf.length && t1 < buf[buf.length - 1].t) buf.length = 0;
+  buf.push(frame);
+  if (buf.length > 6) buf.shift();
+  if (buf.length === 1) placeNet(lp, frame, frame, 1);
   if (msg.set) lp.set = true;
   // A full snapshot (after a reconnect) sends every event of the play again: only the ones this
   // side hasn't had go in, or the booth calls them twice.
@@ -661,7 +694,6 @@ function netFrame(lp, dt, now) {
     const inp = readInput(lp);
     L3.netSeq = (L3.netSeq || 0) + 1;
     netSend({ t: 'input', ...inp, seq: L3.netSeq });
-    if (lp._simT != null) lp.t = lp._simT + (performance.now() - (lp._simAt || performance.now())) / 1000;
     boothLive(lp);
   }
   if (L3.netHold && now > L3.netHold) {
@@ -672,8 +704,21 @@ function netFrame(lp, dt, now) {
     render();
     return null;
   }
-  const since = lp._snapAt ? (now - lp._snapAt) / (L3.snapGap || 33) : 1;
-  L3.acc = Math.min(1, Math.max(0, since)) * DT;
+  // A leap runs on between updates, so it rises and falls smoothly.
+  for (const p of lp.players) if (p.jump != null) p.jump = Math.min(p.jump + dt, p.jumpT);
+  // Play the server's updates back NET_DELAY behind the newest: find the two around that
+  // moment and draw between them.
+  L3.netClock = (L3.netClock ?? 0) + dt;
+  const buf = lp._netBuf || [];
+  if (buf.length) {
+    const rt = L3.netClock - NET_DELAY;
+    let i = 0;
+    while (i < buf.length - 2 && buf[i + 1].t <= rt) i++;
+    const a = buf[i], b = buf[Math.min(i + 1, buf.length - 1)];
+    const u = b.t > a.t ? Math.min(1, Math.max(0, (rt - a.t) / (b.t - a.t))) : 1;
+    placeNet(lp, a, b, u);
+    lp.t = Math.max(a.t, Math.min(b.t, rt));
+  }
   return L3.lp;
 }
 // A dropped connection or leaving the room: a server play this page was showing is over.
