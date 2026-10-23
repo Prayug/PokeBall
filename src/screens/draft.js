@@ -60,14 +60,17 @@ export function renderDraft() {
       <div>
         <p class="eyebrow">${(L.season ?? 1) > 1 ? `Season ${L.season} rookie draft · ` : ''}Round ${pk?.round ?? '-'} of ${L.picks[L.picks.length - 1].round} · Pick ${L.pickIndex + 1} of ${L.picks.length}${pk?.from != null ? ` · ${esc(L.teams[pk.from].abbr)}'s pick, traded` : ''}</p>
         <h1>${myTurn ? 'You are on the clock' : `${esc(onClock?.name ?? '')} are picking`}</h1>
+        ${S.online && !myTurn && onClock ? `<p class="small muted">${onClock.human ? `${esc(onClock.coachName)} is on the clock` : 'The AI picks for this team'}</p>` : ''}
         ${me.coach !== 'balanced' && SCHEMES[me.coach] ? `<p class="small muted">${esc(SCHEMES[me.coach].name)}: auto-picks reach for ${schemeGroups(me.coach)}.</p>` : ''}
       </div>
       <div class="clockbox ${myTurn ? 'live' : ''}">
-        ${myTurn && S.setup.clock && !d.autoAll ? `<span class="clocknum" id="pick-clock">${d.clock}</span><span>seconds, then auto-pick</span>` : myTurn ? '<span>Take your time</span>' : '<span class="dots">AI drafting</span>'}
+        ${S.online ? onlineClockHtml(myTurn, onClock)
+    : myTurn && S.setup.clock && !d.autoAll ? `<span class="clocknum" id="pick-clock">${d.clock}</span><span>seconds, then auto-pick</span>` : myTurn ? '<span>Take your time</span>' : '<span class="dots">AI drafting</span>'}
       </div>
       <div class="head-actions">
-        ${!myTurn || d.autoAll ? `<button class="btn primary" data-act="draftskip">${d.autoAll ? 'Finish the draft now' : 'Skip to my pick'}</button>` : ''}
-        <button class="btn" data-act="autodraft">${d.autoAll ? 'Stop auto-draft' : 'Auto-draft the rest'}</button>
+        ${S.online ? `<button class="btn ${S.net?.autoDraft ? 'primary' : ''}" data-act="onlineautodraft">${S.net?.autoDraft ? 'Stop auto-draft' : 'Auto-draft my picks'}</button>`
+    : `${!myTurn || d.autoAll ? `<button class="btn primary" data-act="draftskip">${d.autoAll ? 'Finish the draft now' : 'Skip to my pick'}</button>` : ''}
+        <button class="btn" data-act="autodraft">${d.autoAll ? 'Stop auto-draft' : 'Auto-draft the rest'}</button>`}
       </div>
     </div>
     <div class="draft-grid">
@@ -137,8 +140,26 @@ export function detailHtml() {
     </div>`}`;
 }
 
+// Online: the server's pick clock, counted down here between updates.
+const pickSecs = () => (S.net?.pickAt ? Math.max(0, Math.ceil((S.net.pickAt - Date.now()) / 1000)) : null);
+function onlineClockHtml(myTurn, onClock) {
+  const secs = pickSecs();
+  if (S.net?.autoDraft && myTurn) return '<span class="dots">Auto-drafting for you</span>';
+  if (!onClock?.human) return '<span class="dots">AI drafting</span>';
+  if (secs == null || secs > 3600) return myTurn ? '<span>Take your time</span>' : `<span>Waiting on ${esc(onClock.coachName)}</span>`;
+  return `<span class="clocknum" id="pick-clock">${secs}</span><span>${myTurn ? 'seconds, then auto-pick' : 'seconds left on the clock'}</span>`;
+}
+
 export function draftTick() {
-  if (S.online) return;
+  if (S.online) {
+    clearInterval(timers.clock);
+    timers.clock = setInterval(() => {
+      const el = document.getElementById('pick-clock');
+      const secs = pickSecs();
+      if (el && secs != null) el.textContent = secs;
+    }, 500);
+    return;
+  }
   clearTimers();
   const L = S.league;
   if (!L || L.phase !== 'draft' || S.screen !== 'draft') return;
@@ -206,12 +227,26 @@ export function renderGrades() {
         ${units.map(([k]) => `<td><span class="grade g-${g[k].grade[0]}">${g[k].grade}</span><span class="muted small"> ${g[k].value}</span></td>`).join('')}</tr>`).join('')}</tbody>
     </table></div>
     ${tradeCardHtml(L)}
-    <div class="card share"><h3>Share this league</h3>${shareCardHtml(L)}</div>
+    ${S.online ? '' : `<div class="card share"><h3>Share this league</h3>${shareCardHtml(L)}</div>`}
     <div class="actions">
       <button class="btn" data-act="go" data-to="depth">Edit depth chart</button>
-      ${L.phase === 'grades' ? '<button class="btn primary" data-act="startseason">Start the season</button>' : '<button class="btn primary" data-act="go" data-to="season">Go to season</button>'}
+      ${S.online ? onlineGradesActions(L) : L.phase === 'grades' ? '<button class="btn primary" data-act="startseason">Start the season</button>' : '<button class="btn primary" data-act="go" data-to="season">Go to season</button>'}
     </div>
   </section>`;
+}
+
+// Online: the commissioner starts the season; head to head, both coaches ready up for the game.
+function onlineGradesActions(L) {
+  const n = S.net || {};
+  if (['between', 'pre', 'live'].includes(n.phase)) return '<button class="btn primary" data-act="go" data-to="game">Back to your game</button>';
+  if (n.h2h) {
+    const ready = (n.players || []).some((p) => p.team === n.yourTeam && p.ready);
+    const past = L.online?.h2hResults ?? [];
+    const rec = past.length ? `<span class="small muted">Series: ${L.teams[0].abbr} ${past.filter((r) => r.winner === 0).length}, ${L.teams[1].abbr} ${past.filter((r) => r.winner === 1).length}</span>` : '';
+    return (ready ? '<span class="muted">You are ready. Waiting for the other coach.</span>' : `<button class="btn primary" data-act="onlineready">${past.length ? 'Play again' : 'Play the game'}</button>`) + rec;
+  }
+  if (L.phase !== 'grades') return '<button class="btn primary" data-act="go" data-to="season">Go to season</button>';
+  return n.yourTeam === 0 ? '<button class="btn primary" data-act="startseason">Start the season</button>' : '<span class="muted">Waiting for the commissioner to start the season.</span>';
 }
 
 export function tradeCardHtml(L) {

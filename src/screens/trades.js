@@ -9,13 +9,15 @@ import { S, save } from '../state.js';
 import { P, esc, ovr, sprite, teamBadge, user } from '../ui.js';
 import { dealSideHtml, tradeCardHtml, tradeKickingHtml, tradeMovesHtml } from './draft.js';
 import { latestPower } from '../weekly.js';
+import { send as netSend } from '../net.js';
 
 const STANCE = { contend: 'Contending', middle: 'In the middle', rebuild: 'Rebuilding' };
 
 function desk() {
   const L = S.league;
-  const ai = L.teams.filter((t) => !t.user);
-  if (!S.desk || !L.teams[S.desk.team] || L.teams[S.desk.team].user) S.desk = { team: ai[0].id, send: [], get: [], sendPicks: [], getPicks: [], msg: '', ok: false, counter: null };
+  // Online, the other coaches' teams are not on the desk: deals are with the AI teams.
+  const ai = L.teams.filter((t) => !t.user && !t.human);
+  if (!S.desk || !L.teams[S.desk.team] || L.teams[S.desk.team].user || L.teams[S.desk.team].human) S.desk = { team: ai[0].id, send: [], get: [], sendPicks: [], getPicks: [], msg: '', ok: false, counter: null };
   return S.desk;
 }
 
@@ -56,7 +58,7 @@ function builderHtml(L, me, D) {
   const empty = !D.send.length && !D.get.length && !D.sendPicks.length && !D.getPicks.length;
   const ev = empty ? null : TR.evaluateTrade(L, deal);
   return `<div class="card"><h3>Build a deal</h3>
-    <label>Trade with <select id="desk-team">${L.teams.filter((t) => !t.user).map((t) => `<option value="${t.id}" ${t.id === D.team ? 'selected' : ''}>${esc(t.name)} (${esc(t.coachName)})</option>`).join('')}</select></label>
+    <label>Trade with <select id="desk-team">${L.teams.filter((t) => !t.user && !t.human).map((t) => `<option value="${t.id}" ${t.id === D.team ? 'selected' : ''}>${esc(t.name)} (${esc(t.coachName)})</option>`).join('')}</select></label>
     <div class="desk-cols">
       <div><h4>You send</h4>${rosterList(L, me, 'send', D.send)}${pickChips(L, TR.picksOwned(L, me.id), 'send', D.sendPicks)}</div>
       <div><h4>${esc(ai.abbr)} send</h4>${rosterList(L, ai, 'get', D.get)}${pickChips(L, TR.picksOwned(L, ai.id), 'get', D.getPicks)}</div>
@@ -165,6 +167,8 @@ export function deskUseCounter() {
 }
 export function deskPropose() {
   const D = desk();
+  // Online the server makes the deal; its answer comes back to the desk.
+  if (S.online) { netSend({ t: 'propose', deal: { team: D.team, send: D.send, get: D.get, sendPicks: D.sendPicks, getPicks: D.getPicks } }); S.desk = { ...D, msg: 'Sending the offer…', ok: false }; render(); return; }
   const res = TR.proposeTrade(S.league, D);
   S.desk = res.ok ? { team: D.team, send: [], get: [], sendPicks: [], getPicks: [], msg: res.text, ok: true, entry: res.entry, counter: null }
     : { ...D, msg: res.text, ok: false };

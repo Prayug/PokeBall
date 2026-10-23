@@ -27,7 +27,7 @@ import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, tog
 import { applyDifficulty } from './difficulty.js';
 import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, resetBetweenGames, setCamera, setDebug, stage, startReplay, syncOverlays, userChallenge } from './screens/live3d.js';
 import { renderLobby } from './screens/lobby.js';
-import { bindUI, create as netCreate, join as netJoin, joinFromHash, send as netSend } from './net.js';
+import { bindUI, create as netCreate, join as netJoin, joinFromHash, leave as netLeave, roomLink, send as netSend, setName as netSetName } from './net.js';
 import { openFilm } from './screens/film.js';
 
 const app = document.getElementById('app');
@@ -84,7 +84,7 @@ function renderTop() {
     <button class="brand" data-act="home" aria-label="Home"><span class="ball" aria-hidden="true"></span>PokeBall</button>
     <nav>${items.map(([k, label]) => `<button class="nav ${S.screen === k ? 'on' : ''}" data-act="go" data-to="${k}">${label}</button>`).join('')}</nav>
     ${me ? `<span class="top-team">${teamBadge(me)}<span><b>${esc(me.name)}</b><small>Season ${L.season ?? 1}</small></span></span>` : ''}
-    ${S.online && S.net?.code ? `<span class="top-team"><b>#${S.net.mode === 'league' ? 'online' : 'play'}=${esc(S.net.code)}</b><small id="net-ping">${S.net.ping != null ? `${S.net.ping} ms` : '…'}</small></span>` : ''}
+    ${S.online && S.net?.code ? `<span class="top-team"><b>#${S.net.mode === 'league' ? 'online' : 'play'}=${esc(S.net.code)}</b><small id="net-ping">${S.netDown ? 'reconnecting…' : S.net.ping != null ? `${S.net.ping} ms` : '…'}</small></span>` : ''}
     ${soundButtonHtml()}
   </header>`;
 }
@@ -102,18 +102,25 @@ function onClick(e) {
     case 'onlinequick': netCreate('quick', { name: 'Home' }); break;
     case 'onlineleague': netCreate('league', setupFromForm()); break;
     case 'onlinejoin': netJoin((document.getElementById('net-code')?.value || '').trim().toUpperCase()); break;
+    case 'onlinerejoin': netJoin(el.dataset.code); break;
     case 'onlineready': netSend({ t: 'readygame' }); break;
     case 'onlineforfeit': netSend({ t: 'forfeit' }); break;
     case 'onlinerematch': netSend({ t: 'rematch' }); break;
     case 'onlinesim': netSend({ t: 'sim' }); break;
-    case 'netcopy': { const link = `${location.origin}${location.pathname}${location.search}#${S.net?.mode === 'league' ? 'online' : 'play'}=${S.net?.code || ''}`; navigator.clipboard?.writeText(link); break; }
+    case 'onlinesimmine': netSend({ t: 'simmine' }); break;
+    case 'onlineh2h': netCreate('league', { ...setupFromForm(), h2h: true }); break;
+    case 'startdraft': netSend({ t: 'startdraft' }); break;
+    case 'onlineautodraft': netSend({ t: 'autodraft', on: !S.net?.autoDraft }); break;
+    case 'setname': netSetName(document.getElementById('net-name')?.value); el.textContent = 'Saved'; break;
+    case 'netcopy': navigator.clipboard?.writeText(roomLink()); el.textContent = 'Copied'; break;
     case 'claimteam': netSend({ t: 'claim', team: Number(el.dataset.team) }); break;
     case 'sound': S.soundOpen = !S.soundOpen; if (S.soundOpen) S.menuOpen = false; render(); break;
     case 'sndtest': soundTest(); break;
     case 'skip': S.skipOpen = !S.skipOpen; render(); break;
     case 'kit': case 'kitchant': kitAct(act, el); break;
     // A quick game in progress stays open: the home screen and the top bar take you back to it.
-    case 'home': if (S.game?.final && S.gameMeta?.quick) { S.game = null; S.gameMeta = null; } setScreen('home'); break;
+    // Home leaves an online room (Rejoin on the home screen, or the room's link, takes the seat back).
+    case 'home': if (S.online) netLeave({ keepScreen: true }); if (S.game?.final && S.gameMeta?.quick) { S.game = null; S.gameMeta = null; } setScreen('home'); break;
     case 'go': setScreen(el.dataset.to); break;
     case 'continue': {
       const n = Number(el.dataset.slot ?? S.slot);
@@ -148,8 +155,8 @@ function onClick(e) {
     case 'sharedismiss': S.shareIn = null; S.shareErr = ''; render(); break;
     case 'recap': if (L) download(`pokeball-season${L.season ?? 1}-recap.txt`, recapText(L), 'text/plain'); break;
     case 'openresult': S.resultIdx = Number(el.dataset.i); setScreen('result'); break;
-    case 'tradeyes': TR.acceptTrade(L); save(); render(); break;
-    case 'tradeno': TR.declineTrade(L); save(); render(); break;
+    case 'tradeyes': if (S.online) { netSend({ t: 'tradeyes' }); break; } TR.acceptTrade(L); save(); render(); break;
+    case 'tradeno': if (S.online) { netSend({ t: 'tradeno' }); break; } TR.declineTrade(L); save(); render(); break;
     case 'deskpick': deskPick(el.dataset.side, el.dataset.key); break;
     case 'deskteam': deskTeam(Number(el.dataset.team)); window.scrollTo(0, 0); break;
     case 'deskclear': deskClear(); break;
@@ -384,6 +391,9 @@ export function render() {
   const y = window.scrollY;
   const boardScroll = document.querySelector('.board .tablewrap')?.scrollTop;
   const focusId = document.activeElement?.id;
+  // A box being typed in keeps its text and caret through a re-render (an online pick, a ping).
+  const typing = document.activeElement?.tagName === 'INPUT' && /^(text|search)$/.test(document.activeElement.type) ? document.activeElement : null;
+  const caret = typing && { v: typing.value, a: typing.selectionStart, b: typing.selectionEnd };
   // The franchise's colors theme every screen: the top bar's stripe, the panels' edge, the active tab.
   const team = user() ?? { color: S.setup.color || '#e5402b', kit: S.setup.kit, name: S.setup.name, abbr: S.setup.abbr };
   const kit = kitOf(team), root = document.documentElement.style;
@@ -397,7 +407,11 @@ export function render() {
   if (S.screen === 'game') mountStage();
   if (S.screen === 'kit') drawKitPreview();
   if (S.screen === 'draft' && boardScroll != null) { const b = document.querySelector('.board .tablewrap'); if (b) b.scrollTop = boardScroll; }
-  if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
+  if (focusId) {
+    const el = document.getElementById(focusId);
+    el?.focus({ preventScroll: true });
+    if (el && caret) { el.value = caret.v; try { el.setSelectionRange(caret.a, caret.b); } catch { /* not a text box */ } }
+  }
   // On a narrow screen the call sheet's tab row scrolls: keep the open tab in view.
   const tab = document.querySelector('.cs-tab.on'), row = tab?.parentElement;
   if (row && row.scrollWidth > row.clientWidth) {
@@ -457,5 +471,16 @@ function setupFromForm() {
     scheme: f.querySelector('input[name="scheme"]:checked')?.value ?? 'balanced',
   };
 }
-bindUI({ render, setScreen });
+bindUI({
+  render, setScreen,
+  // A league game against the AI: played here like an offline game; its final goes to the server.
+  startLocal(msg, saved) {
+    startGame(saved || msg.g, { online: true, local: true, league: true, quick: true, key: msg.key, playoff: !!msg.meta?.playoff, userTeamId: msg.team });
+  },
+  tradeResult(msg) {
+    const D = S.desk || {};
+    S.desk = msg.ok ? { team: D.team, send: [], get: [], sendPicks: [], getPicks: [], msg: msg.text, ok: true, entry: msg.entry, counter: null } : { ...D, msg: msg.text, ok: false };
+    render();
+  },
+});
 if (window.claude?.hot?.ready) window.claude.hot.ready(start); else start(window.claude?.hot?.data ?? {});

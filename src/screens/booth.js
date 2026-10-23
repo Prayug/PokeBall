@@ -33,7 +33,11 @@ function send(lines) {
 }
 
 // ---------- the flow ----------
+// The same game, even as a new object (an online game arrives as a fresh copy after every play):
+// the crew keeps its memory, so the open and the lines already said are not said again.
+const gameKey = (g) => g && `${g.seed}:${g.teams?.[0]?.id}:${g.teams?.[1]?.id}`;
 export function boothFlow(st, g, lp) {
+  if (g && BT.B && BT.g !== g && gameKey(BT.g) === gameKey(g)) BT.g = g;
   if (!g || !BT.B || BT.g !== g) boothReset(g);
   if (!g) return;
   clearTimeout(BT.fillerT);

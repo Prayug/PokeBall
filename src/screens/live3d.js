@@ -7,7 +7,7 @@ import { RATES } from '../penalties.js';
 import { Stage, webglAvailable } from '../field3d.js';
 import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
-import { S, save, savePrefs, timers } from '../state.js';
+import { S, netGame, save, savePrefs, timers } from '../state.js';
 import { P, esc } from '../ui.js';
 import { sfx } from '../audio.js';
 import { POWER_OF, powerLine } from '../powers.js';
@@ -255,7 +255,7 @@ function audible(call) {
 // a choice from it, or change the defense's look.
 export function presnapAct(act, arg) {
   const lp = L3.lp;
-  if (S.online && lp && act !== 'open' && act !== 'hotpick') {
+  if (netGame() && lp && act !== 'open' && act !== 'hotpick') {
     netSend({ t: 'presnap', act, arg, slot: S.psPick?.slot });
     return;
   }
@@ -580,25 +580,30 @@ function applyNetSnap(msg) {
   if (!lp || !L3.net) return;
   const by = (side, slot) => lp.players.find((p) => p.side === side && p.slot === slot);
   const mineKey = msg.ctrl?.[S.net?.you ?? 0];
+  // Every body, yours too, is drawn from the server's positions, eased from where it was drawn
+  // to where the server says it is over the time to the next update. Yours is led by half the
+  // ping, so it does not trail your stick; nothing is guessed and then pulled back.
+  const now = performance.now();
+  const gap = lp._snapAt ? now - lp._snapAt : 33;
+  L3.snapGap = Math.min(120, Math.max(16, (L3.snapGap ?? 33) * 0.8 + gap * 0.2));
+  const lead = Math.min(0.15, (S.net?.ping ?? 0) / 2000);
+  const drawn = (p) => { const f = Math.min(1, Math.max(0, L3.acc / DT)); return { x: (p.px ?? p.x) + (p.x - (p.px ?? p.x)) * f, y: (p.py ?? p.y) + (p.y - (p.py ?? p.y)) * f }; };
   for (const b of msg.bodies || []) {
     const p = by(b.side, b.slot);
     if (!p) continue;
-    if (mineKey === `${b.side}:${b.slot}`) {
-      const d = Math.hypot(b.x - p.x, b.y - p.y);
-      if (d > 2.4 || !lp._seenSnap) { p.x = b.x; p.y = b.y; }
-      else { p.x += (b.x - p.x) * 0.35; p.y += (b.y - p.y) * 0.35; }
-      p.px = p.x; p.py = p.y;
-      lp.control = p;
-    } else {
-      p.px = p.x; p.py = p.y;
-      p.x = b.x; p.y = b.y; p.vx = b.vx; p.vy = b.vy; p.fx = b.fx; p.fy = b.fy;
-      if (b.act) p.act = b.act;
-    }
+    const from = lp._seenSnap ? drawn(p) : { x: b.x, y: b.y };
+    const mine = mineKey === `${b.side}:${b.slot}`;
+    p.px = from.x; p.py = from.y;
+    p.x = b.x + (mine ? b.vx * lead : 0); p.y = b.y + (mine ? b.vy * lead : 0);
+    p.vx = b.vx; p.vy = b.vy; p.fx = b.fx; p.fy = b.fy;
+    if (b.act) p.act = b.act;
+    if (mine) lp.control = p;
   }
   lp._seenSnap = true;
   const ball = lp.ball;
   if (msg.ball && ball) {
-    ball.px = ball.x; ball.py = ball.y; ball.pz = ball.z;
+    const f = lp._seenSnap ? Math.min(1, Math.max(0, L3.acc / DT)) : 1;
+    ball.px = (ball.px ?? ball.x) + (ball.x - (ball.px ?? ball.x)) * f; ball.py = (ball.py ?? ball.y) + (ball.y - (ball.py ?? ball.y)) * f; ball.pz = (ball.pz ?? ball.z) + (ball.z - (ball.pz ?? ball.z)) * f;
     ball.state = msg.ball.state; ball.x = msg.ball.x; ball.y = msg.ball.y; ball.z = msg.ball.z;
     ball.vx = msg.ball.vx; ball.vy = msg.ball.vy; ball.vz = msg.ball.vz;
     ball.holder = msg.ball.holder ? by(...msg.ball.holder.split(':')) : null;
@@ -641,18 +646,6 @@ function netPresnap(msg) {
   else if (msg.act === 'show') setDisguise(lp, 'show');
   else if (msg.act === 'back') setDisguise(lp, 'back');
 }
-function predictMine(lp, inp, dt) {
-  const p = lp.control;
-  if (!p || !inp) return;
-  const mx = inp.mx || 0, my = inp.my || 0, mag = Math.hypot(mx, my);
-  if (mag > 0.1) {
-    const sp = (p.top || 8) * (inp.sprint ? 1.08 : 0.9);
-    p.x += (mx / mag) * sp * dt;
-    p.y += (my / mag) * sp * dt;
-  }
-  p.px = p.x; p.py = p.y;
-  if (lp._simT != null) lp.t = lp._simT + (performance.now() - (lp._simAt || performance.now())) / 1000;
-}
 function netFrame(lp, dt, now) {
   if (lp.phase === 'pre') {
     if (L3.edges.has('Space')) L3.snapWant = true;
@@ -662,7 +655,7 @@ function netFrame(lp, dt, now) {
     const inp = readInput(lp);
     L3.netSeq = (L3.netSeq || 0) + 1;
     netSend({ t: 'input', ...inp, seq: L3.netSeq });
-    predictMine(lp, inp, dt);
+    if (lp._simT != null) lp.t = lp._simT + (performance.now() - (lp._simAt || performance.now())) / 1000;
     boothLive(lp);
   }
   if (L3.netHold && now > L3.netHold) {
@@ -673,11 +666,19 @@ function netFrame(lp, dt, now) {
     render();
     return null;
   }
-  const since = lp._snapAt ? (now - lp._snapAt) / 50 : 1;
+  const since = lp._snapAt ? (now - lp._snapAt) / (L3.snapGap || 33) : 1;
   L3.acc = Math.min(1, Math.max(0, since)) * DT;
   return L3.lp;
 }
-onNet({ play: beginNetPlay, snap: applyNetSnap, whistle: showServerResult, presnap: netPresnap });
+// A dropped connection or leaving the room: a server play this page was showing is over.
+function resetNetPlay() {
+  if (!L3.net) return;
+  L3.lp = null;
+  L3.net = false;
+  L3.netHold = 0;
+  setFlow('PLAY_SELECTION');
+}
+onNet({ play: beginNetPlay, snap: applyNetSnap, whistle: showServerResult, presnap: netPresnap, reset: resetNetPlay });
 
 function loop(now) {
   L3.raf = requestAnimationFrame(loop);

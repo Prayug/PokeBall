@@ -10,6 +10,7 @@ import { sharedInHtml } from './share.js';
 import { LEAGUE_SIZES } from '../geometry.js';
 import { quarterText } from '../engine.js';
 import { TYPE_COLORS } from '../types.js';
+import { lastSeat } from '../net.js';
 
 function resumeScreen(L, game) {
   if (game && !game.final) return 'game';
@@ -83,8 +84,10 @@ export function renderHome() {
           <button class="btn" data-act="quick2">Two players, one screen</button>
           <button class="btn" data-act="watchgame">Watch a game</button>
           <button class="btn" data-act="onlinequick">Quick match online</button>
+          <button class="btn" data-act="onlineh2h" title="You and a friend draft against each other, then play">Head-to-head draft online</button>
           <button class="btn ghost" data-act="go" data-to="kit">Franchise kit</button></div>
         <div class="actions"><input id="net-code" maxlength="8" placeholder="Room code" aria-label="Room code"><button class="btn" data-act="onlinejoin">Join</button></div>
+        ${rejoinHtml()}
         ${S.netMsg ? `<p class="small bad">${esc(S.netMsg)}</p>` : ''}
         <p class="small muted">Two players: one keyboard (WASD and the arrows) or gamepads. Player 1 has the home team, player 2 the away team, and each of you calls and plays your own side.</p>
         <p class="small muted">Watch: the AI calls and plays both sides, under a big scoreboard. Press O to call the next play yourself. For a stream, open the game with <code>?watch</code> on the address and every final rolls into the next game.</p>
@@ -131,4 +134,12 @@ function phaseLabel(L) {
   if (L.phase === 'offseason') return 'Offseason';
   if (L.phase === 'freeagency') return `Free agency, round ${(L.fa?.round ?? 0) + 1}`;
   return 'Season over';
+}
+
+// The last online room this browser holds a seat in: one click takes the seat back.
+function rejoinHtml() {
+  if (S.online) return '';
+  const seat = lastSeat();
+  if (!seat?.code) return '';
+  return `<div class="actions"><button class="btn primary" data-act="onlinerejoin" data-code="${esc(seat.code)}">Rejoin ${seat.mode === 'league' ? 'online league' : 'room'} ${esc(seat.code)}</button></div>`;
 }
