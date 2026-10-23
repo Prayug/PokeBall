@@ -565,7 +565,8 @@ function beginNetPlay(msg) {
   L3.lp = lp;
   L3.net = true;
   L3.netHold = 0;
-  L3.netSeq = 0;
+  // The input count keeps rising across plays: the server drops anything older than the last it saw.
+  L3.netSeq ??= 0;
   L3.off = msg.off;
   L3.def = msg.def;
   L3.before = { poss: g.poss, down: g.down, toGo: g.toGo, spot: g.spot, score: [...g.score], quarter: g.quarter, logN: g.log.length, drives: g.drives.length };
@@ -581,12 +582,13 @@ function applyNetSnap(msg) {
   const by = (side, slot) => lp.players.find((p) => p.side === side && p.slot === slot);
   const mineKey = msg.ctrl?.[S.net?.you ?? 0];
   // Every body, yours too, is drawn from the server's positions, eased from where it was drawn
-  // to where the server says it is over the time to the next update. Yours is led by half the
-  // ping, so it does not trail your stick; nothing is guessed and then pulled back.
+  // to where the server says it is over the time to the next update. Yours is led by the round
+  // trip (your stick reached the server half a ping ago, and its answer took the other half),
+  // so it does not trail your stick; nothing is guessed and then pulled back.
   const now = performance.now();
   const gap = lp._snapAt ? now - lp._snapAt : 33;
   L3.snapGap = Math.min(120, Math.max(16, (L3.snapGap ?? 33) * 0.8 + gap * 0.2));
-  const lead = Math.min(0.15, (S.net?.ping ?? 0) / 2000);
+  const lead = Math.min(0.25, (S.net?.ping ?? 0) / 1000);
   const drawn = (p) => { const f = Math.min(1, Math.max(0, L3.acc / DT)); return { x: (p.px ?? p.x) + (p.x - (p.px ?? p.x)) * f, y: (p.py ?? p.y) + (p.y - (p.py ?? p.y)) * f }; };
   for (const b of msg.bodies || []) {
     const p = by(b.side, b.slot);

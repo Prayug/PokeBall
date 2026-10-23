@@ -30,6 +30,10 @@ jobs:
           node-version: 22
 
       - name: Build the page
+        # The repository variable POKEBALL_SERVER (Settings > Secrets and variables > Actions >
+        # Variables) points online play at the hosted server, e.g. https://pokeball.onrender.com.
+        env:
+          POKEBALL_SERVER: ${{ vars.POKEBALL_SERVER }}
         run: bash build/build.sh
 
       - name: Publish the models release if it does not exist yet

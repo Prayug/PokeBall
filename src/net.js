@@ -26,7 +26,8 @@ export function serverUrl() {
     const q = new URLSearchParams(location.search).get('server');
     if (q) return q;
   } catch { /* no location */ }
-  const baked = globalThis.POKEBALL_SERVER || '';
+  // The Pages build can name the server by its page address (https://…) or its socket (wss://…).
+  const baked = String(globalThis.POKEBALL_SERVER || '').replace(/^http(s?):/, 'ws$1:').replace(/\/$/, '');
   if (baked) return baked;
   try {
     if (location.protocol === 'http:' || location.protocol === 'https:') {

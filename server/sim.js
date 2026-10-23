@@ -621,6 +621,9 @@ function beginPlay(t, spec, clock = true) {
     setAt: 0, acc: 0, lastStep: Date.now(), lastSnapSent: 0,
     rec: { off: spec.off, def: spec.def, log: [], atSnap: null, end: null },
   });
+  // A new play starts the input count over, so a page that counts from zero again (a reload,
+  // an older page) is not taken for stale input.
+  for (const c of rootOf(t).clients) if (sideOf(t, c) != null) c.seq = 0;
   t.playMsg = { t: 'play', g: snapG, off: spec.off, def: spec.def, opts };
   broadcast(t, t.playMsg);
   publish(rootOf(t));
@@ -811,8 +814,8 @@ function viewLeague(room, client) {
   return L;
 }
 // The address friends open, when the server knows one (npm run online sets it from the tunnel,
-// or POKEBALL_PUBLIC_URL on a host). The page falls back to its own address.
-let publicUrl = process.env.POKEBALL_PUBLIC_URL || null;
+// or POKEBALL_PUBLIC_URL on a host; Render sets RENDER_EXTERNAL_URL itself). The page falls back to its own address.
+let publicUrl = process.env.POKEBALL_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || null;
 export function setPublicUrl(url) { publicUrl = url || null; }
 export function publicState(room, client) {
   const t = tableFor(room, client);

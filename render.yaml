@@ -1,0 +1,9 @@
+# A public PokeBall server on Render: the page and the rooms at one https address.
+# Deploy it from the README's "Deploy to Render" button (or New > Blueprint on render.com).
+services:
+  - type: web
+    name: pokeball
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
