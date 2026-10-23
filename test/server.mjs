@@ -140,6 +140,21 @@ try {
     const s = await onePlay(a, b);
     console.log('     play', n + 1, s.join('-'), a.latest('whistle').clip ? 'film' : 'no film');
   }
+  // Input in a new play counts even when its count is lower than the last play's (a page that
+  // starts counting again): before, every move after the first play was thrown away.
+  const qroom = rooms.get(hello.code);
+  for (const seq of [500, 3]) {
+    const plays = count(a, 'play');
+    const deadline = Date.now() + 20000;
+    while (count(a, 'play') === plays && Date.now() < deadline) { await Promise.all([answer(a), answer(b)]); await sleep(40); }
+    const pg = a.latest('play').g;
+    const off = pg.poss === 0 ? a : b;
+    off.send({ t: 'input', mx: 1, my: 0, seq });
+    await sleep(100);
+    check(qroom.pad[pg.poss]?.mx === 1, `the offense's input reaches the play (count ${seq})`);
+    off.send({ t: 'snap' });
+    await a.wait((m) => m.t === 'whistle' && count(a, 'whistle') >= plays + 1, 25000);
+  }
   a.send({ t: 'ping', n: 1 });
   check((await a.wait((m) => m.t === 'pong')).n === 1, 'ping came back');
 
