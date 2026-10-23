@@ -18,7 +18,7 @@ import { boothClipOn, duck, hasBoothHit, loadBoothClips, playBoothHit } from './
 const SYN = typeof window !== 'undefined' ? window.speechSynthesis ?? null : null;
 const Utter = typeof window !== 'undefined' ? window.SpeechSynthesisUtterance ?? null : null;
 // How long a line may wait before it is stale, by priority (ms).
-const TTL = [9000, 7000, 1800, 3500];
+const TTL = [6000, 6000, 1400, 4000];
 const V = { on: true, voice: true, captions: true, volume: 0.9, onCaption: null };
 let queue = [], cur = null, voices = { pbp: null, color: null }, watchdog = 0, captionTimer = 0, kickT = 0, cutAt = 0, endAt = 0, lastWho = null;
 
@@ -123,13 +123,16 @@ export function talk(ln) {
     queue = queue.filter((q) => q.pri >= 3);
     if (cur && cur.pri < 3) interrupt();
   } else if (item.pri === 2) {
-    // A live call: the wrap of the last play and the filler give way to it.
-    queue = queue.filter((q) => q.pri >= 2);
-    if (cur && cur.pri <= 1) interrupt();
-    // Only the latest live calls matter; an older one waiting is already behind the play.
-    const live = queue.filter((q) => q.pri === 2);
-    if (live.length >= 2) queue.splice(queue.indexOf(live[0]), 1);
+    // A live call never talks over a line in progress: it waits a beat, and only the newest
+    // one waits (an older one is already behind the play). What was left over from the last
+    // play gives way to it.
+    queue = queue.filter((q) => q.pri >= 3);
   } else if (item.pri === 0 && (cur || queue.length)) return false;
+  else if (queue.length >= 3) {
+    // The booth is behind: the oldest waiting line goes.
+    const i = queue.findIndex((q) => q.pri <= 1);
+    if (i >= 0) queue.splice(i, 1);
+  }
   queue.push(item);
   kick();
   return true;
@@ -146,14 +149,15 @@ export function stopTalking() {
 export const talking = () => !!cur || queue.length > 0;
 
 // Start the next line once nothing is being said. Right after a cut-in it waits a moment:
-// Chrome drops an utterance spoken in the same instant the last one was cancelled.
+// Chrome drops an utterance spoken in the same instant the last one was cancelled, and some
+// network voices keep sounding for a moment after a cancel, so the next line waits for that.
 function kick() {
   if (cur || kickT) return;
   const now = performance.now(), nx = queue[0];
   // A beat between lines, as two people talking leave: longer when the other voice answers,
   // none when the big moment cuts in.
   const beat = !nx || nx.pri >= 3 ? 0 : nx.who !== lastWho ? 280 : 150;
-  const wait = Math.max(0, 90 - (now - cutAt), beat - (now - endAt));
+  const wait = Math.max(0, 250 - (now - cutAt), beat - (now - endAt));
   kickT = setTimeout(() => { kickT = 0; if (!cur) next(); }, wait);
 }
 function interrupt() {

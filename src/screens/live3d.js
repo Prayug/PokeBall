@@ -656,7 +656,11 @@ function applyNetSnap(msg) {
   if (buf.length > 6) buf.shift();
   if (buf.length === 1) placeNet(lp, frame, frame, 1);
   if (msg.set) lp.set = true;
-  for (const e of msg.events || []) lp.events.push(e);
+  // A full snapshot (after a reconnect) sends every event of the play again: only the ones this
+  // side hasn't had go in, or the booth calls them twice.
+  const evs = msg.events || [];
+  const first = msg.n != null ? msg.n - evs.length : lp.events.length;
+  for (let i = Math.max(0, lp.events.length - first); i < evs.length; i++) lp.events.push(evs[i]);
 }
 function showServerResult(msg) {
   const b = L3.before;
