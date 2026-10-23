@@ -20,6 +20,7 @@ export const S = {
   names: false, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
   sound: true, vol: { master: 0.8, booth: 0.9, crowd: 0.8, fx: 0.8, music: 0.45 }, booth: true, boothVoice: true, captions: true, realCries: true, music: true, soundOpen: false,
   seenHelp: false, helpOpen: false, difficulty: 'pro', slot: 1, confirmDelete: null,
+  online: false, net: null, netMsg: '',
 };
 export const timers = { draft: null, clock: null, auto: null, banner: null };
 
@@ -29,6 +30,8 @@ function writeSlot(n, snap) {
   localStorage.setItem(slotKey(n), JSON.stringify(snap));
 }
 export function save() {
+  // An online league lives on the server. The three local slots stay as they were.
+  if (S.online && S.gameMeta?.online) { savePrefs(); return; }
   const snap = snapshot();
   if (snap.league) {
     try { writeSlot(S.slot, snap); } catch {

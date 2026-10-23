@@ -1,7 +1,9 @@
-// The booth's voices: the lines commentary.js writes, read out loud with the browser's own
-// speech synthesis (no files, no server, no keys) and captioned on screen. Two voices, one for
-// each of the crew, picked from the voices the device has: the play-by-play a touch quicker and
-// brighter, the analyst lower and more relaxed, and both louder and faster when the play is big.
+// The booth's voices. Names and yard lines stay on the browser's speech synthesis, which works
+// offline. A line is split on its clauses: the setup a little under tempo, a short gap, then
+// the shout at a higher rate and pitch. Mack and Dee keep different bases, and hype 2 is a
+// real spike. Committed neural hits (touchdown, pick, sack, and the rest) play through the
+// Web Audio ducking when the files are there; synthesis fills the names around them.
+// Captions still show the full line.
 //
 // A broadcast can't read every line it is handed: the play moves on. Lines are queued by how
 // much they matter (see commentary.js): a touchdown or a pick cuts in over anything, a live call
@@ -9,7 +11,7 @@
 // synthesis (or the voices turned off) the captions still run, for as long as the line would
 // take to say.
 import { CREW } from './commentary.js';
-import { duck } from './audio.js';
+import { boothClipOn, duck, loadBoothClips, playBoothHit } from './audio.js';
 
 const SYN = typeof window !== 'undefined' ? window.speechSynthesis ?? null : null;
 const Utter = typeof window !== 'undefined' ? window.SpeechSynthesisUtterance ?? null : null;
@@ -44,6 +46,60 @@ function pickVoices() {
 if (SYN) {
   pickVoices();
   SYN.addEventListener?.('voiceschanged', pickVoices);
+}
+loadBoothClips();
+
+// Shouts a committed clip can carry. Order matters: "no good" before "good", "to the house"
+// and "pick" before a plain touchdown.
+const HITS = [
+  { id: 'nogood', re: /no good/i },
+  { id: 'house', re: /to the house/i },
+  { id: 'pick', re: /\bpick(?:ed(?: off)?| six)?\b|\bintercept/i },
+  { id: 'sack', re: /\bsack/i },
+  { id: 'fumble', re: /\bfumble/i },
+  { id: 'kickaway', re: /kick is away|punt is away/i },
+  { id: 'break', re: /breaks? (?:a |the )?tackle/i },
+  { id: 'good', re: /it'?s good|\bit is good\b|\bis good\b/i },
+  { id: 'touchdown', re: /\btouchdown\b/i },
+];
+export function clausesOf(text) {
+  const parts = String(text ?? '').match(/[^.!?;—]+[.!?;—]+|[^.!?;—]+$/g);
+  return (parts ?? [String(text ?? '')]).map((s) => s.trim()).filter(Boolean);
+}
+function hitIn(clause) {
+  for (const h of HITS) {
+    const m = h.re.exec(clause);
+    if (!m) continue;
+    const before = clause.slice(0, m.index).replace(/[,—\s]+$/, '').trim();
+    const after = clause.slice(m.index + m[0].length).replace(/^[,.\s!—-]+/, '').trim();
+    return { id: h.id, before, after };
+  }
+  return null;
+}
+// Setup under tempo, the shout spiked. hype 2 is a jump, not a nudge.
+function voiceOf(who, hype, kind, same) {
+  const b = who === 'pbp' ? { rate: 1.14, pitch: 1.06 } : { rate: 0.9, pitch: same ? 0.68 : 0.86 };
+  if (kind === 'setup') return { rate: +(b.rate * 0.9).toFixed(3), pitch: +(b.pitch * 0.97).toFixed(3), volume: 0.84 };
+  if (kind === 'shout' || hype >= 2) return { rate: Math.min(1.92, b.rate + (hype >= 2 ? 0.46 : 0.34)), pitch: Math.min(1.9, b.pitch + (hype >= 2 ? 0.34 : 0.22)), volume: 1 };
+  if (hype >= 1) return { rate: Math.min(1.7, b.rate + 0.1), pitch: Math.min(1.55, b.pitch + 0.07), volume: 0.94 };
+  return { rate: b.rate, pitch: b.pitch, volume: 0.9 };
+}
+function segmentsOf(it) {
+  const parts = clausesOf(it.text);
+  const hype = it.hype ?? 0;
+  let shoutAt = parts.findIndex((p) => /!/.test(p) || HITS.some((h) => h.re.test(p)));
+  if (shoutAt < 0 && hype >= 2) shoutAt = parts.length - 1;
+  const segs = [];
+  parts.forEach((p, i) => {
+    const shout = i === shoutAt;
+    if (i > 0) segs.push({ gap: shout ? 240 : 100 });
+    const hit = shout ? hitIn(p) : null;
+    if (hit) {
+      if (hit.before) segs.push({ say: hit.before, kind: 'setup' });
+      segs.push({ clip: hit.id, say: hit.after, kind: 'shout', full: p });
+    } else segs.push({ say: p, kind: shout ? 'shout' : (parts.length > 1 && i < parts.length - 1 ? 'setup' : 'line') });
+  });
+  return segs.length ? segs : [{ say: it.text, kind: hype >= 2 ? 'shout' : 'line' }];
 }
 // What the menu shows: the two voices in use.
 export function voiceNames() {
@@ -100,36 +156,63 @@ function interrupt() {
   try { SYN?.cancel(); } catch { /* ignore */ }
 }
 
+function finishLine(it) {
+  if (cur !== it) return;
+  cur = null;
+  const rest = () => {
+    if (cur) return;
+    if (boothClipOn()) { watchdog = setTimeout(rest, 120); return; }
+    if (!queue.length) duck(false);
+    kick();
+  };
+  rest();
+}
+function speakChunk(it, text, set, done) {
+  if (!(SYN && Utter && V.voice) || !text) return false;
+  duck(true);
+  const u = new Utter(text.replace(/!+/g, '!'));
+  const v = voices[it.who] ?? voices.pbp;
+  if (v) { u.voice = v; u.lang = v.lang; }
+  u.rate = set.rate;
+  u.pitch = set.pitch;
+  u.volume = Math.max(0, Math.min(1, V.volume * set.volume));
+  it.u = u;
+  u.onend = u.onerror = () => { if (cur === it) done(); };
+  try { SYN.speak(u); } catch { it.u = null; return false; }
+  const est = 420 + text.split(/\s+/).length * (set.rate > 1.3 ? 240 : 320);
+  watchdog = setTimeout(() => { if (cur === it) { try { SYN.cancel(); } catch { /* ignore */ } done(); } }, est * 2.2 + 1800);
+  return true;
+}
+function playSeg(it) {
+  if (cur !== it) return;
+  const seg = it.segs[it.si++];
+  if (!seg) { finishLine(it); return; }
+  if (seg.gap) { watchdog = setTimeout(() => playSeg(it), seg.gap); return; }
+  const same = voices.pbp === voices.color;
+  const set = voiceOf(it.who, it.hype ?? 0, seg.kind, same);
+  if (seg.clip && playBoothHit(it.who, seg.clip)) {
+    // The hit is the clip. Synthesis only fills the name or the yardage around it.
+    if (seg.say && speakChunk(it, seg.say, voiceOf(it.who, 0, 'line', same), () => playSeg(it))) return;
+    watchdog = setTimeout(() => playSeg(it), 680);
+    return;
+  }
+  const text = seg.say || seg.full || '';
+  if (speakChunk(it, text, set, () => playSeg(it))) return;
+  const words = text.split(/\s+/).filter(Boolean).length || 1;
+  watchdog = setTimeout(() => playSeg(it), 260 + words * (it.hype >= 2 ? 240 : 300));
+}
 function next() {
   clearTimeout(watchdog);
   const now = performance.now();
   while (queue.length && now - queue[0].at > queue[0].ttl) queue.shift();
   const it = queue.shift();
-  if (!it) { cur = null; duck(false); captionTimer = setTimeout(() => caption(null), 1600); return; }
+  if (!it) { cur = null; if (!boothClipOn()) duck(false); captionTimer = setTimeout(() => caption(null), 1600); return; }
   cur = it;
   clearTimeout(captionTimer);
   caption(it);
-  const words = it.text.split(/\s+/).length;
-  const est = 600 + words * (it.hype >= 2 ? 300 : 360);
-  if (SYN && Utter && V.voice) {
-    duck(true);
-    const u = new Utter(it.text.replace(/!+/g, '!'));
-    const v = voices[it.who] ?? voices.pbp;
-    if (v) { u.voice = v; u.lang = v.lang; }
-    // One voice for both: the analyst sits lower so the two still sound like two people.
-    const same = voices.pbp === voices.color;
-    const base = it.who === 'pbp' ? { rate: 1.08, pitch: 1.02 } : { rate: 0.98, pitch: same ? 0.72 : 0.92 };
-    u.rate = Math.min(1.6, base.rate + (it.hype ?? 0) * 0.1);
-    u.pitch = Math.min(2, base.pitch + (it.hype ?? 0) * 0.09);
-    u.volume = Math.max(0, Math.min(1, V.volume * (0.82 + (it.hype ?? 0) * 0.09)));
-    it.u = u;
-    u.onend = u.onerror = () => { if (cur === it) { cur = null; kick(); } };
-    try { SYN.speak(u); } catch { it.u = null; }
-    // Some browsers never fire onend for a cancelled or stuck utterance.
-    watchdog = setTimeout(() => { if (cur === it) { try { SYN.cancel(); } catch { /* ignore */ } cur = null; cutAt = performance.now(); kick(); } }, est * 2.2 + 2500);
-  } else {
-    watchdog = setTimeout(() => { if (cur === it) { cur = null; kick(); } }, est);
-  }
+  it.segs = segmentsOf(it);
+  it.si = 0;
+  playSeg(it);
 }
 
 function caption(it) {

@@ -1288,7 +1288,7 @@ function tackleStep(lp) {
   for (const o of lp.players) if (o !== q && o.side === q.side && !o.eng && dist(o, c) < o.r + c.r + 0.25) help++;
   // Friction on the pile: the pair is brought to a stop over the sequence (faster on a big
   // hit and with help arriving), not left to skate across the turf.
-  const f = Math.exp(-DT * ((T.big ? 7 : 3.9) + help * 2.2));
+  const f = Math.exp(-DT * ((T.big ? 7.4 : 5.15) + help * 2.2));
   T.vx *= f; T.vy *= f;
   c.vx = T.vx; c.vy = T.vy; c.x += c.vx * DT; c.y += c.vy * DT;
   if (T.lean && e < T.T) { const k = (T.lean * DT) / T.T; c.x += T.fwd * k; q.x += T.fwd * k; }

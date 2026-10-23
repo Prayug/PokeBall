@@ -1,5 +1,5 @@
 // Small view helpers shared by every screen: escaping, sprites, type chips, overall badges.
-import { PLAYERS } from './ratings.js';
+import { PLAYERS, roleLabel } from './ratings.js';
 import { SPRITES } from './sprites.js';
 import { ABILITIES, TYPE_COLORS, effectLabel } from './types.js';
 import { S } from './state.js';
@@ -17,6 +17,12 @@ export function typeChips(types) {
 }
 function ovrTone(v) { return v >= 90 ? 'elite' : v >= 78 ? 'good' : v >= 62 ? 'ok' : 'low'; }
 export function ovr(v) { return `<span class="ovr ${ovrTone(v)}">${v}</span>`; }
+// Primary group, and Flex or Wildcard when the player is more than one job.
+export function roleHtml(p) {
+  if (!p) return '';
+  const cls = p.wildcard ? 'wild' : p.flex ? 'flex' : '';
+  return `<span class="role ${cls}">${esc(roleLabel(p))}</span>`;
+}
 export function teamBadge(t) { return `<span class="tbadge" style="--team:${t.color}">${esc(t.abbr)}</span>`; }
 export function user() { return S.league?.teams.find((t) => t.user); }
 export function abilityText(id) { const a = ABILITIES[P(id).ability]; return a ? a.text : 'No football effect'; }

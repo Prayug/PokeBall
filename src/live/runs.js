@@ -36,10 +36,11 @@ const DLINE = ['LE', 'DE', 'DT1', 'DT2'];
 export const RUN_CONCEPTS = {
   inside: { scheme: 'zone', side: 'strong', hand: 0.42, read: 'zone' },
   outside: { scheme: 'reach', side: 'strong', hand: 0.45, read: 'edge' },
-  power: { scheme: 'gap', side: 'strong', hand: 0.45, read: null, press: 0.25, pull: ['lead'] },
+  // Patient: he stays on the pulling guard's hip until he is in the hole.
+  power: { scheme: 'gap', side: 'strong', hand: 0.45, read: null, press: 1.2, pull: ['lead'] },
   counter: { scheme: 'gap', side: 'weak', hand: 0.55, read: null, press: 0.25, pull: ['lead'] },
   trap: { scheme: 'trap', side: 'weak', hand: 0.3, read: null, press: 0.35, pull: ['trap'] },
-  dive: { scheme: 'man', side: 'weak', hand: 0.2, read: null, press: 0.5 },
+  dive: { scheme: 'man', side: 'weak', hand: 0.2, read: null, press: 1.0 },
   draw: { scheme: 'draw', side: 'strong', hand: 0.95, read: 'zone' },
   toss: { scheme: 'reach', side: 'weak', hand: 0.3, read: 'edge' },
   sweep: { scheme: 'pin', side: 'strong', hand: 0.4, read: 'edge', pull: ['sweep', 'sweep'] },

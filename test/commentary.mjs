@@ -24,6 +24,7 @@ const check = (ln, where) => {
   if (typeof ln.text !== 'string' || !ln.text.trim()) bad.push(`${where}: empty line`);
   else if (/undefined|NaN|null|\[object|nobody|\$\{/.test(ln.text)) bad.push(`${where}: ${ln.text}`);
   if (!['pbp', 'color'].includes(ln.who)) bad.push(`${where}: bad speaker ${ln.who}`);
+  if (all.length && ln.text === all[all.length - 1]) bad.push(`back to back: ${ln.text}`);
   all.push(ln.text);
   counts.lines++;
   if (PRINT) console.log(`${ln.who === 'pbp' ? 'PBP  ' : 'COLOR'} [${ln.pri}${'!'.repeat(ln.hype)}] ${ln.text}`);

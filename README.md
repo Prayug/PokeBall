@@ -8,7 +8,9 @@ Every football rating comes from real Pokémon data: base stats, types, height, 
 
 Play it at **https://prayug.github.io/PokeBall/**, deployed from `main` on every push.
 
-To play a local copy, download the 3D models once with `npm run models` (they are a release download, not in git), then open `dist/index.html` in a browser, keeping the `dist/models3d/` and `dist/sprites3d/` folders next to it: the 3D models load from there on demand, a few Pokémon at a time. Without the models every Pokémon uses its generated figure. There is no server and no network calls besides Google Fonts and the Pokémon cries, which come from PokeAPI's cry archive as they play (turn "Real Pokémon cries" off in the sound panel and every cry is synthesized on the device instead). Leagues save to the browser's local storage.
+To play a local copy, download the 3D models once with `npm run models` (they are a release download, not in git), then open `dist/index.html` in a browser, keeping the `dist/models3d/` and `dist/sprites3d/` folders next to it: the 3D models load from there on demand, a few Pokémon at a time. Without the models every Pokémon uses its generated figure. Offline leagues save to the browser's local storage. The only network calls in an offline game are Google Fonts and the Pokémon cries, which come from PokeAPI's cry archive as they play (turn "Real Pokémon cries" off in the sound panel and every cry is synthesized on the device instead).
+
+Online play is a separate process. Build the page (`npm run build`), then run `node server/index.js` and open `http://localhost:8787`. Home creates a quick match (`#play=CODE`) or an online league (`#online=CODE`); a friend opens the link. The Pages build can be pointed at a server with `POKEBALL_SERVER=wss://your-host` at build time, or with `?server=ws://localhost:8787` for a local game. One process is enough for friends. League files are written under `data/leagues/`.
 
 Games are played on a 3D field, Madden style: pick a play from the playbook, snap the ball, and control one Pokémon while the AI runs the other 21 using the same ratings and type matchups as the simulator.
 

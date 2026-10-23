@@ -26,7 +26,23 @@ const kg = (id) => Math.round((PLAYERS[id]?.weight ?? 0) / 10);
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const ORD = ['', 'First', 'Second', 'Third', 'Fourth'];
 const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+const TEENS = ['ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty'];
 const say = (n) => (n >= 0 && n <= 10 ? NUM[n] : String(n));
+// A yard line the way a booth says it: "the twenty-three", "the five", "midfield".
+function yardWord(n) {
+  n = Math.round(Math.abs(n));
+  if (n <= 10) return NUM[n];
+  if (n < 20) return TEENS[n - 10];
+  const t = Math.floor(n / 10), o = n % 10;
+  return o ? `${TENS[t]}-${NUM[o]}` : TENS[t] || String(n);
+}
+function hereLine(g, spot = g.spot) {
+  spot = Math.round(spot);
+  if (spot <= 0 || spot >= 100) return 'the goal line';
+  if (spot === 50) return 'midfield';
+  return `the ${yardWord(spot < 50 ? spot : 100 - spot)}`;
+}
 
 // What a type brings to a call: a word for how the Pokémon plays.
 const TYPE_FLAVOR = {
@@ -151,11 +167,20 @@ function presnapRaw(B, g, lp) {
   const lead = g.score[o] - g.score[1 - o];
   const late = (g.quarter === 2 || g.quarter >= 4) && g.clock <= 120;
   if (lp.kick?.ko) {
-    out.push(pbp(pick(B, 'ko', [`${nm(lp.kicker?.id)} kicks it off for the ${T.name}.`, `The ${T.name} kick it away. ${nm(lp.kicker?.id)} approaches.`, `Here's the kickoff from ${nm(lp.kicker?.id)}.`]), 1));
+    const deep = lp.play?.onside ? 'They are showing onside.' : 'They are kicking it deep.';
+    out.push(pbp(pick(B, 'ko', [
+      `${nm(lp.kicker?.id)} on the tee for the ${T.name}. ${deep}`,
+      `Kickoff formation. ${nm(lp.kicker?.id)} back for the ${T.name}. ${deep}`,
+      `The ${T.name} line up to kick. ${nm(lp.kicker?.id)} is over the ball. ${deep}`,
+    ]), 1));
     return out.filter(Boolean);
   }
   if (lp.kick) {
-    if (lp.kind === 'punt') out.push(pbp(pick(B, 'punt', [`Fourth down. ${nm(lp.kicker?.id)} back to punt from ${yardLine(g, o, g.spot)}.`, `The ${T.name} will punt it away. ${nm(lp.kicker?.id)} is back deep.`]), 1));
+    if (lp.kind === 'punt') out.push(pbp(pick(B, 'punt', [
+      `Fourth down. Punt team on, ${nm(lp.kicker?.id)} back from ${yardLine(g, o, g.spot)}.`,
+      `They are going to flip the field. ${nm(lp.kicker?.id)} is deep for the ${T.name}.`,
+      `Punt formation, ${nm(lp.kicker?.id)} standing back from ${hereLine(g)}.`,
+    ]), 1));
     else if (lp.kind === 'xp') out.push(pbp(pick(B, 'xp', [`${nm(lp.kicker?.id)} on for the extra point.`, `The point after, by ${nm(lp.kicker?.id)}.`]), 1));
     else {
       const dist = fgDistance(g);
@@ -172,10 +197,17 @@ function presnapRaw(B, g, lp) {
   const goal = g.spot + g.toGo >= 100;
   const dd = `${ORD[g.down]} and ${goal ? 'goal' : say(g.toGo)}`;
   const where = g.spot >= 50 ? `at ${yardLine(g, o, g.spot)}` : `from ${yardLine(g, o, g.spot)}`;
+  const red = g.spot >= 80;
   let lead1 = '';
   if (late && g.quarter >= 4 && lead < 0) lead1 = pick(B, 'latepre', [`${clockWords(g.clock)} to go, the ${T.name} need ${lead >= -3 ? 'a field goal' : lead >= -8 ? 'a touchdown' : 'a miracle'}.`, `Under two minutes, and the ${T.name} trail by ${-lead}.`]);
   else if (late && g.quarter === 2) lead1 = pick(B, 'halfpre', [`${clockWords(g.clock)} left in the half.`, 'Two-minute drill before the half.']);
-  out.push(pbp([lead1, pick(B, 'dd', [`${dd} ${where}.`, `${dd} for the ${T.name}, ${where}.`, `${T.name} ball, ${dd.toLowerCase()} ${where}.`, `${dd}. ${PLAYERS[T.lineup.QB] ? nm(T.lineup.QB) : 'The quarterback'} brings them to the line ${where}.`])].filter(Boolean).join(' '), 1));
+  const gun = lp.formation && /gun|pistol/.test(lp.formation) ? (lp.formation.startsWith('pistol') ? 'Pistol.' : 'From the gun.') : '';
+  out.push(pbp([lead1, gun, pick(B, 'dd', [
+    `${dd} ${where}.`,
+    `${red ? 'Red zone. ' : ''}${dd} for the ${T.name}, ${where}.`,
+    `${T.name} ball, ${dd.toLowerCase()} ${where}.`,
+    `${dd}. ${PLAYERS[T.lineup.QB] ? nm(T.lineup.QB) : 'The quarterback'} brings them to the line ${where}.`,
+  ])].filter(Boolean).join(' '), 1));
   // The analyst only on some downs, and always on the big ones.
   const big = g.down >= 3 || late || g.spot >= 90;
   if (big || rnd(B) < 0.4) {
@@ -192,10 +224,12 @@ function presnapColor(B, g, lp, { lead, late, goal }) {
   if (g.down === 3) {
     const [made, tries] = T.team?.third ?? [0, 0];
     if (tries >= 2) opts.push(`The ${T.name} are ${made} of ${tries} on third down today.`);
-    if (g.toGo >= 8) opts.push(`Third and long. ${D.name} can pin their ears back and come after the quarterback.`);
+    if (g.toGo >= 8) opts.push(`Third and long. ${D.name} can pin their ears back, or sit in a coverage shell and make him check it down.`);
     else if (g.toGo <= 2) opts.push('Short yardage. Everybody in the building knows they need a push up front.');
   }
   if (goal && g.spot >= 95) opts.push('Goal line. This is where you find out who wants it more.');
+  if (g.spot >= 80 && g.spot < 95) opts.push('Red zone. The field shrinks, and the coverage shell gets tighter.');
+  if (lp.play?.pa) opts.push('Watch the backfield. This has play-action written on it.');
   if (lp.disguise === 'show') opts.push('Look at the linebackers creeping up. They are showing blitz!');
   // A Pokémon zoning in, or already in the zone.
   for (const ti of [o, lp.d]) {
@@ -247,22 +281,53 @@ export function liveLine(B, lp, e) {
   switch (e.kind) {
     case 'handoff':
       if (!once('handoff')) return null;
-      return pbp(pick(B, 'handoff', [`Handoff, ${n}.`, `Give to ${n}.`, `${n} takes the handoff.`, `${n} with it.`]), 2);
-    case 'keep': return once('keep') ? pbp(pick(B, 'keep', [`${n} keeps it!`, `Pulls it! ${n} keeps.`]), 2, 1) : null;
-    case 'scramble': return once('scramble') ? pbp(pick(B, 'scramble', [`${n} escapes the pocket!`, `${n} is flushed out, on the move.`, `${n} takes off!`]), 2, 1) : null;
+      return pbp(pick(B, 'handoff', [
+        `Mesh point. Handoff to ${n}.`,
+        `Under center, give to ${n}.`,
+        `${n} takes the handoff and looks for a lane.`,
+        `The ball is in ${n}'s hands.`,
+      ]), 2);
+    case 'keep': return once('keep') ? pbp(pick(B, 'keep', [`He pulls it. ${n} keeps!`, `Read the end. ${n} keeps it!`]), 2, 1) : null;
+    case 'scramble': return once('scramble') ? pbp(pick(B, 'scramble', [
+      `The pocket breaks down. ${n} is out of it!`,
+      `${n} climbs the pocket and takes off!`,
+      `Flushed. ${n} scrambles!`,
+    ]), 2, 1) : null;
     case 'throw': {
       if (!once('throw')) return null;
-      if (!other) return pbp(pick(B, 'away', ['Throws it away.', `${n} throws it away.`]), 2);
+      if (!other) return pbp(pick(B, 'away', [`Nothing open. ${n} throws it away.`, `Out of the pocket, and he lets it go.`]), 2);
       const air = (other.x ?? 0) - (who?.x ?? 0);
       P.deep = air >= 18;
-      if (P.deep) return pbp(pick(B, 'deep', [`${n} goes deep for ${m}!`, `Launches it downfield, ${m} is going!`, `Here's the shot, deep for ${m}!`]), 2, 1);
-      return pbp(pick(B, 'throw', [`${n} throws, for ${m}.`, `Looking for ${m}.`, `${n} fires.`, `Quick throw to ${m}.`]), 2);
+      if (P.deep) return pbp(pick(B, 'deep', [
+        `He has time. ${n} goes deep for ${m}!`,
+        `Play-action, and he launches it. ${m} is going!`,
+        `From the gun. Here's the shot, deep for ${m}!`,
+      ]), 2, 1);
+      return pbp(pick(B, 'throw', [
+        `Quick game. ${n} throws for ${m}.`,
+        `From the pocket, looking for ${m}.`,
+        `${n} fires on rhythm, for ${m}.`,
+        air < 6 ? `Checkdown. ${n} dumps it to ${m}.` : `On time, for ${m}.`,
+      ]), 2);
     }
     case 'catch':
-      if (lp.kick) return once('kcatch') ? pbp(pick(B, 'kcatch', [`${n} fields it.`, `${n} has it, and brings it out.`]), 2) : null;
+      if (lp.kick) return once('kcatch') ? pbp(pick(B, 'kcatch', [
+        `${n} fields it. The return is on.`,
+        `${n} brings it out. The return is on.`,
+        `Fair or return. ${n} takes it, and the return is on.`,
+      ]), 2, 1) : null;
       if (!once('catch')) return null;
-      return P.deep ? pbp(pick(B, 'deepcatch', [`Caught! ${n}!`, `And ${n} hauls it in!`, `What a grab by ${n}!`]), 3, 2) : pbp(pick(B, 'catch', [`Caught by ${n}.`, `${n} has it.`, `Complete to ${n}.`, `${n} with the grab.`]), 2);
-    case 'int': return once('int') ? pbp(pick(B, 'int', [`Intercepted! ${n} picks it off!`, `Picked off! ${n} jumps the route!`, `It's intercepted by ${n}!`]), 3, 2) : null;
+      return P.deep ? pbp(pick(B, 'deepcatch', [`Down the field. Caught, ${n}!`, `Over the top. ${n} hauls it in!`, `What a grab by ${n}!`]), 3, 2) : pbp(pick(B, 'catch', [
+        `On the hands. Caught by ${n}.`,
+        `${n} has it, and he turns upfield.`,
+        `Complete to ${n}.`,
+        `${n} secures it.`,
+      ]), 2);
+    case 'int': return once('int') ? pbp(pick(B, 'int', [
+      `Into coverage. Intercepted! ${n} picks it off!`,
+      `He jumped the route. Picked off by ${n}!`,
+      `It's intercepted by ${n}!`,
+    ]), 3, 2) : null;
     case 'incomplete': {
       if (!once('inc')) return null;
       const t = e.text || '';
@@ -279,14 +344,18 @@ export function liveLine(B, lp, e) {
         truck: [`${n} runs right over ${m}!`, `${n} trucks ${m}!`, `Oh, ${n} just bowled over ${m}!`],
         spin: [`Spin move! ${n} gets away from ${m}!`, `${n} spins out of it!`],
         juke: [`${n} jukes ${m}!`, `Oh, ${n} made ${m} miss!`, `${m} grabs nothing but air!`],
-        shake: [`${n} shakes ${m}!`, `${n} breaks the tackle!`, `${m} can't bring him down!`],
+        shake: [`${n} shakes ${m}!`, `${n} breaks a tackle!`, `He breaks a tackle. ${m} cannot bring him down!`],
       }[how];
       return pbp(pick(B, `brk-${how}`, opts), 2, 1);
     }
     case 'ghost': return pbp(pick(B, 'ghost', [`${n} goes right through ${m}! You can't tackle a ghost!`, `${n} phases through him!`]), 2, 2);
     case 'slip': return once('slip') ? pbp(pick(B, 'slip', [`${n} slips!`, `${n} loses his footing!`]), 2) : null;
     case 'bighit': return pbp(pick(B, 'bighit', ['Boom!', `What a hit by ${n}!`, `${n} lays the wood!`, `Oh, ${n} unloads on him!`]), 2, 2);
-    case 'sack': return once('sack') ? pbp(pick(B, 'sack', [`Sacked! ${n} gets him!`, `${n} with the sack!`, `Down goes ${m}! ${n} with the sack!`]), 3, 2) : null;
+    case 'sack': return once('sack') ? pbp(pick(B, 'sack', [
+      `The pocket collapses. Sacked! ${n} gets him!`,
+      `Pressure off the edge. ${n} with the sack!`,
+      `Down goes ${m}. ${n} with the sack!`,
+    ]), 3, 2) : null;
     case 'flag': return once('flag') ? pbp(pick(B, 'flag', ['Flag on the play.', "There's a flag down.", 'And a flag.']), 2, 1) : null;
     case 'power':
       if (!who?.power || !once(`pw:${who.id}`)) return null;
@@ -295,23 +364,58 @@ export function liveLine(B, lp, e) {
       if (e.fx !== 'se' && !/super effective/i.test(e.text)) return null;
       if (!once('se') || rnd(B) < 0.45) return null;
       return color(pick(B, 'se', ["It's super effective!", "Super effective! You'll feel that one.", 'Type advantage, right there!', `${n} had the type on him there.`, 'Oh, that is super effective!']), 2, 1);
-    case 'kickoff': return once('kickoff') ? pbp(pick(B, 'kickoff', ['And the kick is away.', `${n} boots it.`, 'Here it comes.']), 2) : null;
-    case 'punt': return once('puntk') ? pbp(pick(B, 'puntk', ['The punt is away.', `${n} gets it off.`]), 2) : null;
-    case 'fgkick': return once('fgk') ? pbp(pick(B, 'fgk', ['The kick is up...', 'Snap, hold, the kick is up...']), 2, 1) : null;
-    case 'fg_good': return once('fgres') ? pbp(pick(B, 'fggood', ["It's good!", 'Right down the middle! Good!', 'And it is good!']), 3, 2) : null;
-    case 'fg_miss': return once('fgres') ? pbp(pick(B, 'fgmiss', ['No good!', "It's wide! No good!", 'And it misses!']), 3, 2) : null;
+    case 'kickoff': return once('kickoff') ? pbp(pick(B, 'kickoff', [
+      `Off the tee. The kick is away, and it is high.`,
+      `${n} gets into it. The kick is away.`,
+      `He hits it. The kick is away, hang time to cover.`,
+    ]), 2, 1) : null;
+    case 'punt': return once('puntk') ? pbp(pick(B, 'puntk', [
+      `Snap is back. The kick is away from ${n}.`,
+      `${n} gets it off. The kick is away, high and deep.`,
+      `Protection holds. The kick is away.`,
+    ]), 2, 1) : null;
+    case 'fgkick': return once('fgk') ? pbp(pick(B, 'fgk', ['Snap, hold. The kick is up...', 'Hold is down. The kick is up...']), 2, 1) : null;
+    case 'fg_good': return once('fgres') ? pbp(pick(B, 'fggood', ["Through the uprights. It's good!", 'Right down the middle. It is good!', 'And it is good!']), 3, 2) : null;
+    case 'fg_miss': return once('fgres') ? pbp(pick(B, 'fgmiss', ['Off the mark. No good!', "It's wide. No good!", 'And it misses. No good!']), 3, 2) : null;
     case 'block': return once('block') ? pbp(pick(B, 'block', ['Blocked! It is blocked!', `${n} gets a hand on it! Blocked!`]), 3, 2) : null;
     case 'fair': return once('fair') ? pbp(`Fair catch, ${n}.`, 2) : null;
     case 'downed': return once('downed') ? pbp('Downed by the coverage.', 2) : null;
-    case 'fake': return once('fake') ? pbp(pick(B, 'fake', ["It's a fake!", 'Fake! They are running a fake!']), 3, 2) : null;
+    case 'fake': return once('fake') ? pbp(pick(B, 'fake', ['They sold the kick. It is a fake!', 'Fake! They are running a fake!']), 3, 2) : null;
     case 'recover': return once('recover') ? pbp(`${n} recovers!`, 3, 2) : null;
     default: return null;
   }
 }
 
+// While a kickoff or a punt hangs, one call of the landing: hash and yard line, so you can get under it.
+function kickSpotLine(B, lp) {
+  const K = lp.kick, F = K?.F;
+  if (!F || K.onside || K.stage !== 'air' || lp.ball?.state !== 'air' || !(K.ko || K.punt)) return null;
+  const P = B.play?.lp === lp ? B.play : null;
+  if (!P) return null;
+  const age = lp.t - F.t0;
+  if (age < 0.35 || age > 1.5 || P.marks.has('kickspot')) return null;
+  P.marks.add('kickspot');
+  const g = lp.g;
+  const from = K.ko ? (g.spot || 35) : g.spot;
+  const abs = from + F.tx;
+  const side = F.ty >= 0 ? 'right' : 'left';
+  const a = Math.abs(F.ty);
+  const hash = a < 4 ? 'middle' : a < 16 ? `${side} hash` : `${side} numbers`;
+  let where;
+  if (abs >= 100) where = 'into the end zone';
+  else {
+    const their = Math.max(1, Math.min(50, Math.round(100 - abs)));
+    where = their >= 45 ? 'near midfield' : `around the ${yardWord(their)}`;
+  }
+  const depth = abs >= 90 ? 'Deep' : 'Short';
+  return pbp(`${depth}, ${hash}, ${where}.`, 2, 1);
+}
+
 // The run in the open field: called off the carrier's progress each frame. Returns a line the
 // first time he breaks into the clear and as he passes the 30, 20 and 10 on a long run.
 export function progressLine(B, lp) {
+  const spot = kickSpotLine(B, lp);
+  if (spot) return spot;
   const P = B.play;
   if (!P || P.lp !== lp || lp.phase !== 'live') return null;
   const c = lp.ball?.holder;
@@ -323,7 +427,12 @@ export function progressLine(B, lp) {
   const chasers = lp.players.filter((q) => q.side !== c.side && (up ? q.x > c.x - 1 : q.x < c.x + 1) && Math.hypot(q.x - c.x, q.y - c.y) < 6).length;
   const n = nm(c.id);
   const mark = (k) => { if (P.marks.has(k)) return false; P.marks.add(k); return true; };
-  if (gained >= 12 && chasers === 0 && toGo > 25 && mark('open')) return pbp(pick(B, 'open', [`${n} breaks into the open!`, `${n} is loose!`, `${n} has room to run!`, `Daylight for ${n}!`]), 2, 2);
+  if (gained >= 12 && chasers === 0 && toGo > 25 && mark('open')) return pbp(pick(B, 'open', [
+    `He breaks a tackle. ${n} is into the open!`,
+    `${n} is loose. He will not be denied!`,
+    `A step on the corner, and ${n} has daylight!`,
+    `Nothing but green. ${n} is gone!`,
+  ]), 2, 2);
   for (const yd of [30, 20, 10]) {
     if (toGo <= yd && toGo > yd - 6 && gained >= 15 && mark(`yd${yd}`)) {
       if (yd === 20 && chasers === 0 && mark('allway')) return pbp(pick(B, 'allway', ['He could go all the way!', `${n} could go all the way!`, 'Nobody is going to catch him!']), 2, 2);
@@ -420,8 +529,11 @@ function afterRaw(B, g, e, before, lp) {
     return out;
   }
   // Takeaways.
-  if (e.turnover === 'fumble' || /FUMBLE!/.test(e.text ?? '') && changed) {
-    out.push(pbp(pick(B, 'fum', [`Fumble! And the ${D.name} recover!`, `The ball is out! ${D.name} have it!`]), 3, 2));
+    if (e.turnover === 'fumble' || /FUMBLE!/.test(e.text ?? '') && changed) {
+    out.push(pbp(pick(B, 'fum', [
+      `Contact, and the ball is out. Fumble! The ${D.name} recover!`,
+      `He did not protect it. Fumble! ${D.name} have it!`,
+    ]), 3, 2));
     out.push(color(pick(B, 'fumc', [`${nm(c)} has to protect the football there. Two hands in traffic.`, 'Huge turnover. That changes everything.']), 1, 1));
     if (td) out.push(...scoreCall(B, g, e, before, scoredBy, 'defense'));
     streak(B, 1 - o, 'stop');
@@ -451,7 +563,12 @@ function afterRaw(B, g, e, before, lp) {
   // Sacks.
   if (e.kind === 'sack' || e.highlight === 'sack') {
     if (!said.has('sack')) out.push(pbp(`${(e.text ?? '').split('.')[0]}.`, 2, 1));
-    out.push(color(pick(B, 'sackc', ['The pocket collapsed. He had nowhere to go.', 'Great push up front. That is a drive killer.', `${D.name}'s front is winning the battle in the trenches.`, 'He held onto it too long, Mack.']), 1));
+    out.push(color(pick(B, 'sackc', [
+      'The pocket collapsed. He had nowhere to go.',
+      'Great push up front. That is a drive killer.',
+      `${D.name}'s front is winning the battle in the trenches.`,
+      'He held onto it too long, Mack. The coverage shell was still sitting under him.',
+    ]), 1));
     streak(B, 1 - o, 'stop');
     return out.filter(Boolean);
   }
@@ -480,12 +597,18 @@ function endWrap(B, g, e, lp, yd) {
   const how = lp?.end?.how;
   const tk = lp?.end?.tackler ? nm(lp.end.tackler.id) : (e.text ?? '').match(/Tackled by ([^.]+)\./)?.[1];
   const at = yardLine(g, g.poss, g.spot);
+  const spot = hereLine(g);
   if (how === 'out') return pick(B, 'oob', [`${n} steps out of bounds at ${at}.`, `${n} gets out of bounds, ${yd > 0 ? `a gain of ${yd}` : 'no gain'}.`]);
-  if (how === 'slide') return `${n} slides down. Smart.`;
-  if (yd < 0) return pick(B, 'loss', [`${tk ? `${tk} drops ${n}` : `${n} is dropped`} for a loss of ${-yd}.`, `Stuffed in the backfield! Loss of ${-yd}.`]);
-  if (yd === 0) return pick(B, 'nogain', [`${tk ? `Stopped by ${tk}` : 'Stopped'} for no gain.`, 'Nothing there.', `${n} goes nowhere.`]);
-  if (yd >= 20) return pick(B, 'bigwrap', [`${n} for ${yd}! ${tk ? `Finally brought down by ${tk}.` : ''}`, `A gain of ${yd} on the play!`, `${yd} yards! ${tk ? `${tk} saves the touchdown.` : ''}`]).trim();
-  return pick(B, 'gain', [`${n} for ${say(yd)}.`, `${tk ? `${tk} brings him down` : 'Brought down'} after ${plural(yd, 'yard').replace(/^1 yard$/, 'a yard')}.`, `A pickup of ${say(yd)}.`, `${n} picks up ${say(yd)}.`]);
+  if (how === 'slide') return `${n} slides down at ${spot}. Smart, and the clock stops.`;
+  if (yd < 0) return pick(B, 'loss', [`Wrapped up. ${tk ? `${tk} drops ${n}` : `${n} is dropped`} for a loss of ${-yd}.`, `Stuffed in the backfield. Loss of ${-yd}.`]);
+  if (yd === 0) return pick(B, 'nogain', [`${tk ? `Stopped by ${tk}` : 'Stopped'} for no gain.`, 'The hole never opened. Nothing there.', `${n} goes nowhere.`]);
+  if (yd >= 20) return pick(B, 'bigwrap', [`${n} for ${yd}! ${tk ? `Finally brought down by ${tk} at ${spot}.` : ''}`, `A gain of ${yd} on the play!`, `${yd} yards! ${tk ? `${tk} saves the touchdown.` : ''}`]).trim();
+  return pick(B, 'gain', [
+    `${n} wrapped up at ${spot}.`,
+    `${tk ? `${tk} brings him down` : 'Brought down'} at ${spot}.`,
+    `A pickup of ${say(yd)}, down at ${spot}.`,
+    `${n} picks up ${say(yd)}.`,
+  ]);
 }
 function scoreCall(B, g, e, before, ti, how) {
   ti = ti ?? e.team ?? g.poss;
@@ -494,7 +617,13 @@ function scoreCall(B, g, e, before, ti, how) {
   const yd = e.yards ?? 0;
   const out = [];
   const cry = how === 'pick' ? 'Pick six!' : how === 'return' ? 'He took it to the house!' : 'Touchdown!';
-  out.push(pbp(pick(B, `td-${how}`, [`${cry} ${T.name}!`, `${cry} ${nm(c)}!`, `${cry} ${nm(c)} ${how === 'pass' || how === 'run' ? `from ${yd === 1 ? 'a yard' : `${yd} yards`} out` : 'all the way'}!`]), 3, 2));
+  const from = how === 'pass' || how === 'run' ? `from ${yd === 1 ? 'a yard' : `${yd} yards`} out` : 'all the way';
+  const scorer = c != null ? nm(c) : T.name;
+  out.push(pbp(pick(B, `td-${how}`, [
+    `He will not be denied. ${cry} ${T.name}!`,
+    `Into the end zone. ${cry} ${scorer}!`,
+    `${cry} ${scorer} ${from}!`,
+  ]), 3, 2));
   const lead = g.score[ti] - g.score[1 - ti];
   const late = g.quarter >= 4 && g.clock <= 300;
   const d = g.drives[g.drives.length - 1];

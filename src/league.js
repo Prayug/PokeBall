@@ -352,8 +352,8 @@ export function newGameSeed(L) {
   return s;
 }
 
-export function startLeagueGame(L, home, away, playoff = false) {
-  return createGame({ home: teamForGame(L.teams[home], L), away: teamForGame(L.teams[away], L), seed: newGameSeed(L), playoff, injuries: true });
+export function startLeagueGame(L, home, away, playoff = false, liveKicks = false) {
+  return createGame({ home: teamForGame(L.teams[home], L), away: teamForGame(L.teams[away], L), seed: newGameSeed(L), playoff, injuries: true, liveKicks });
 }
 
 const compactStats = (stats) => Object.fromEntries(Object.entries(stats)

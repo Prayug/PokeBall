@@ -16,6 +16,8 @@ import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions, quickCalls } from './c
 import { SHADES, audibles, cycleShade, flipRun, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
 import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
+import { clipFromJson } from '../film.js';
+import { onNet, send as netSend } from '../net.js';
 import { boothAfter } from '../broadcast.js';
 import { boothAfter as callAfter, boothFlow, boothHush, boothLive, boothReset, boothReview, captionHtml } from './booth.js';
 import { afterPlay as broadcastAfter, afterReview as broadcastReview, layersHtml, onCall as broadcastCall, onFlow as broadcastFlow, resetBroadcast } from './broadcast.js';
@@ -153,6 +155,7 @@ export function mountStage() {
   // A re-render during the replay (or in the film room) keeps showing it, not the next play lining up.
   if (FILM.open && FILM.lp) stage.setPlay(FILM.lp);
   else if (L3.replay) stage.setPlay(L3.replay.lp);
+  else if (L3.net && L3.lp) stage.setPlay(L3.lp);
   else if (!L3.lp) showPreview();
 }
 
@@ -252,6 +255,10 @@ function audible(call) {
 // a choice from it, or change the defense's look.
 export function presnapAct(act, arg) {
   const lp = L3.lp;
+  if (S.online && lp && act !== 'open' && act !== 'hotpick') {
+    netSend({ t: 'presnap', act, arg, slot: S.psPick?.slot });
+    return;
+  }
   if (!lp || lp.phase !== 'pre' || S.coachDown || lp.user == null) return;
   if (!lp.set && act !== 'open') { flash('Wait until everyone is set', 'muted'); return; }
   const mine = lp.user === lp.o;
@@ -512,9 +519,10 @@ function hudTip(lp) {
   if (lp.kick) {
     if (lp.phase === 'pre') return lp.user === lp.o ? `Space ${lp.kick.ko ? 'kick off' : 'snap'} · the kick goes on its own · Esc change call` : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
     if (lp.phase === 'dead') return '';
-    if (c && c === lp.kick.returner && !c.carrier) return 'Get under it · arrows move · Shift sprint';
-    if (c && !c.carrier && c.side === 'off') return 'Cover the kick · arrows move · Shift sprint · Space dive';
-    if (!c) return lp.kick.kickedAt != null ? 'Kick away' : lp.kick.ko ? 'The kicker runs up…' : 'The long snap…';
+    const ring = lp.kick.F && !lp.kick.onside && (lp.kick.ko || lp.kick.punt) && lp.ball.state === 'air';
+    if (c && c === lp.kick.returner && !c.carrier) return `${ring ? 'The ring is where the ball comes down' : 'Get under it'} · arrows move · Shift sprint`;
+    if (c && !c.carrier && c.side === 'off') return `${ring ? 'The ring is where the ball comes down' : 'Cover the kick'} · arrows move · Shift sprint · Space dive`;
+    if (!c) return lp.kick.kickedAt != null ? (ring ? 'The ring is where the ball comes down' : 'Kick away') : lp.kick.ko ? 'The kicker runs up…' : 'The long snap…';
   }
   if (lp.phase === 'pre') {
     if (!c) return 'Coach mode · Space to snap now · Esc to change the call';
@@ -541,6 +549,136 @@ function flowNow(now) {
   return 'PLAY_SELECTION';
 }
 
+function beginNetPlay(msg) {
+  const g = msg.g;
+  S.game = g;
+  const ghost = structuredClone(g);
+  const opts = { ...msg.opts };
+  if (opts.user2 == null) delete opts.user2;
+  const lp = createLivePlay(ghost, msg.off, msg.def, opts);
+  const you = S.net?.you ?? 0;
+  // The server builds one play for both seats. This machine keeps the seat it plays.
+  if (you === 1 && lp.p2) swapPads(lp);
+  lp.g = S.game;
+  lp.p2 = null;
+  lp.user = you;
+  L3.lp = lp;
+  L3.net = true;
+  L3.netHold = 0;
+  L3.netSeq = 0;
+  L3.off = msg.off;
+  L3.def = msg.def;
+  L3.before = { poss: g.poss, down: g.down, toGo: g.toGo, spot: g.spot, score: [...g.score], quarter: g.quarter, logN: g.log.length, drives: g.drives.length };
+  L3.ev = 0;
+  L3.acc = 0;
+  L3.committed = null;
+  stage?.setPlay(lp);
+  setFlow(lp.set ? 'PRE_SNAP' : 'FORMATION_SETUP');
+}
+function applyNetSnap(msg) {
+  const lp = L3.lp;
+  if (!lp || !L3.net) return;
+  const by = (side, slot) => lp.players.find((p) => p.side === side && p.slot === slot);
+  const mineKey = msg.ctrl?.[S.net?.you ?? 0];
+  for (const b of msg.bodies || []) {
+    const p = by(b.side, b.slot);
+    if (!p) continue;
+    if (mineKey === `${b.side}:${b.slot}`) {
+      const d = Math.hypot(b.x - p.x, b.y - p.y);
+      if (d > 2.4 || !lp._seenSnap) { p.x = b.x; p.y = b.y; }
+      else { p.x += (b.x - p.x) * 0.35; p.y += (b.y - p.y) * 0.35; }
+      p.px = p.x; p.py = p.y;
+      lp.control = p;
+    } else {
+      p.px = p.x; p.py = p.y;
+      p.x = b.x; p.y = b.y; p.vx = b.vx; p.vy = b.vy; p.fx = b.fx; p.fy = b.fy;
+      if (b.act) p.act = b.act;
+    }
+  }
+  lp._seenSnap = true;
+  const ball = lp.ball;
+  if (msg.ball && ball) {
+    ball.px = ball.x; ball.py = ball.y; ball.pz = ball.z;
+    ball.state = msg.ball.state; ball.x = msg.ball.x; ball.y = msg.ball.y; ball.z = msg.ball.z;
+    ball.vx = msg.ball.vx; ball.vy = msg.ball.vy; ball.vz = msg.ball.vz;
+    ball.holder = msg.ball.holder ? by(...msg.ball.holder.split(':')) : null;
+  }
+  if (msg.kick && lp.kick) {
+    lp.kick.stage = msg.kick.stage;
+    lp.kick.onside = !!msg.kick.onside;
+    lp.kick.ko = !!msg.kick.ko;
+    lp.kick.punt = !!msg.kick.punt;
+    if (msg.kick.F) lp.kick.F = { ...(lp.kick.F || {}), ...msg.kick.F };
+  }
+  if (msg.phase === 'live' || msg.phase === 'pre' || msg.phase === 'dead') lp.phase = msg.phase;
+  lp.t = msg.simT ?? lp.t;
+  lp._simT = lp.t;
+  lp._simAt = performance.now();
+  lp._snapAt = lp._simAt;
+  if (msg.set) lp.set = true;
+  for (const e of msg.events || []) lp.events.push(e);
+}
+function showServerResult(msg) {
+  const b = L3.before;
+  if (msg.g) S.game = msg.g;
+  const entry = msg.entry;
+  if (msg.clip) {
+    try { const c = clipFromJson(msg.clip); addToReel(c.rec, S.game, entry); } catch { /* the clip did not travel; the live result still stands */ }
+  }
+  L3.netHold = performance.now() + 1800;
+  if (L3.lp) L3.lp.phase = 'dead';
+  if (b && msg.g) for (const i of [0, 1]) if (msg.g.score[i] !== b.score[i]) L3.scoreFlash[i] = performance.now() + 2200;
+  render();
+  if (entry && S.game) { showBanner(resultBanner(entry, L3.lp, b)); callAfter(S.game, entry, b, L3.lp); }
+}
+function netPresnap(msg) {
+  const lp = L3.lp;
+  if (!lp || lp.phase !== 'pre') return;
+  if (msg.act === 'hot') hotRoute(lp, msg.slot, msg.arg);
+  else if (msg.act === 'motion') startMotion(lp, msg.arg);
+  else if (msg.act === 'flip') flipRun(lp);
+  else if (msg.act === 'shade') cycleShade(lp);
+  else if (msg.act === 'show') setDisguise(lp, 'show');
+  else if (msg.act === 'back') setDisguise(lp, 'back');
+}
+function predictMine(lp, inp, dt) {
+  const p = lp.control;
+  if (!p || !inp) return;
+  const mx = inp.mx || 0, my = inp.my || 0, mag = Math.hypot(mx, my);
+  if (mag > 0.1) {
+    const sp = (p.top || 8) * (inp.sprint ? 1.08 : 0.9);
+    p.x += (mx / mag) * sp * dt;
+    p.y += (my / mag) * sp * dt;
+  }
+  p.px = p.x; p.py = p.y;
+  if (lp._simT != null) lp.t = lp._simT + (performance.now() - (lp._simAt || performance.now())) / 1000;
+}
+function netFrame(lp, dt, now) {
+  if (lp.phase === 'pre') {
+    if (L3.edges.has('Space')) L3.snapWant = true;
+    if (L3.snapWant) { clearInput(); L3.snapWant = false; netSend({ t: 'snap' }); }
+    else clearInput();
+  } else if (lp.phase === 'live') {
+    const inp = readInput(lp);
+    L3.netSeq = (L3.netSeq || 0) + 1;
+    netSend({ t: 'input', ...inp, seq: L3.netSeq });
+    predictMine(lp, inp, dt);
+    boothLive(lp);
+  }
+  if (L3.netHold && now > L3.netHold) {
+    L3.netHold = 0;
+    L3.lp = null;
+    L3.net = false;
+    setFlow('PLAY_SELECTION');
+    render();
+    return null;
+  }
+  const since = lp._snapAt ? (now - lp._snapAt) / 50 : 1;
+  L3.acc = Math.min(1, Math.max(0, since)) * DT;
+  return L3.lp;
+}
+onNet({ play: beginNetPlay, snap: applyNetSnap, whistle: showServerResult, presnap: netPresnap });
+
 function loop(now) {
   L3.raf = requestAnimationFrame(loop);
   if (!stage || S.screen !== 'game' || !document.getElementById('stage-slot')) { L3.last = now; return; }
@@ -554,6 +692,8 @@ function loop(now) {
     // Paused: the play stands still (the clocks with it) until it is resumed.
     sim = lp;
     L3.acc = 0;
+  } else if (lp && L3.net) {
+    sim = netFrame(lp, dt, now);
   } else if (lp) {
     sim = lp;
     if (lp.phase === 'pre') {

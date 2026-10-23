@@ -94,6 +94,44 @@ export function duck(on) {
   ducked = !!on;
   if (ctx) setDuckedGains(ctx.currentTime);
 }
+// One-shot booth hits (touchdown, pick, sack, and the rest). Files are optional: a missing
+// clip is skipped and speech synthesis says the line. Two voices, brighter play-by-play and
+// a lower analyst, played on the master bus so the crowd and music still duck under them.
+const BOOTH_HITS = ['touchdown', 'pick', 'sack', 'fumble', 'good', 'nogood', 'kickaway', 'break', 'house'];
+const boothRaw = { pbp: {}, color: {} };
+let boothVoices = 0, boothAsked = false;
+export const boothClipOn = () => boothVoices > 0;
+export function loadBoothClips() {
+  if (boothAsked || typeof window === 'undefined' || typeof fetch !== 'function') return;
+  boothAsked = true;
+  for (const who of ['pbp', 'color']) {
+    for (const id of BOOTH_HITS) {
+      const url = `booth/${who}-${id}.mp3`;
+      fetch(url).then((r) => (r.ok ? r.arrayBuffer() : null)).then((buf) => { if (buf) boothRaw[who][id] = buf; }).catch(() => {});
+    }
+  }
+}
+function startBoothBuffer(buf) {
+  duck(true);
+  boothVoices++;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const g = ctx.createGain();
+  g.gain.value = 0.95;
+  src.connect(g).connect(master);
+  src.onended = () => { boothVoices = Math.max(0, boothVoices - 1); };
+  src.start();
+}
+// Play a committed hit for this voice if the file decoded. Returns false when there is no clip.
+export function playBoothHit(who, id) {
+  const slot = boothRaw[who]?.[id] ? who : boothRaw.pbp?.[id] ? 'pbp' : null;
+  if (!slot || !ready()) return false;
+  const held = boothRaw[slot][id];
+  if (held instanceof AudioBuffer) { startBoothBuffer(held); return true; }
+  const copy = held.slice(0);
+  ctx.decodeAudioData(copy).then((buf) => { boothRaw[slot][id] = buf; startBoothBuffer(buf); }).catch(() => {});
+  return true;
+}
 export function setRealCries(on) { CRY.real = !!on; }
 
 // The crowd's level follows the game: 0 calm .. 1 a touchdown.

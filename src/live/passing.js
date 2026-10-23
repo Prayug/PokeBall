@@ -288,22 +288,53 @@ export function routeWant(lp, p) {
   seek(p, aim, Math.max(frac, 0.25), 0.01);
 }
 
-// Past the end of an arrow route: on along the direction of its last leg; near the sideline
-// that direction bends upfield, and he never runs out of bounds or out the back of the end zone.
+// Past the end of an arrow route: the play art carries on along the last leg, then up the
+// sideline when that leg runs out of field. He chases a point a little ahead of himself on
+// that line, the same way he runs a leg, so a corner on his hip cannot walk him off it. He
+// never runs out of bounds or out the back of the end zone.
 function arrowWant(lp, p, r) {
+  const pts = p.arrow ??= arrowArt(p, r);
+  const aim = pointAhead(pts, p.x, p.y, 1.1 + len(p.vx, p.vy) * 0.12);
+  if (aim.x > lp.goalX + 7.5) aim.x = lp.goalX + 7.5;
+  seek(p, aim, 0.9, 0.01);
+}
+
+// The arrow as the play art draws it on: from the last break, along that leg, turning upfield
+// at the sideline instead of running out of bounds.
+function arrowArt(p, r) {
   const b = r[r.length - 1], a0 = r[r.length - 2];
-  const a = a0 && a0.x != null ? a0 : p.legFrom && (p.legFrom.x !== b.x || p.legFrom.y !== b.y) ? p.legFrom : r.from ?? p;
+  const a = a0 && a0.x != null ? a0 : p.legFrom && (p.legFrom.x !== b.x || p.legFrom.y !== b.y) ? p.legFrom : r.from ?? { x: p.x, y: p.y };
   let dx = b.x - a.x, dy = b.y - a.y;
   const l = len(dx, dy) || 1;
   dx /= l; dy /= l;
-  const edge = SIDE - 2.5 - Math.abs(p.y);
-  if (dy * p.y > 0 && edge < 2) {
-    // At the sideline: turn up it.
-    const k = clamp(edge / 2, 0, 1);
-    dy *= k; dx = Math.sqrt(Math.max(0, 1 - dy * dy));
+  const sideIn = SIDE - 2.5;
+  let k = 25;
+  if (dy && Math.abs(b.y + dy * k) > sideIn) k = Math.max(0, (sideIn * Math.sign(dy) - b.y) / dy);
+  const e = { x: b.x + dx * k, y: clamp(b.y + dy * k, -sideIn, sideIn) };
+  const pts = [b, e];
+  if (k < 25) pts.push({ x: e.x + 30, y: e.y });
+  return pts;
+}
+
+// A point `ahead` yards further along a polyline than the closest point to (x, y).
+function pointAhead(pts, x, y, ahead) {
+  let best = 99, bi = 1, bu = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1;
+    const u = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / l2));
+    const d = Math.hypot(a.x + dx * u - x, a.y + dy * u - y);
+    if (d < best) { best = d; bi = i; bu = u; }
   }
-  const sp = p.top * 0.9;
-  p.want = { vx: dx * sp, vy: dy * sp };
+  let i = bi, a = pts[i - 1], b = pts[i];
+  let dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1, u = bu, left = ahead;
+  let rem = (1 - u) * L;
+  while (left > rem && i < pts.length - 1) {
+    left -= rem; i++;
+    a = pts[i - 1]; b = pts[i];
+    dx = b.x - a.x; dy = b.y - a.y; L = Math.hypot(dx, dy) || 1; u = 0; rem = L;
+  }
+  const t = u * L + Math.min(left, rem);
+  return { x: a.x + (dx / L) * t, y: a.y + (dy / L) * t };
 }
 
 // Is the quarterback scrambling with the ball, still a passer (rolled out of the pocket, or
