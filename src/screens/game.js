@@ -177,8 +177,13 @@ export function renderGame() {
       const lp = L3.lp;
       const offTxt = `${FORMATIONS[lp.formation]?.name ?? ''}`, defTxt = `${DEF_FORMATIONS[lp.defFormation]?.name ?? ''}`;
       // Two players: each sees only the other's formation, not the call.
-      const mine = lp.p2 ? `${g.teams[lp.o].abbr} ${offTxt}` : lp.user === lp.o ? `${offTxt} · ${OFF_PLAYS[L3.off].name}` : `${defTxt} · ${DEF_PLAYS[L3.def].name}`;
-      const theirs = lp.p2 ? `vs ${g.teams[lp.d].abbr} ${defTxt}` : lp.user === lp.o ? `vs ${defTxt}` : `vs ${offTxt}`;
+      // A kick names the kick, and the return or the block on the other side, not the
+      // formations a scrimmage down would line up in.
+      const kickTxt = OFF_PLAYS[L3.off]?.name ?? 'Kick', backTxt = !lp.kick ? '' : lp.kick.ko ? 'Kick return' : lp.kick.punt ? 'Punt return' : 'Field goal block';
+      const mine = lp.kick ? (lp.p2 || lp.user === lp.o ? `${g.teams[lp.o].abbr} ${kickTxt}` : backTxt)
+        : lp.p2 ? `${g.teams[lp.o].abbr} ${offTxt}` : lp.user === lp.o ? `${offTxt} · ${OFF_PLAYS[L3.off].name}` : `${defTxt} · ${DEF_PLAYS[L3.def].name}`;
+      const theirs = lp.kick ? (lp.p2 || lp.user === lp.o ? `vs ${g.teams[lp.d].abbr} ${backTxt}` : `vs ${g.teams[lp.o].abbr} ${kickTxt}`)
+        : lp.p2 ? `vs ${g.teams[lp.d].abbr} ${defTxt}` : lp.user === lp.o ? `vs ${defTxt}` : `vs ${offTxt}`;
       if (spectating() && (S.coachDown || lp.user == null)) overlay = watchChip();
       else if (lp.phase === 'pre') overlay = `<div class="lined3">${S.coachDown || lp.p2 ? '' : adjustHtml(lp)}<div class="pill lined"><span class="pl-play">${esc(mine)}<small>${esc(theirs)}</small></span>
         <button class="btn primary" data-act="snap">${lp.p2 || lp.user === lp.o ? 'Snap' : 'Start'} <kbd>${lp.p2 && lp.o === 1 ? 'Enter' : 'Space'}</kbd></button>

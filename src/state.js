@@ -107,13 +107,13 @@ export function loadPrefs() {
       if (p.seenHelp) S.seenHelp = true;
       if (['rookie', 'pro', 'legend'].includes(p.difficulty)) S.difficulty = p.difficulty;
       if (p.slot >= 1 && p.slot <= SAVE_SLOTS) S.slot = p.slot;
-      // Lens settings saved before version 3 belong to the older framing and are dropped.
-      if (p.camShots && p.camV === 4) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
+      // Lens settings saved before version 5 belong to the older framing and are dropped.
+      if (p.camShots && p.camV === 5) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
     }
   } catch { /* ignore */ }
 }
 export function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, spectate: !!S.spectate, setup: S.setup, cam: S.cam, camV: 4, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, vol: S.vol, booth: S.booth, boothVoice: S.boothVoice, captions: S.captions, realCries: S.realCries, music: S.music, seenHelp: S.seenHelp, difficulty: S.difficulty, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, spectate: !!S.spectate, setup: S.setup, cam: S.cam, camV: 5, weatherFx: S.weatherFx, quality: S.quality, names: S.names, pips: !!S.pips, sound: S.sound, vol: S.vol, booth: S.booth, boothVoice: S.boothVoice, captions: S.captions, realCries: S.realCries, music: S.music, seenHelp: S.seenHelp, difficulty: S.difficulty, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
 }
 export function clearTimers() {
   for (const k of Object.keys(timers)) { clearTimeout(timers[k]); clearInterval(timers[k]); timers[k] = null; }

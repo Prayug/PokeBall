@@ -234,7 +234,16 @@ export class Stage {
     this.stadium.setWeather(g.weather, this.weatherFx);
     for (const t of g.teams) for (const id of t.roster ?? []) { const e = SPRITE_INDEX[id]; if (e) loadChunk(e[0]); template(id); }
     this.dir = lp.o === 0 ? 1 : -1;
+    const los0 = this.los;
     this.los = absSpot(lp.o, lp.spot);
+    // Whose side the camera stands on: behind your own team, so on defense (or receiving a
+    // kick) it looks back at the offense coming toward you, Madden style. Watching the AI, or
+    // two players on one screen, it stays behind the offense. When that side changes, or the
+    // ball moves a long way (a score, a kick, a turnover), the camera cuts instead of flying
+    // across the stadium.
+    const view = lp.user != null && !lp.p2 && lp.user === lp.d ? -this.dir : this.dir;
+    if (this.view != null && (view !== this.view || Math.abs(this.los - los0) > 30)) this.snapNext = true;
+    this.view = view;
     const toGo = lp.spot + g.toGo < 100 ? absSpot(lp.o, lp.spot + g.toGo) : null;
     this.losLine.position.x = this.los;
     this.firstLine.visible = toGo != null;
@@ -1053,7 +1062,9 @@ export class Stage {
   framing(lp) {
     const f = this.frm ?? (this.frm = { focus: new THREE.Vector3(), fwd: 1, pre: true, qb: new THREE.Vector3(), state: 'PRE_SNAP', pts: [], pool: [], control: null, controlDir: 1, ctl: new THREE.Vector3() });
     const set = (st) => { if (f.state !== st) { f.state = st; f.since = lp.t; } this.rig.shot = st; };
-    f.fwd = this.dir;
+    f.fwd = this.view ?? this.dir;
+    // Behind your defense (or your return team) rather than the offense.
+    f.defView = f.fwd !== this.dir;
     f.pts.length = 0;
     f.nBox = 0;
     let np = 0;
@@ -1091,8 +1102,15 @@ export class Stage {
       // and broadcast cameras frame these, so the Pokémon fill the screen; wide receivers
       // further out may sit at the edges. Then everyone (deep safeties counted at most a dozen
       // yards off the ball) for the tactical camera.
-      const inBox = (p) => Math.abs(p.y) < 12.5 && (p.side === 'off' || p.x < 7.5);
-      for (const p of lp.players) if (inBox(p)) body(p, p.side === 'def' ? los.x + this.dir * 7.5 : null);
+      // From behind your own defense the box is every defender (the deep ones counted at most
+      // sixteen yards off the ball, so the lens sits behind the safeties, not among them) and
+      // the offense inside the numbers. A kickoff frames the kicking unit and the return
+      // team's front line; the deep returners come into the shot once the ball is in the air.
+      const inBox = lp.kick?.ko ? (p) => p.side === 'off' || p.x < 22
+        : f.defView ? (p) => p.side === 'def' || Math.abs(p.y) < 12.5
+        : (p) => Math.abs(p.y) < 12.5 && (p.side === 'off' || p.x < 7.5);
+      const deep = lp.kick?.ko ? null : f.defView ? 16 : 7.5;
+      for (const p of lp.players) if (inBox(p)) body(p, p.side === 'def' && deep != null ? los.x + this.dir * deep : null);
       f.nBox = f.pts.length;
       for (const p of lp.players) if (!inBox(p)) body(p, p.side === 'def' ? los.x + this.dir * 11 : null);
       this.world(-2, 0, 0, f.focus);
