@@ -22,11 +22,15 @@ import { tradeDeadline, tradeWindow } from '../trades.js';
 export function renderSeason() {
   const L = S.league;
   const me = user();
+  if (!L || !me) return `<section class="season"><p>No league open.</p></section>`;
   const st = LG.standings(L);
   const lead = LG.leaders(L);
   let main = '';
   if (L.phase === 'season') {
-    const gm = LG.userGame(L);
+    const gm = LG.userGame(L, me.id);
+    if (!gm) {
+      main = `<div class="card matchup"><p class="eyebrow">Season ${L.season ?? 1} · Week ${L.week + 1} of ${L.schedule.length}</p><h2>No game this week</h2></div>${reviewHtml(L)}`;
+    } else {
     const opp = L.teams[gm.home === me.id ? gm.away : gm.home];
     main = `<div class="card matchup">
       <p class="eyebrow">Season ${L.season ?? 1} · Week ${L.week + 1} of ${L.schedule.length}</p>
@@ -34,6 +38,7 @@ export function renderSeason() {
       <p class="muted">${esc(opp.name)} coach: ${esc(opp.coachName)}${SCHEMES[me.coach] && me.coach !== 'balanced' ? ` · You: ${esc(SCHEMES[me.coach].name)}` : ''}</p>
       ${weekActions(L, 'Play the game')}
     </div>${reviewHtml(L)}${tradeCardHtml(L)}${deskLinkHtml(L)}${scoutHtml(L, me.id, opp.id)}`;
+    }
   } else if (L.phase === 'playoffs') {
     const P_ = L.playoffs;
     const mine = P_.games.find((g) => g.home === me.id || g.away === me.id);

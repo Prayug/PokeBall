@@ -138,8 +138,18 @@ export function detailHtml() {
 }
 
 export function draftTick() {
-  if (S.online) return;
   clearTimers();
+  if (S.online) {
+    // The server decides the pick when the clock runs out. This only shows the seconds.
+    const L = S.league;
+    if (!L || L.phase !== 'draft' || S.screen !== 'draft' || !S.setup.clock) return;
+    timers.clock = setInterval(() => {
+      S.draft.clock = Math.max(0, (S.draft.clock ?? 0) - 1);
+      const el = document.getElementById('pick-clock');
+      if (el) el.textContent = S.draft.clock;
+    }, 1000);
+    return;
+  }
   const L = S.league;
   if (!L || L.phase !== 'draft' || S.screen !== 'draft') return;
   const pk = LG.currentPick(L);

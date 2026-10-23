@@ -84,7 +84,7 @@ function renderTop() {
     <button class="brand" data-act="home" aria-label="Home"><span class="ball" aria-hidden="true"></span>PokeBall</button>
     <nav>${items.map(([k, label]) => `<button class="nav ${S.screen === k ? 'on' : ''}" data-act="go" data-to="${k}">${label}</button>`).join('')}</nav>
     ${me ? `<span class="top-team">${teamBadge(me)}<span><b>${esc(me.name)}</b><small>Season ${L.season ?? 1}</small></span></span>` : ''}
-    ${S.online && S.net?.code ? `<span class="top-team"><b>#${S.net.mode === 'league' ? 'online' : 'play'}=${esc(S.net.code)}</b><small id="net-ping">${S.net.ping != null ? `${S.net.ping} ms` : '…'}</small></span>` : ''}
+    ${S.online && S.net?.code ? `<span class="top-team"><b>#${S.net.mode === 'league' ? 'online' : 'play'}=${esc(S.net.code)}</b><small class="net-ping">${S.net.ping != null ? `${S.net.ping} ms` : '…'}</small></span>` : ''}
     ${soundButtonHtml()}
   </header>`;
 }
@@ -178,6 +178,7 @@ function onClick(e) {
     case 'subslot': S.subSel = S.subSel === el.dataset.slot ? null : el.dataset.slot; render(); break;
     case 'subcancel': S.subSel = null; render(); break;
     case 'subin': case 'subback': {
+      if (S.online) break;
       const g = S.game;
       if (!g || g.final || S.busy || L3.lp) break;
       if (act === 'subin' && S.subSel) manualSub(g, userSide(), S.subSel, Number(el.dataset.id));
@@ -203,7 +204,7 @@ function onClick(e) {
     case 'draftsel': { const id = S.draft.sel, n = L?.pickIndex; userDraft(id, document.getElementById('d-slot')?.value ?? null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
     case 'sort': S.draft.sort = el.dataset.key; render(); break;
     case 'draftskip': draftSkip(); break;
-    case 'autodraft': S.draft.autoAll = !S.draft.autoAll; render(); draftTick(); break;
+    case 'autodraft': S.draft.autoAll = !S.draft.autoAll; render(); if (S.online && S.draft.autoAll) netSend({ t: 'autopick' }); else draftTick(); break;
     case 'startseason': if (S.online) { netSend({ t: 'startseason' }); break; } L.phase = 'season'; setScreen('season'); break;
     case 'dslot': case 'dbench': depthClick(el); break;
     case 'autodepth': {
@@ -248,7 +249,9 @@ function onClick(e) {
       setScreen('season');
       break;
     }
-    case 'finishgame': finishLeagueGame(); break;
+    case 'finishgame':
+      if (S.online) { S.game = null; setScreen(S.net?.mode === 'league' ? 'season' : 'lobby'); break; }
+      finishLeagueGame(); break;
     case 'call': doCall(el.dataset.call); break;
     case 'timeout': userTimeout(); break;
     case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; S.csAll = false; render(); break;
@@ -275,6 +278,8 @@ function onClick(e) {
     case 'quality': S.quality = el.dataset.q; stage?.setQuality(S.quality); savePrefs(); render(); break;
     case 'details': S.menuOpen = false; render(); document.querySelector('.game.g3d .below')?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' }); break;
     case 'sim': {
+      // The server is the only writer online. A local sim would invent a score the room does not have.
+      if (S.online) break;
       const g = S.game;
       if (!g || S.busy || (L3.lp && L3.lp.phase !== 'pre')) return;
       L3.lp = null; S.p2Call = null;

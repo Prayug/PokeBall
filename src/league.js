@@ -416,8 +416,8 @@ export function simWeekOthers(L, skipTeam = 0) {
   }
 }
 
-export function userGame(L) {
-  return (L.schedule[L.week] ?? []).find((gm) => gm.home === 0 || gm.away === 0) ?? null;
+export function userGame(L, teamId = 0) {
+  return (L.schedule[L.week] ?? []).find((gm) => gm.home === teamId || gm.away === teamId) ?? null;
 }
 
 export function standings(L) {

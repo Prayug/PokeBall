@@ -47,7 +47,7 @@ function open(url, first) {
   if (ws && ws.readyState === 1) { first(); flush(); return; }
   try { ws = new WebSocket(url); } catch { S.netMsg = 'That server address is not a websocket.'; ui.render(); return; }
   ws.onopen = () => { S.online = true; first(); flush(); ping(); };
-  ws.onmessage = (ev) => { try { handle(JSON.parse(ev.data)); } catch { /* ignore a bad frame */ } };
+  ws.onmessage = (ev) => { try { handle(JSON.parse(ev.data)); } catch (err) { console.error(err); } };
   ws.onclose = () => { if (S.net) S.net.paused = true; };
 }
 function ping() {
@@ -67,12 +67,28 @@ function savedSeat() {
   try { return JSON.parse(sessionStorage.getItem('pokeball.net') || 'null'); } catch { return null; }
 }
 
+function paintPing() {
+  const text = `${S.net?.ping ?? ''} ms`;
+  for (const el of document.querySelectorAll('.net-ping')) el.textContent = text;
+}
+function metaFor(side, g) {
+  // A quick match is one game. A league stays a league, so the season hub and the final card
+  // do not treat it as a local quick game.
+  const quick = S.net?.mode !== 'league';
+  const team = S.net?.yourTeam;
+  const userTeamId = team != null ? team : (g?.teams?.[side]?.id ?? side ?? 0);
+  return { online: true, quick, userTeamId };
+}
+function maybeAutoPick(league) {
+  if (!S.draft?.autoAll || league?.phase !== 'draft') return;
+  const pk = league.picks?.[league.pickIndex];
+  if (pk && pk.player == null && pk.team === S.net?.yourTeam) send({ t: 'autopick' });
+}
 function handle(msg) {
   if (msg.t === 'err') { S.netMsg = msg.text; ui.render(); return; }
   if (msg.t === 'pong') {
     if (S.net) S.net.ping = Math.max(0, Math.round(performance.now() - msg.n));
-    const el = document.getElementById('net-ping');
-    if (el) el.textContent = `${S.net?.ping ?? ''} ms`;
+    paintPing();
     return;
   }
   if (msg.t === 'hello' || msg.t === 'state') {
@@ -91,17 +107,18 @@ function handle(msg) {
   if (msg.t === 'league') {
     S.league = msg.league;
     S.online = true;
-    S.gameMeta = { ...(S.gameMeta || {}), online: true, quick: true, userTeamId: S.net?.yourTeam ?? 0 };
+    S.gameMeta = { ...(S.gameMeta || {}), ...metaFor(S.net?.you ?? 0) };
     if (S.draft) S.draft.clock = msg.clock ?? S.draft.clock;
     const el = document.getElementById('pick-clock');
     if (el && msg.clock != null) el.textContent = msg.clock;
     if (S.screen !== 'game') ui.render();
+    maybeAutoPick(msg.league);
     return;
   }
   if (msg.t === 'game') {
     S.game = msg.g;
     const side = S.net?.you ?? 0;
-    S.gameMeta = { online: true, quick: true, userTeamId: S.net?.yourTeam ?? msg.g?.teams?.[side]?.id ?? side };
+    S.gameMeta = metaFor(side, msg.g);
     if (msg.phase === 'between' || msg.phase === 'final') ui.setScreen('game');
     else ui.render();
     return;
@@ -110,7 +127,7 @@ function handle(msg) {
     S.game = msg.g;
     S.online = true;
     const side = S.net?.you ?? 0;
-    S.gameMeta = { online: true, quick: true, userTeamId: S.net?.yourTeam ?? msg.g?.teams?.[side]?.id ?? side };
+    S.gameMeta = metaFor(side, msg.g);
     hooks.play?.(msg);
     ui.setScreen('game');
     return;
@@ -118,16 +135,24 @@ function handle(msg) {
   if (msg.t === 'snap') { hooks.snap?.(msg); return; }
   if (msg.t === 'whistle') { hooks.whistle?.(msg); return; }
   if (msg.t === 'presnap') { hooks.presnap?.(msg); return; }
+  if (msg.t === 'recall') { hooks.recall?.(); return; }
+}
+function screenFor(phase) {
+  // A friend who has not claimed a team stays in the lobby, where the open teams are.
+  if (S.net?.mode === 'league' && S.net.yourTeam == null) return 'lobby';
+  if (phase === 'draft') return 'draft';
+  if (phase === 'grades') return 'grades';
+  if (phase === 'season' || phase === 'playoffs' || phase === 'done' || phase === 'offseason') return 'season';
+  if (phase === 'between' || phase === 'pre' || phase === 'live' || phase === 'final') return 'game';
+  return 'lobby';
 }
 function route(phase) {
   if ((phase === 'pre' || phase === 'live') && S.screen === 'game') return;
-  // A friend who has not claimed a team stays in the lobby, where the open teams are.
-  if (S.net?.mode === 'league' && S.net.yourTeam == null) { ui.setScreen('lobby'); return; }
-  if (phase === 'draft') ui.setScreen('draft');
-  else if (phase === 'grades') ui.setScreen('grades');
-  else if (phase === 'season' || phase === 'playoffs') { if (S.screen === 'game') S.game = null; ui.setScreen('season'); }
-  else if (phase === 'between' || phase === 'pre' || phase === 'live') ui.setScreen('game');
-  else ui.setScreen('lobby');
+  const next = screenFor(phase);
+  if (S.screen !== next) {
+    if (next === 'season' && S.game?.final) S.game = null;
+    ui.setScreen(next);
+  } else if (!(S.screen === 'game' && (phase === 'pre' || phase === 'live' || phase === 'between'))) ui.render();
 }
 
 // Follow a #play=CODE or #online=CODE already on the address.

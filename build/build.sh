@@ -18,4 +18,6 @@ fs.writeFileSync("dist/index.html", html.replace("<!--APP-->", () => prelude + "
 console.log("dist/index.html", (fs.statSync("dist/index.html").size / 1024).toFixed(0) + " KB");
 '
 [ -d dist/models3d ] || echo 'dist/models3d/ is missing: run "npm run models" to download the 3D models'
-if compgen -G 'booth/*.mp3' > /dev/null; then mkdir -p dist/booth && cp booth/*.mp3 dist/booth/; fi
+mkdir -p dist/booth
+if compgen -G 'booth/*.mp3' > /dev/null; then cp booth/*.mp3 dist/booth/; fi
+node -e 'const fs=require("fs"); const src=fs.existsSync("booth")?fs.readdirSync("booth").filter(n=>n.endsWith(".mp3")):[]; fs.writeFileSync("dist/booth/index.json", JSON.stringify(src));'

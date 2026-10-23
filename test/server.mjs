@@ -1,6 +1,10 @@
 // Two fake clients join a quick room, snap a few plays, and both see the same score.
+// A league room drafts, claims the week-1 opponent, and snaps one live play.
+import net from 'node:net';
 import { listen } from '../server/index.js';
 import { rooms } from '../server/sim.js';
+import { simUntil } from '../src/engine.js';
+import { recordResult } from '../src/league.js';
 
 const server = await listen(0, '127.0.0.1');
 const port = server.address().port;
@@ -106,7 +110,77 @@ try {
   console.log('FAIL', err?.stack || err);
 }
 
-if (rooms.size) { /* rooms stay until the process exits */ }
+function rawGet(path) {
+  return new Promise((resolve, reject) => {
+    const s = net.connect({ port, host: '127.0.0.1' }, () => {
+      s.write(`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+    });
+    const chunks = [];
+    s.on('data', (d) => chunks.push(d));
+    s.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    s.on('error', reject);
+  });
+}
+
+let leagueCode = null;
+try {
+  const bad = await rawGet('/%');
+  check(/^HTTP\/1\.1 (400|404)/.test(bad), 'malformed url stayed up: ' + bad.slice(0, 24));
+  const index = await rawGet('/booth/index.json');
+  check(index.startsWith('HTTP/1.1 200'), 'booth index ' + index.slice(0, 24));
+  const home = client('commish'), away = client('friend');
+  await home.open(); await away.open();
+  home.send({ t: 'create', mode: 'league', name: 'Pallet Starters', setup: { name: 'Pallet Starters', abbr: 'PAL', rounds: 24, typeCap: true, clock: true, scheme: 'balanced' } });
+  const hello = await home.wait((m) => m.t === 'hello');
+  leagueCode = hello.code;
+  check(hello.mode === 'league' && hello.yourTeam === 0, `league host team ${hello.yourTeam}`);
+  away.send({ t: 'join', code: hello.code, name: 'Friend' });
+  await away.wait((m) => m.t === 'hello');
+  let guard = 0;
+  while (guard++ < 300) {
+    const L = home.latest('league')?.league;
+    if (!L) { await new Promise((r) => setTimeout(r, 20)); continue; }
+    if (L.phase !== 'draft') break;
+    const pk = L.picks[L.pickIndex];
+    if (pk?.team !== 0) { await new Promise((r) => setTimeout(r, 20)); continue; }
+    const idx = L.pickIndex;
+    home.send({ t: 'autopick' });
+    await home.wait((m) => m.t === 'league' && (m.league.phase !== 'draft' || m.league.pickIndex > idx), 8000);
+  }
+  const drafted = home.latest('league')?.league;
+  check(drafted?.phase === 'grades', 'draft reached grades ' + drafted?.phase);
+  const gm = drafted.schedule[0].find((g) => g.home === 0 || g.away === 0);
+  const opp = gm.home === 0 ? gm.away : gm.home;
+  away.send({ t: 'claim', team: opp });
+  const claimed = await away.wait((m) => m.t === 'state' && m.yourTeam === opp);
+  check(claimed.yourTeam === opp, `friend claimed week-1 opponent ${opp}`);
+  home.send({ t: 'startseason' });
+  await home.wait((m) => m.t === 'league' && m.league.phase === 'season', 20000);
+  home.send({ t: 'readygame' });
+  away.send({ t: 'readygame' });
+  await home.wait((m) => m.t === 'game' && m.g);
+  await away.wait((m) => m.t === 'game' && m.g);
+  const score = await onePlay(home, away);
+  const names = home.latest('whistle').g.teams.map((t) => t.abbr).join(' vs ');
+  console.log('league play', score.join('-'), names);
+  check(home.latest('whistle').g.teams.some((t) => t.id === opp), 'head-to-head was the week-1 opponent');
+  home.close(); away.close();
+} catch (err) {
+  failed++;
+  console.log('FAIL', err?.stack || err);
+}
+
 server.closeAll();
+try {
+  const room = [...rooms.values()].find((r) => r.mode === 'league' && r.code === leagueCode);
+  if (room?.g && !room.g.final) {
+    simUntil(room.g, 'game');
+    recordResult(room.league, room.g, { week: room.league.week });
+    check(room.g.final && room.league.results.length > 0, 'a live league game can be booked');
+  }
+} catch (err) {
+  failed++;
+  console.log('FAIL', err?.stack || err);
+}
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('ok');

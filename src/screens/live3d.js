@@ -228,6 +228,8 @@ export function markBefore() {
 export function doSnap() {
   const lp = L3.lp;
   if (!lp || lp.phase !== 'pre') return;
+  // Online, the server snaps. A local snap would start a play the other side never sees.
+  if (S.online) { netSend({ t: 'snap' }); return; }
   L3.rec?.log.push({ snap: true, control: lp.control ? [lp.control.side, lp.control.slot] : null });
   // The play as it stands at the snap. Lining up depends on the measured model footprints, which
   // change as models finish loading, so the replay starts from this copy rather than lining up again.
@@ -618,6 +620,15 @@ function applyNetSnap(msg) {
   if (msg.set) lp.set = true;
   for (const e of msg.events || []) lp.events.push(e);
 }
+let netTimer = 0;
+function releaseNetPlay() {
+  if (!L3.net) return;
+  L3.netHold = 0;
+  L3.lp = null;
+  L3.net = false;
+  setFlow('PLAY_SELECTION');
+  render();
+}
 function showServerResult(msg) {
   const b = L3.before;
   if (msg.g) S.game = msg.g;
@@ -626,6 +637,10 @@ function showServerResult(msg) {
     try { const c = clipFromJson(msg.clip); addToReel(c.rec, S.game, entry); } catch { /* the clip did not travel; the live result still stands */ }
   }
   L3.netHold = performance.now() + 1800;
+  // The render loop also drops the play when the hold ends. A timer covers a tab whose
+  // animation frames are paused, so the next call is not stuck behind a dead play.
+  clearTimeout(netTimer);
+  netTimer = setTimeout(releaseNetPlay, 1800);
   if (L3.lp) L3.lp.phase = 'dead';
   if (b && msg.g) for (const i of [0, 1]) if (msg.g.score[i] !== b.score[i]) L3.scoreFlash[i] = performance.now() + 2200;
   render();
@@ -666,18 +681,26 @@ function netFrame(lp, dt, now) {
     boothLive(lp);
   }
   if (L3.netHold && now > L3.netHold) {
-    L3.netHold = 0;
-    L3.lp = null;
-    L3.net = false;
-    setFlow('PLAY_SELECTION');
-    render();
+    clearTimeout(netTimer);
+    releaseNetPlay();
     return null;
   }
   const since = lp._snapAt ? (now - lp._snapAt) / 50 : 1;
   L3.acc = Math.min(1, Math.max(0, since)) * DT;
   return L3.lp;
 }
-onNet({ play: beginNetPlay, snap: applyNetSnap, whistle: showServerResult, presnap: netPresnap });
+onNet({
+  play: beginNetPlay, snap: applyNetSnap, whistle: showServerResult, presnap: netPresnap,
+  recall() {
+    clearTimeout(netTimer);
+    L3.netHold = 0;
+    L3.lp = null;
+    L3.net = false;
+    L3.preview = null;
+    setFlow('PLAY_SELECTION');
+    render();
+  },
+});
 
 function loop(now) {
   L3.raf = requestAnimationFrame(loop);
@@ -989,6 +1012,7 @@ function debugHud() {
 // Back to the call sheet from a lined-up play; the players stay where they are.
 export function recall() {
   if (L3.lp?.phase !== 'pre') return;
+  if (S.online) { netSend({ t: 'recall' }); return; }
   S.psPick = null;
   L3.spots = worldSpots(L3.lp); L3.preview = null; L3.lp = null;
   render();

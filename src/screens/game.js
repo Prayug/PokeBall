@@ -125,6 +125,21 @@ function lastPlayHtml(g) {
   return `<div class="lastplay ${tone}">${calls}<p>${esc(e.text).replace('It&#39;s super effective!', '<mark>It&#39;s super effective!</mark>')}</p></div>`;
 }
 
+// After the whistle online: rematch stays in the room, and a league goes back to the season
+// the server already updated. A local "play again" would start a game the room does not know.
+function finalActions() {
+  if (S.online) {
+    if (S.net?.mode === 'league') return '<button class="btn primary" data-act="finishgame">Back to the season</button>';
+    return '<button class="btn primary" data-act="onlinerematch">Rematch</button><button class="btn" data-act="home">Home</button>';
+  }
+  if (S.gameMeta?.quick) {
+    const act = twoPlayer() ? 'quick2' : S.gameMeta.spectate ? 'watchgame' : 'quick';
+    const label = twoPlayer() ? 'Play another two-player game' : S.gameMeta.spectate ? 'Watch another game' : 'Play another quick game';
+    return `<button class="btn primary" data-act="${act}">${label}</button><button class="btn" data-act="home">Home</button>`;
+  }
+  return '<button class="btn primary" data-act="finishgame">Back to the season</button>';
+}
+
 export function renderGame() {
   const g = S.game;
   if (!g) return `<section><p>No game in progress.</p></section>`;
@@ -134,12 +149,14 @@ export function renderGame() {
   // The call sheet only comes up once the result has been shown and the teams have reset.
   const decide = !g.final && needsUser(g) && !S.busy && !L3.lp && !(L3.resultUntil > now) && !(L3.resetUntil > now && !L3.preview?.lp?.set);
   const simOff = L3.lp && L3.lp.phase !== 'pre' ? 'disabled' : '';
-  const simBtns = `<button class="btn" data-act="sim" data-stop="drive" ${simOff}>Sim drive</button>
+  const simBtns = S.online ? '' : `<button class="btn" data-act="sim" data-stop="drive" ${simOff}>Sim drive</button>
         <button class="btn" data-act="sim" data-stop="quarter" ${simOff}>Sim quarter</button>
         <button class="btn" data-act="sim" data-stop="game" ${simOff}>Sim to the end</button>`;
   const coachBox = modeHtml();
-  // On the 3D field the sims tuck into a Skip disclosure on the Mode row.
-  const simrow = live3d ? `<div class="simrow">${coachBox}${S.skipOpen ? simBtns : ''}<button class="btn skip" id="g-skip" data-act="skip" aria-expanded="${!!S.skipOpen}">${S.skipOpen ? 'Hide' : 'Skip'}</button></div>`
+  const skipBtn = S.online ? '' : `<button class="btn skip" id="g-skip" data-act="skip" aria-expanded="${!!S.skipOpen}">${S.skipOpen ? 'Hide' : 'Skip'}</button>`;
+  // On the 3D field the sims tuck into a Skip disclosure on the Mode row. Online, the server
+  // runs the game, so those buttons are not offered.
+  const simrow = live3d ? `<div class="simrow">${coachBox}${S.skipOpen ? simBtns : ''}${skipBtn}</div>`
     : `<div class="simrow">${coachBox}${simBtns}</div>`;
   let controls, dock = 'call';
   if (g.final) {
@@ -147,8 +164,7 @@ export function renderGame() {
     const verdict = g.winner == null ? 'Tie game' : spectating() && S.gameMeta?.spectate ? `${esc(g.teams[g.winner].name)} win` : twoPlayer() ? `Player ${g.winner + 1} wins: ${esc(g.teams[g.winner].name)}` : g.teams[g.winner].id === (S.gameMeta?.userTeamId ?? 0) ? 'You win' : 'You lose';
     controls = `<div class="card final callcard"><h2>${verdict}, ${Math.max(...g.score)} to ${Math.min(...g.score)}</h2>
       ${S.streamer && S.gameMeta?.quick ? '<p class="small muted">The next game kicks off shortly.</p>' : ''}
-      <div class="actions">${S.gameMeta?.quick ? `<button class="btn primary" data-act="${twoPlayer() ? 'quick2' : S.gameMeta.spectate ? 'watchgame' : 'quick'}">${twoPlayer() ? 'Play another two-player game' : S.gameMeta.spectate ? 'Watch another game' : 'Play another quick game'}</button><button class="btn" data-act="home">Home</button>`
-        : '<button class="btn primary" data-act="finishgame">Back to the season</button>'}</div></div>`;
+      <div class="actions">${finalActions()}</div></div>`;
   } else {
     let head;
     if (L3.lp) {
@@ -161,7 +177,7 @@ export function renderGame() {
     } else if (decide) head = playCards(g, { keys: live3d }) + (live3d ? '' : presnapHtml(g) + tendenciesHtml(g));
     else {
       dock = 'wait';
-      head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : 'AI calling this down'}</h3><span class="muted">${spectating() ? `Watch mode: the AI calls both sides. <button class="btn tiny" data-act="takeover">${S.takeOver ? 'Hand it back' : 'Call next play'}</button>` : 'Auto mode hands you 3rd and 4th downs and the last two minutes'}</span></div>`;
+      head = `<div class="callhead"><h3>${S.busy ? 'Play in progress' : S.online ? 'Waiting on the other coach' : 'AI calling this down'}</h3><span class="muted">${spectating() ? `Watch mode: the AI calls both sides. <button class="btn tiny" data-act="takeover">${S.takeOver ? 'Hand it back' : 'Call next play'}</button>` : S.online ? 'Their call has to come in before the play lines up' : 'Auto mode hands you 3rd and 4th downs and the last two minutes'}</span></div>`;
     }
     controls = `<div class="card callcard">${head}${simrow}</div>`;
   }
@@ -183,7 +199,7 @@ export function renderGame() {
     } else if (decide) overlay = callSheetHtml(g);
     else if (spectating()) overlay = watchChip();
     else if (L3.resultUntil > performance.now()) overlay = '';
-    else overlay = `<div class="pill wait"><span>${S.busy ? 'Play in progress' : 'AI calling this down'}</span></div>`;
+    else overlay = `<div class="pill wait"><span>${S.busy ? 'Play in progress' : S.online ? 'Waiting on the other coach' : 'AI calling this down'}</span></div>`;
     return `<section class="game g3d ${spectating() ? 'spectate' : ''}">
     <div class="stage-slot" id="stage-slot">
       ${broadcastBar(g)}
@@ -208,7 +224,7 @@ export function renderGame() {
     ${controls}
     <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
     <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>
-    <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.${S.online ? ` Ping <b id="net-ping">${S.net?.ping != null ? `${S.net.ping} ms` : '…'}</b>.` : ''}</p>
+    <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.${S.online ? ` Ping <b class="net-ping">${S.net?.ping != null ? `${S.net.ping} ms` : '…'}</b>.` : ''}</p>
   </section>`;
 }
 
@@ -527,6 +543,13 @@ function twoPlayerCall(g, call) {
 export function playClockOut() {
   const g = S.game;
   if (!g || g.final || S.busy || L3.lp) return;
+  // Online the server owns penalties and the score. A local delay of game would disagree
+  // with the other side. The fitting call is still offered, and the server accepts it or not.
+  if (S.online) {
+    const { fit } = callSheet(g);
+    if (fit) doCall(fit);
+    return;
+  }
   if (g.phase === 'play' && g.poss === userSide() && (twoPlayer() || S.difficulty !== 'rookie')) {
     markBefore();
     if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }

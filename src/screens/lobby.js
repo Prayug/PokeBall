@@ -13,7 +13,7 @@ export function renderLobby() {
       <h1>${n.code ? esc(n.code) : 'Connecting…'}</h1>
       <p class="lede">${n.paused ? `Paused. Reconnect within ${Math.ceil((n.reconnectMs || 0) / 1000)}s, or the other side can take the forfeit.` : 'Send this link. The room code is the only secret.'}</p>
       ${link ? `<p class="mono small">${esc(link)}</p>` : ''}
-      <p>Ping <b id="net-ping">${n.ping != null ? `${n.ping} ms` : '…'}</b></p>
+      <p>Ping <b class="net-ping">${n.ping != null ? `${n.ping} ms` : '…'}</b></p>
       ${S.netMsg ? `<p class="small bad">${esc(S.netMsg)}</p>` : ''}
       <ul class="feed">${players.map((p) => `<li>${esc(p.name)} ${p.side === 0 ? '· home' : p.side === 1 ? '· away' : ''}${p.team != null ? ` · team ${p.team}` : ''} ${p.ready ? '· ready' : ''} ${p.online ? '' : '· disconnected'}</li>`).join('') || '<li class="muted">Waiting for a friend.</li>'}</ul>
       ${n.mode === 'league' ? claimHtml(n) : ''}

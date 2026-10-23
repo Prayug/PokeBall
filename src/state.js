@@ -31,7 +31,7 @@ function writeSlot(n, snap) {
 }
 export function save() {
   // An online league lives on the server. The three local slots stay as they were.
-  if (S.online && S.gameMeta?.online) { savePrefs(); return; }
+  if (S.online) { savePrefs(); return; }
   const snap = snapshot();
   if (snap.league) {
     try { writeSlot(S.slot, snap); } catch {

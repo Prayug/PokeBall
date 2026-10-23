@@ -104,12 +104,18 @@ export const boothClipOn = () => boothVoices > 0;
 export function loadBoothClips() {
   if (boothAsked || typeof window === 'undefined' || typeof fetch !== 'function') return;
   boothAsked = true;
-  for (const who of ['pbp', 'color']) {
-    for (const id of BOOTH_HITS) {
-      const url = `booth/${who}-${id}.mp3`;
-      fetch(url).then((r) => (r.ok ? r.arrayBuffer() : null)).then((buf) => { if (buf) boothRaw[who][id] = buf; }).catch(() => {});
+  // One listing, then only the clips that are actually there. A missing booth is quiet
+  // (speech synthesis says the line) instead of a 404 for every hit.
+  fetch('booth/index.json').then((r) => (r.ok ? r.json() : [])).then((list) => {
+    const have = new Set(Array.isArray(list) ? list : []);
+    for (const who of ['pbp', 'color']) {
+      for (const id of BOOTH_HITS) {
+        const file = `${who}-${id}.mp3`;
+        if (!have.has(file)) continue;
+        fetch(`booth/${file}`).then((r) => (r.ok ? r.arrayBuffer() : null)).then((buf) => { if (buf) boothRaw[who][id] = buf; }).catch(() => {});
+      }
     }
-  }
+  }).catch(() => {});
 }
 function startBoothBuffer(buf) {
   duck(true);

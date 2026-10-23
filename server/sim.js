@@ -116,9 +116,13 @@ export function loadLeagues() {
       if (!L?.teams || !L.online) continue;
       const room = blank(name.replace(/\.json$/, ''), 'league');
       room.league = L;
-      room.phase = L.phase === 'draft' ? 'draft' : L.phase === 'grades' ? 'grades' : 'season';
+      room.phase = L.phase === 'draft' ? 'draft' : L.phase === 'grades' ? 'grades' : L.phase === 'playoffs' ? 'playoffs' : L.phase === 'done' ? 'done' : 'season';
       room.seed = L.seed;
+      // A name with no live client yet. The seat stays claimed so a restart does not sim that team,
+      // and the friend can take it again from the lobby.
+      for (const [id, who] of Object.entries(L.online.claims ?? {})) if (who) room.claims[id] = { name: String(who) };
       rooms.set(room.code, room);
+      if (room.phase === 'draft') { room.draftDeadline = Date.now() + 60_000; drainAiPicks(room); }
     } catch { /* a bad file does not take the server down */ }
   }
 }
@@ -175,14 +179,17 @@ export function claimTeam(room, client, teamId) {
   if (!L || client.team != null) return;
   teamId = Number(teamId);
   const t = L.teams[teamId];
-  if (!t || teamId === 0 || room.claims[teamId] != null) return;
-  const held = L.online?.claims?.[teamId];
-  if (held && held !== client.name) return;
-  const taken = Object.keys(room.claims).length;
+  if (!t || teamId === 0) return;
+  const holder = room.claims[teamId];
+  // A number is a connected coach. A restored {name} is a seat waiting for its coach to come back.
+  if (typeof holder === 'number' && room.clients.some((c) => c.id === holder && c.online)) return;
+  const taken = room.clients.filter((c) => c.team != null).length;
   if (taken >= 8) return;
   room.claims[teamId] = client.id;
   client.team = teamId;
   t.user = true;
+  L.online ??= { host: 0, claims: {} };
+  L.online.claims ??= {};
   L.online.claims[teamId] = client.name;
   saveLeague(room);
   publish(room);
@@ -197,6 +204,7 @@ function drainAiPicks(room) {
     if (!pk) break;
     if (room.claims[pk.team] != null) break;
     const c = aiChoosePick(L, pk.team);
+    if (!c) break;
     makePick(L, c.id, c.slot);
   }
   if (L.phase !== 'draft') room.phase = L.phase === 'grades' ? 'grades' : 'season';
@@ -281,6 +289,7 @@ function startLeagueLive(room, gm) {
   room.calls = {};
   room.phase = 'between';
   room.lp = null;
+  room.booked = false;
   publish(room);
 }
 
@@ -441,15 +450,19 @@ function commit(room) {
   else { room.phase = 'between'; publish(room); }
 }
 function finishRoom(room) {
-  room.phase = 'final';
   if (room.mode === 'league' && room.league && room.g) {
     const L = room.league;
-    const playoff = L.phase === 'playoffs';
-    recordResult(L, room.g, playoff ? { playoff: true, round: L.playoffs.round } : { week: L.week });
-    for (const c of room.clients) c.ready = false;
-    saveLeague(room);
-    if (!pending(room).length) advanceOnline(room);
-  }
+    if (!room.booked) {
+      const playoff = L.phase === 'playoffs';
+      recordResult(L, room.g, playoff ? { playoff: true, round: L.playoffs.round } : { week: L.week });
+      room.booked = true;
+      for (const c of room.clients) c.ready = false;
+      saveLeague(room);
+      if (!pending(room).length) advanceOnline(room);
+    }
+    // Back to the league. A quick match stays on 'final' so the room can rematch.
+    room.phase = L.phase === 'playoffs' ? 'playoffs' : L.phase === 'done' ? 'done' : L.phase === 'offseason' ? 'offseason' : 'season';
+  } else room.phase = 'final';
   publish(room);
 }
 function forfeit(room, client) {
@@ -472,7 +485,7 @@ export function stepRoom(room) {
     const pk = currentPick(room.league);
     if (pk && room.claims[pk.team] != null && Date.now() > (room.draftDeadline || 0)) {
       const c = aiChoosePick(room.league, pk.team);
-      makePick(room.league, c.id, c.slot);
+      if (c) makePick(room.league, c.id, c.slot);
       drainAiPicks(room);
       publish(room);
     }
@@ -577,6 +590,17 @@ export function onMessage(room, client, msg) {
     return;
   }
   if (msg.t === 'snap') { doSnap(room); return; }
+  if (msg.t === 'recall') {
+    // Change play: only before the snap. Both clients drop the lineup and call again.
+    if (!room.lp || room.lp.phase !== 'pre') return;
+    room.lp = null;
+    room.phase = 'between';
+    room.calls = {};
+    room.pad = {};
+    broadcast(room, { t: 'recall' });
+    publish(room);
+    return;
+  }
   if (msg.t === 'presnap') { applyPresnap(room, client, msg); return; }
   if (msg.t === 'input') {
     const s = sideOf(room, client);

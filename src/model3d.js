@@ -24,15 +24,33 @@ export const hasModel = (id) => MODEL_INDEX[id] != null;
 const bank = { glb: {}, chunks: {} };
 if (typeof window !== 'undefined') window.__pbModels = (m) => { Object.assign(bank.glb, m); };
 
+// Which chunk files are actually next to the page. Missing models fall back to the generated
+// figure without a 404 for every species.
+let modelFiles = null;
+function filesPresent() {
+  if (!modelFiles) {
+    modelFiles = fetch('models3d/index.json').then((r) => (r.ok ? r.json() : [])).then((list) => {
+      modelFiles = new Set(Array.isArray(list) ? list : []);
+      return modelFiles;
+    }).catch(() => { modelFiles = new Set(); return modelFiles; });
+  }
+  return modelFiles;
+}
 function loadChunk(c) {
   if (bank.chunks[c] || typeof document === 'undefined') return;
   bank.chunks[c] = 'loading';
-  const s = document.createElement('script');
-  s.src = `models3d/${c}.js`;
-  s.async = true;
-  s.onload = () => { bank.chunks[c] = 'ready'; };
-  s.onerror = () => { bank.chunks[c] = 'failed'; };
-  document.head.appendChild(s);
+  const start = (ok) => {
+    if (!ok) { bank.chunks[c] = 'failed'; return; }
+    const s = document.createElement('script');
+    s.src = `models3d/${c}.js`;
+    s.async = true;
+    s.onload = () => { bank.chunks[c] = 'ready'; };
+    s.onerror = () => { bank.chunks[c] = 'failed'; };
+    document.head.appendChild(s);
+  };
+  const known = modelFiles instanceof Set ? modelFiles : null;
+  if (known) { start(known.has(`${c}.js`)); return; }
+  filesPresent().then((set) => start(set.has(`${c}.js`))).catch(() => { bank.chunks[c] = 'failed'; });
 }
 
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
