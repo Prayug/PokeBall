@@ -1,24 +1,26 @@
 // The booth's voices. Names and yard lines stay on the browser's speech synthesis, which works
-// offline. A line is split on its clauses: the setup a little under tempo, a short gap, then
-// the shout at a higher rate and pitch. Mack and Dee keep different bases, and hype 2 is a
-// real spike. Committed neural hits (touchdown, pick, sack, and the rest) play through the
-// Web Audio ducking when the files are there; synthesis fills the names around them.
-// Captions still show the full line.
+// offline. Each line goes out as one utterance, so the voice keeps its own phrasing through the
+// commas and the sentences: chopping a line into clauses and restarting the voice on each one
+// is what made the crew sound robotic. Mack and Dee keep different bases and only lean on the
+// rate and pitch a little when they get excited (neural voices warble when pushed far), with a
+// touch of drift from line to line so no two calls come out the same. Committed neural hits
+// (touchdown, pick, sack, and the rest) play through the Web Audio ducking when the files are
+// there; only then is a line split, around the clip. Captions still show the full line.
 //
 // A broadcast can't read every line it is handed: the play moves on. Lines are queued by how
 // much they matter (see commentary.js): a touchdown or a pick cuts in over anything, a live call
-// that waited too long is dropped, and filler only goes when the booth is quiet. With no speech
-// synthesis (or the voices turned off) the captions still run, for as long as the line would
-// take to say.
+// that waited too long is dropped, and filler only goes when the booth is quiet. Between lines
+// there is a beat, a little longer when the other voice picks it up. With no speech synthesis
+// (or the voices turned off) the captions still run, for as long as the line would take to say.
 import { CREW } from './commentary.js';
-import { boothClipOn, duck, loadBoothClips, playBoothHit } from './audio.js';
+import { boothClipOn, duck, hasBoothHit, loadBoothClips, playBoothHit } from './audio.js';
 
 const SYN = typeof window !== 'undefined' ? window.speechSynthesis ?? null : null;
 const Utter = typeof window !== 'undefined' ? window.SpeechSynthesisUtterance ?? null : null;
 // How long a line may wait before it is stale, by priority (ms).
 const TTL = [9000, 7000, 1800, 3500];
 const V = { on: true, voice: true, captions: true, volume: 0.9, onCaption: null };
-let queue = [], cur = null, voices = { pbp: null, color: null }, watchdog = 0, captionTimer = 0, kickT = 0, cutAt = 0;
+let queue = [], cur = null, voices = { pbp: null, color: null }, watchdog = 0, captionTimer = 0, kickT = 0, cutAt = 0, endAt = 0, lastWho = null;
 
 export function setBooth(opts = {}) {
   Object.assign(V, opts);
@@ -76,30 +78,33 @@ function hitIn(clause) {
   }
   return null;
 }
-// Setup under tempo, the shout spiked. hype 2 is a jump, not a nudge.
-function voiceOf(who, hype, kind, same) {
-  const b = who === 'pbp' ? { rate: 1.14, pitch: 1.06 } : { rate: 0.9, pitch: same ? 0.68 : 0.86 };
-  if (kind === 'setup') return { rate: +(b.rate * 0.9).toFixed(3), pitch: +(b.pitch * 0.97).toFixed(3), volume: 0.84 };
-  if (kind === 'shout' || hype >= 2) return { rate: Math.min(1.92, b.rate + (hype >= 2 ? 0.46 : 0.34)), pitch: Math.min(1.9, b.pitch + (hype >= 2 ? 0.34 : 0.22)), volume: 1 };
-  if (hype >= 1) return { rate: Math.min(1.7, b.rate + 0.1), pitch: Math.min(1.55, b.pitch + 0.07), volume: 0.94 };
-  return { rate: b.rate, pitch: b.pitch, volume: 0.9 };
+// How a voice reads a line: its own base, lifted a little with the hype, and a small drift so
+// back-to-back calls don't land on the same note. A same-voice analyst sits lower to tell the
+// two apart.
+function voiceOf(who, hype, same) {
+  const b = who === 'pbp' ? { rate: 1.06, pitch: 1.0 } : { rate: 0.98, pitch: same ? 0.86 : 0.96 };
+  const lift = [0, 0.06, 0.12][Math.max(0, Math.min(2, hype | 0))];
+  const drift = () => (Math.random() - 0.5) * 0.04;
+  return { rate: +(b.rate + lift + drift()).toFixed(3), pitch: +(b.pitch + lift * 0.7 + drift()).toFixed(3), volume: 0.88 + 0.06 * (hype | 0) };
 }
+// What the synthesizer is handed: the caption without the marks it reads badly. Dashes become
+// commas (a breath), stacked marks one.
+export function speakable(text) {
+  return String(text ?? '').replace(/([.!?])\s*—\s*/g, '$1 ').replace(/\s*—\s*/g, ', ').replace(/!+/g, '!').replace(/\?+/g, '?').replace(/\.{4,}/g, '...').replace(/\s+/g, ' ').trim();
+}
+// The line as one utterance, unless a committed clip can carry its shout: then the words before
+// the hit, the clip (with the name after it), and the rest.
 function segmentsOf(it) {
   const parts = clausesOf(it.text);
-  const hype = it.hype ?? 0;
-  let shoutAt = parts.findIndex((p) => /!/.test(p) || HITS.some((h) => h.re.test(p)));
-  if (shoutAt < 0 && hype >= 2) shoutAt = parts.length - 1;
-  const segs = [];
-  parts.forEach((p, i) => {
-    const shout = i === shoutAt;
-    if (i > 0) segs.push({ gap: shout ? 240 : 100 });
-    const hit = shout ? hitIn(p) : null;
-    if (hit) {
-      if (hit.before) segs.push({ say: hit.before, kind: 'setup' });
-      segs.push({ clip: hit.id, say: hit.after, kind: 'shout', full: p });
-    } else segs.push({ say: p, kind: shout ? 'shout' : (parts.length > 1 && i < parts.length - 1 ? 'setup' : 'line') });
-  });
-  return segs.length ? segs : [{ say: it.text, kind: hype >= 2 ? 'shout' : 'line' }];
+  let at = -1, hit = null;
+  for (let i = 0; i < parts.length && !hit; i++) {
+    const h = hitIn(parts[i]);
+    if (h && hasBoothHit(it.who, h.id)) { at = i; hit = h; }
+  }
+  if (!hit) return [{ say: it.text }];
+  const before = [...parts.slice(0, at), hit.before].filter(Boolean).join(' ');
+  const after = parts.slice(at + 1).join(' ');
+  return [before && { say: before }, { clip: hit.id, say: hit.after, full: parts[at] }, after && { gap: 120 }, after && { say: after }].filter(Boolean);
 }
 // What the menu shows: the two voices in use.
 export function voiceNames() {
@@ -144,7 +149,11 @@ export const talking = () => !!cur || queue.length > 0;
 // Chrome drops an utterance spoken in the same instant the last one was cancelled.
 function kick() {
   if (cur || kickT) return;
-  const wait = Math.max(0, 90 - (performance.now() - cutAt));
+  const now = performance.now(), nx = queue[0];
+  // A beat between lines, as two people talking leave: longer when the other voice answers,
+  // none when the big moment cuts in.
+  const beat = !nx || nx.pri >= 3 ? 0 : nx.who !== lastWho ? 280 : 150;
+  const wait = Math.max(0, 90 - (now - cutAt), beat - (now - endAt));
   kickT = setTimeout(() => { kickT = 0; if (!cur) next(); }, wait);
 }
 function interrupt() {
@@ -159,6 +168,7 @@ function interrupt() {
 function finishLine(it) {
   if (cur !== it) return;
   cur = null;
+  endAt = performance.now(); lastWho = it.who;
   const rest = () => {
     if (cur) return;
     if (boothClipOn()) { watchdog = setTimeout(rest, 120); return; }
@@ -170,7 +180,7 @@ function finishLine(it) {
 function speakChunk(it, text, set, done) {
   if (!(SYN && Utter && V.voice) || !text) return false;
   duck(true);
-  const u = new Utter(text.replace(/!+/g, '!'));
+  const u = new Utter(speakable(text));
   const v = voices[it.who] ?? voices.pbp;
   if (v) { u.voice = v; u.lang = v.lang; }
   u.rate = set.rate;
@@ -188,16 +198,14 @@ function playSeg(it) {
   const seg = it.segs[it.si++];
   if (!seg) { finishLine(it); return; }
   if (seg.gap) { watchdog = setTimeout(() => playSeg(it), seg.gap); return; }
-  const same = voices.pbp === voices.color;
-  const set = voiceOf(it.who, it.hype ?? 0, seg.kind, same);
   if (seg.clip && playBoothHit(it.who, seg.clip)) {
-    // The hit is the clip. Synthesis only fills the name or the yardage around it.
-    if (seg.say && speakChunk(it, seg.say, voiceOf(it.who, 0, 'line', same), () => playSeg(it))) return;
+    // The hit is the clip. Synthesis only fills the name or the yardage after it.
+    if (seg.say && speakChunk(it, seg.say, it.set, () => playSeg(it))) return;
     watchdog = setTimeout(() => playSeg(it), 680);
     return;
   }
   const text = seg.say || seg.full || '';
-  if (speakChunk(it, text, set, () => playSeg(it))) return;
+  if (speakChunk(it, text, it.set, () => playSeg(it))) return;
   const words = text.split(/\s+/).filter(Boolean).length || 1;
   watchdog = setTimeout(() => playSeg(it), 260 + words * (it.hype >= 2 ? 240 : 300));
 }
@@ -211,6 +219,7 @@ function next() {
   clearTimeout(captionTimer);
   caption(it);
   it.segs = segmentsOf(it);
+  it.set = voiceOf(it.who, it.hype ?? 0, voices.pbp === voices.color);
   it.si = 0;
   playSeg(it);
 }

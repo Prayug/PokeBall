@@ -101,8 +101,11 @@ const BOOTH_HITS = ['touchdown', 'pick', 'sack', 'fumble', 'good', 'nogood', 'ki
 const boothRaw = { pbp: {}, color: {} };
 let boothVoices = 0, boothAsked = false;
 export const boothClipOn = () => boothVoices > 0;
+// Whether a committed clip is there for this hit (either voice can carry it).
+export const hasBoothHit = (who, id) => !!(boothRaw[who]?.[id] ?? boothRaw.pbp?.[id]);
 export function loadBoothClips() {
-  if (boothAsked || typeof window === 'undefined' || typeof fetch !== 'function') return;
+  // A page opened from disk can't fetch files next to it; synthesis carries every line then.
+  if (boothAsked || typeof window === 'undefined' || typeof fetch !== 'function' || window.location?.protocol === 'file:') return;
   boothAsked = true;
   for (const who of ['pbp', 'color']) {
     for (const id of BOOTH_HITS) {
