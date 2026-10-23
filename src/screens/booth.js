@@ -47,9 +47,9 @@ export function boothFlow(st, g, lp) {
     // The call sheet is up: if the booth goes quiet a while, the analyst fills the gap.
     BT.fillerT = setTimeout(function fill() {
       if (S.screen !== 'game' || BT.g !== g || g.final) return;
-      if (talking() || performance.now() - BT.lastTalk < 9000) { BT.fillerT = setTimeout(fill, 3000); return; }
+      if (talking() || performance.now() - BT.lastTalk < 12000) { BT.fillerT = setTimeout(fill, 3000); return; }
       send([fillerLine(BT.B, g)]);
-    }, 9000);
+    }, 12000);
   }
   if ((st === 'FORMATION_SETUP' || st === 'PRE_SNAP') && lp && !lp.preview && BT.presnapFor !== lp) {
     BT.presnapFor = lp; BT.lp = lp; BT.seen = 0;
