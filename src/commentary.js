@@ -1,9 +1,13 @@
-// The booth: a two-man crew calling the game on the live field, the way a Madden broadcast
-// does. Mack Rivers has the play-by-play: the situation before the snap and the action as it
-// happens (the handoff, the throw, the catch, the hit, the run into the open field, the score).
-// Dee Hollis is the analyst: what the play meant, why it worked (a type matchup, an ability,
-// a size mismatch, a power switching on, the weather) and where the game is going (the score,
-// the clock, streaks and momentum).
+// The booth: a two-man crew calling the game on the live field. Mack Rivers has the
+// play-by-play: the situation before the snap and the action as it happens. Dee Hollis is the
+// analyst: why the play worked, what it means for the game.
+//
+// A real crew talks a lot less than it could. Mack doesn't narrate every handoff and every
+// five-yard catch while it happens: he calls the big moments live (the deep shot, the sack, the
+// pick, the runner breaking into the open) and wraps the routine plays in one line after the
+// whistle. Dee comes in after the play, not over it, and not on every snap. Both keep a memory
+// of what they said, so a phrase doesn't come back for a long while and two lines in a row don't
+// lean on the same words.
 //
 // Everything here is words only: each call returns lines ({ who, text, pri, hype }) that
 // speech.js reads out and captions, so it runs in node for the tests. `pri` is how much a line
@@ -12,18 +16,18 @@
 import { PLAYERS } from './ratings.js';
 import { DEF_PLAYS, OFF_PLAYS, fgDistance } from './engine.js';
 import { POWER_OF } from './powers.js';
-import { STADIUMS, TIMES, venueOf } from './kits.js';
-import { WEATHER, bestMatchup } from './types.js';
-import { boothAfter, playerToWatch } from './broadcast.js';
+import { TIMES, venueOf } from './kits.js';
+import { bestMatchup } from './types.js';
+import { playerToWatch } from './broadcast.js';
 
 export const CREW = {
   pbp: { name: 'Mack Rivers', role: 'Play-by-play' },
   color: { name: 'Dee Hollis', role: 'Analyst' },
 };
 
-const nm = (id) => PLAYERS[id]?.name ?? 'nobody';
-const kg = (id) => Math.round((PLAYERS[id]?.weight ?? 0) / 10);
-const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const nm = (id) => PLAYERS[id]?.name ?? 'the ball carrier';
+const known = (id) => id != null && !!PLAYERS[id];
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : w.endsWith('ch') ? 'es' : 's'}`;
 const ORD = ['', 'First', 'Second', 'Third', 'Fourth'];
 const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 const TEENS = ['ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
@@ -43,33 +47,21 @@ function hereLine(g, spot = g.spot) {
   if (spot === 50) return 'midfield';
   return `the ${yardWord(spot < 50 ? spot : 100 - spot)}`;
 }
-
-// The yard line `x` yards past the line of scrimmage on a live play, said aloud.
+// Where the offense has the ball, for the down and distance: "on their own 25", "at the Cerulean 30".
+function ballOn(g, o) {
+  const s = Math.round(g.spot);
+  if (s === 50) return 'at midfield';
+  return s < 50 ? `on their own ${s}` : `at the ${g.teams[1 - o].name} ${100 - s}`;
+}
+// The yard line `x` yards past the line of scrimmage on a live play.
 const fieldAt = (lp, x) => hereLine(lp.g, lp.spot + (x ?? 0));
-// How the offense lines up, the way a booth calls it before the snap.
-const FORM_CALL = {
-  gun_spread: ['Spread out of the shotgun.', 'Shotgun, three wide.'],
-  gun_trips: ['Trips bunched to one side, out of the shotgun.', 'Shotgun, trips.'],
-  singleback: ['Singleback set, one back behind the quarterback.', 'Under center, singleback.'],
-  iform: ['I-formation, fullback in front of the tailback.', 'Under center in the I.'],
-  pistol: ['Pistol look, back right behind the quarterback.', 'Out of the pistol.'],
-};
-const FRONT_CALL = { nickel: 'They are in nickel, five defensive backs.', goal: 'Goal line defense, everybody in the box.' };
-
-// What a type brings to a call: a word for how the Pokémon plays.
-const TYPE_FLAVOR = {
-  Normal: 'does everything well', Fire: 'is red hot', Water: 'just flows through traffic', Electric: 'is lightning quick',
-  Grass: 'is rooted in there', Ice: 'has ice in the veins', Fighting: 'plays with a mean streak', Poison: 'wears you down',
-  Ground: 'is a load to bring down', Flying: 'is flying around out there', Psychic: 'sees it before it happens', Bug: 'never stops swarming',
-  Rock: 'is a wall', Ghost: 'is impossible to get a hand on', Dragon: 'plays like a monster', Dark: 'plays dirty in the best way',
-  Steel: 'is built like a tank', Fairy: 'makes it look easy',
-};
 
 // ---------- the crew's memory ----------
-// One booth per game: the lines it has used lately (so it doesn't repeat itself), the flow of
-// the game (who has the momentum), and what it said on the play in progress.
+// One booth per game: the lines it has said (so a phrase doesn't come back soon), the words of
+// the last few lines (so the next one doesn't lean on them), the flow of the game, and what has
+// been said on the play in progress.
 export function createBooth(seed = 1) {
-  return { seed: (seed >>> 0) || 1, recent: new Map(), streak: { ti: null, n: 0, kind: '' }, play: null, said: new Set(), quietAt: 0, fillers: 0 };
+  return { seed: (seed >>> 0) || 1, recent: new Map(), history: [], words: [], streak: { ti: null, n: 0, kind: '' }, play: null, fillers: 0, plays: 0, colorAt: -9 };
 }
 function rnd(B) {
   // mulberry32: the booth's own dice, so a seeded game is called the same way every time.
@@ -78,16 +70,26 @@ function rnd(B) {
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
-// One of `opts` for this kind of line, not one used for it in the last few times.
+// The words that make a line sound like the last one: lower-case words of four letters or more
+// (names and team names are capitalised, and short words are glue).
+const STOP = new Set(['that', 'this', 'with', 'they', 'them', 'their', 'there', 'have', 'from', 'into', 'just', 'what', 'here', 'right', 'down', 'yards', 'yard', 'ball']);
+const wordsOf = (t) => (String(t).match(/\b[a-z][a-z'-]{3,}\b/g) ?? []).filter((w) => !STOP.has(w));
+// One of `opts`: never one used for this kind of line lately, never one the booth said in the
+// last stretch of the game, and the one sharing the fewest words with the last few lines.
 function pick(B, key, opts) {
   opts = opts.filter(Boolean);
   if (!opts.length) return '';
   const used = B.recent.get(key) ?? [];
-  const fresh = opts.filter((o) => !used.includes(o));
-  const pool = fresh.length ? fresh : opts;
+  let pool = opts.filter((o) => !used.includes(o) && !B.history.includes(o));
+  if (!pool.length) pool = opts.filter((o) => !used.includes(o));
+  if (!pool.length) pool = opts;
+  const recentW = new Set(B.words.flat());
+  const score = (o) => wordsOf(o).filter((w) => recentW.has(w)).length;
+  const best = Math.min(...pool.map(score));
+  pool = pool.filter((o) => score(o) === best);
   const o = pool[Math.floor(rnd(B) * pool.length)];
   used.push(o);
-  if (used.length > Math.min(4, opts.length - 1)) used.shift();
+  if (used.length > Math.max(1, Math.min(8, opts.length - 1))) used.shift();
   B.recent.set(key, used);
   return o;
 }
@@ -95,20 +97,29 @@ const line = (who, text, pri = 1, hype = 0) => (text ? { who, text: text[0].toUp
 const pbp = (text, pri, hype) => line('pbp', text, pri, hype);
 const color = (text, pri = 0, hype = 0) => line('color', text, pri, hype);
 
-// Where the ball is, said aloud: "the Cerulean 20", "midfield", "his own 35".
-function yardLine(g, poss, spot) {
-  spot = Math.round(spot);
-  if (spot <= 0 || spot >= 100) return 'the goal line';
-  if (spot === 50) return 'midfield';
-  return spot < 50 ? `their own ${spot}` : `the ${g.teams[1 - poss].name} ${100 - spot}`;
-}
-// Team abbreviations in the game's own text ("PAL 29") as the names a voice reads well.
+// Team abbreviations in the game's own text ("PAL 29") as names a voice reads well.
 function spoken(g, text) {
   if (!text) return text;
   for (const t of g.teams) if (t.abbr) text = text.replace(new RegExp(`\\b${t.abbr}\\b`, 'g'), t.name);
   return text.replace(/\bTD\b/g, 'touchdown').replace(/\s+/g, ' ').trim();
 }
-const finish = (g, lines) => lines.filter(Boolean).map((l) => ({ ...l, text: spoken(g, l.text) }));
+// The lines a call hands back: spoken forms, nothing the booth said a moment ago, and the memory
+// updated.
+function finish(B, g, lines) {
+  const out = [];
+  for (const l of lines) {
+    if (!l) continue;
+    const text = spoken(g, l.text);
+    if (!text) continue;
+    if (l.pri < 3 && B.history.slice(-12).includes(text)) continue;
+    out.push({ ...l, text });
+    B.history.push(text);
+    if (B.history.length > 60) B.history.shift();
+    B.words.push(wordsOf(text));
+    if (B.words.length > 4) B.words.shift();
+  }
+  return out;
+}
 function scoreLine(g) {
   const [h, a] = g.score;
   const H = g.teams[0], A = g.teams[1];
@@ -120,337 +131,264 @@ const clockWords = (s) => {
   s = Math.max(0, Math.round(s));
   const m = Math.floor(s / 60), r = s % 60;
   if (!m) return `${r} seconds`;
-  return r ? `${m}:${String(r).padStart(2, '0')}` : `${plural(m, 'minute')}`;
+  return r ? `${m}:${String(r).padStart(2, '0')}` : plural(m, 'minute');
 };
 const QUARTER = ['', 'first quarter', 'second quarter', 'third quarter', 'fourth quarter', 'overtime'];
+// How the weather plays, in words a crew would use (never the game's numbers).
+const WEATHER_TALK = {
+  rain: ['The rain is coming down, and ball security is going to be a story today.', 'Wet ball, slick turf. You have to hold onto it with two hands in this.'],
+  sun: ['That sun is brutal today. Tracking the deep ball into it is not easy.', 'Hot one out there. Watch the receivers fighting the glare on the deep ball.'],
+  sand: ['This sandstorm is a factor. It wears everybody down, and the bigger bodies love it.', 'Tough conditions with the sand blowing. Conditioning matters in a game like this.'],
+  hail: ['Hail coming down, and you can see the players slowing late in the down.', 'Brutal conditions. Everybody out there is going to feel this one tomorrow.'],
+};
 
 // ---------- the open ----------
 export function openLines(B, g) {
   const v = venueOf(g);
   const [H, A] = g.teams;
-  const when = v.time === 'night' ? 'Good evening' : v.time === 'dusk' ? 'Good evening' : 'Good afternoon';
-  const wx = v.roof && g.weather === 'clear' ? 'under the roof' : g.weather === 'clear' ? 'and what a day for football' : `and we have ${WEATHER[g.weather]?.name.toLowerCase()} to deal with today`;
-  const where = `${v.name}${STADIUMS[v.stadium]?.roof ? '' : ''}`;
+  const when = v.time === 'night' || v.time === 'dusk' ? 'Good evening' : 'Good afternoon';
+  const wx = v.roof && g.weather === 'clear' ? 'indoors today' : g.weather === 'clear' ? 'and it is a beautiful day for football' : 'and the weather is going to be part of this one';
   const out = [pbp(pick(B, 'open', [
-    `${when} everybody, and welcome to ${where}. I'm ${CREW.pbp.name}, alongside ${CREW.color.name}, ${wx}. The ${A.name} visit the ${H.name}.`,
-    `${when} and welcome to ${TIMES[v.time] === 'Prime time' ? 'prime time ' : ''}football from ${where}! ${CREW.pbp.name} here with ${CREW.color.name}. It's the ${A.name} against the ${H.name}, ${wx}.`,
+    `${when} everybody, and welcome to ${v.name}. I'm ${CREW.pbp.name}, alongside ${CREW.color.name}, ${wx}. The ${A.name} visit the ${H.name}.`,
+    `${when} and welcome to ${TIMES[v.time] === 'Prime time' ? 'prime time ' : ''}football from ${v.name}. ${CREW.pbp.name} here with ${CREW.color.name}. It's the ${A.name} and the ${H.name}.`,
   ]), 1, 1)];
-  // The analyst's key to the game: the biggest type edge either way, or the star to watch.
   const key = keyMatchup(g);
   const star = playerToWatch(g, 0);
   out.push(color(key ? pick(B, 'openkey', [
-    `Mack, my key to this one: ${key}.`,
-    `The thing I'll be watching, Mack: ${key}.`,
-  ]) : star ? `Keep an eye on ${star.name} for the ${H.name}. ${typeFlavor(star.id)}.` : '', 1));
-  if (g.playoff) out.push(pbp('And remember, this is the playoffs. Lose and go home.', 1));
-  return out.filter(Boolean);
+    `Thanks, Mack. The matchup I'm watching: ${key}.`,
+    `Mack, this one could come down to ${key}.`,
+  ]) : star ? `Thanks, Mack. Keep an eye on ${star.name} for the ${H.name}. Everything they do runs through him.` : '', 1));
+  if (g.playoff) out.push(pbp('And remember, this is the playoffs. Lose, and your season is over.', 1));
+  return finish(B, g, out);
 }
-// The biggest type edge on the field for either side, in words.
+// The biggest type edge on the field, said like a football matchup.
 function keyMatchup(g) {
   let best = null;
   for (const [o, d] of [[0, 1], [1, 0]]) {
     const O = g.teams[o].lineup, D = g.teams[d].lineup;
-    for (const [os, ds] of [['WR1', 'CB1'], ['WR2', 'CB2'], ['RB', 'MLB'], ['TE', 'SS'], ['QB', 'DE'], ['LT', 'DE'], ['RT', 'LE']]) {
+    for (const [os, ds, what] of [['WR1', 'CB1', 'out wide'], ['WR2', 'CB2', 'on the outside'], ['RB', 'MLB', 'between the tackles'], ['TE', 'SS', 'over the middle'], ['LT', 'DE', 'in the trenches'], ['RT', 'LE', 'in the trenches']]) {
       const a = O[os], b = D[ds];
       if (a == null || b == null) continue;
       const m = bestMatchup(PLAYERS[a], PLAYERS[b]);
-      if (m.mult > 1 && (!best || m.mult > best.m)) best = { m: m.mult, a, b, type: m.type, ti: o };
-      const r = bestMatchup(PLAYERS[b], PLAYERS[a]);
-      if (r.mult > 1 && (!best || r.mult > best.m)) best = { m: r.mult, a: b, b: a, type: r.type, ti: d };
+      if (m.mult > 1 && (!best || m.mult > best.m)) best = { m: m.mult, a, b, what };
     }
   }
   if (!best) return '';
-  return `${nm(best.a)}'s ${best.type} moves against ${nm(best.b)}. That's ${best.m >= 4 ? 'four times' : 'super'} effective, and the ${g.teams[best.ti].name} know it`;
-}
-function typeFlavor(id) {
-  const p = PLAYERS[id];
-  if (!p) return '';
-  return `${p.name} ${TYPE_FLAVOR[p.types[0]] ?? 'can play'}`;
+  return `${nm(best.a)} against ${nm(best.b)} ${best.what}. That's a type mismatch, and you'd better believe they'll go after it`;
 }
 
 // ---------- before the snap ----------
-// Mack sets the scene; now and then Dee adds what to watch on this down.
-export function presnapLines(B, g, lp) { return finish(g, presnapRaw(B, g, lp)); }
-function presnapRaw(B, g, lp) {
+// Mack sets the scene (not on every routine snap); now and then Dee adds what to watch.
+export function presnapLines(B, g, lp) {
   if (!g || !lp || g.final) return [];
-  B.play = { lp, said: new Set(), calls: [], marks: new Set(), deep: false, carrierAt: 0 };
-  const o = lp.o, T = g.teams[o], D = g.teams[lp.d];
+  return finish(B, g, presnapRaw(B, g, lp));
+}
+function presnapRaw(B, g, lp) {
+  B.play = { lp, said: new Set(), calls: 0, marks: new Set(), deep: false };
+  const o = lp.o, T = g.teams[o];
   const out = [];
   const lead = g.score[o] - g.score[1 - o];
   const late = (g.quarter === 2 || g.quarter >= 4) && g.clock <= 120;
+  const kick = nm(lp.kicker?.id);
   if (lp.kick?.ko) {
-    const deep = lp.play?.onside ? 'They are showing onside.' : 'They are kicking it deep.';
-    out.push(pbp(pick(B, 'ko', [
-      `${nm(lp.kicker?.id)} on the tee for the ${T.name}. ${deep}`,
-      `Kickoff formation. ${nm(lp.kicker?.id)} back for the ${T.name}. ${deep}`,
-      `The ${T.name} line up to kick. ${nm(lp.kicker?.id)} is over the ball. ${deep}`,
+    out.push(pbp(lp.play?.onside ? pick(B, 'onside', [`Everybody bunched up on one side. The ${T.name} are going to try the onside kick.`, 'Hands team is on the field. Here comes the onside try.']) : pick(B, 'ko', [
+      `${kick} will kick it off for the ${T.name}.`,
+      `The ${T.name} kick it off, ${kick} with the boot.`,
+      `${kick} sets the ball on the tee.`,
     ]), 1));
-    return out.filter(Boolean);
+    return out;
   }
   if (lp.kick) {
     if (lp.kind === 'punt') out.push(pbp(pick(B, 'punt', [
-      `Fourth down. Punt team on, ${nm(lp.kicker?.id)} back from ${yardLine(g, o, g.spot)}.`,
-      `They are going to flip the field. ${nm(lp.kicker?.id)} is deep for the ${T.name}.`,
-      `Punt formation, ${nm(lp.kicker?.id)} standing back from ${hereLine(g)}.`,
+      `Fourth down, and the punt team comes on. ${kick} is back to kick.`,
+      `They'll punt it away. ${kick} deep for the ${T.name}.`,
+      `Fourth down, ${kick} back to punt from ${hereLine(g)}.`,
     ]), 1));
-    else if (lp.kind === 'xp') out.push(pbp(pick(B, 'xp', [`${nm(lp.kicker?.id)} on for the extra point.`, `The point after, by ${nm(lp.kicker?.id)}.`]), 1));
+    else if (lp.kind === 'xp') out.push(pbp(pick(B, 'xp', [`${kick} on for the extra point.`, `Here's the point after, ${kick} to kick.`]), 1));
     else {
       const dist = fgDistance(g);
-      out.push(pbp(pick(B, 'fg', [`${nm(lp.kicker?.id)} on for a ${dist}-yard try.`, `Here's ${nm(lp.kicker?.id)}, from ${dist} yards out.`]), 1));
-      if (late && lead <= 0 && lead >= -3) out.push(color(lead === 0 ? 'This is for the lead. Ice in the veins time.' : 'This one ties it. No pressure.', 1, 1));
-      else if (dist >= 50) out.push(color(`That's a long way, Mack. ${dist >= 55 ? 'I am not sure he has the leg.' : 'He needs to get all of it.'}`, 0));
+      out.push(pbp(pick(B, 'fg', [`${kick} on for a ${dist}-yard try.`, `Field goal unit is out. ${kick}, from ${dist} yards.`, `${kick} will try it from ${dist}.`]), 1));
+      if (late && lead <= 0 && lead >= -3) out.push(color(lead === 0 ? 'This is for the lead, Mack. Big kick.' : 'This one ties it. No pressure at all.', 1, 1));
+      else if (dist >= 50) out.push(color(dist >= 55 ? "That's at the edge of his range. He needs to hit it clean." : "Long way. He'll need all of it.", 0));
     }
-    return out.filter(Boolean);
+    return out;
   }
   if (g.phase === 'pat') {
-    out.push(pbp(pick(B, 'two', ['They are going for two!', `The ${T.name} are going for two here.`]), 1, 1));
-    return out.filter(Boolean);
+    out.push(pbp(pick(B, 'two', ['They are going for two!', `The ${T.name} are going to go for two here.`]), 1, 1));
+    return out;
   }
   const goal = g.spot + g.toGo >= 100;
-  const dd = `${ORD[g.down]} and ${goal ? 'goal' : say(g.toGo)}`;
-  const own = Math.round(g.spot);
-  const where = own === 50 ? 'at midfield' : own < 50 ? `on their own ${own}` : `at the ${D.name} ${100 - own}`;
-  const red = g.spot >= 80 && !goal;
-  const qb = PLAYERS[T.lineup.QB] ? nm(T.lineup.QB) : 'The quarterback';
-  let lead1 = '';
-  if (late && g.quarter >= 4 && lead < 0) lead1 = pick(B, 'latepre', [`${clockWords(g.clock)} to go, and the ${T.name} need ${lead >= -3 ? 'a field goal' : lead >= -8 ? 'a touchdown' : 'a miracle'}.`, `Under two minutes, the ${T.name} down ${-lead}.`, `Clock is the enemy now. ${clockWords(g.clock)} left, ${T.name} trailing by ${-lead}.`]);
-  else if (late && g.quarter === 2) lead1 = pick(B, 'halfpre', [`${clockWords(g.clock)} left in the half.`, 'Two-minute drill before the half.', `Inside two minutes before halftime.`]);
-  // The need on the money downs: short yardage, long yardage, the sticks.
-  const need = goal ? '' : g.down >= 3 && g.toGo <= 1 ? pick(B, 'needs', ['They need a yard.', 'Just a yard to go for the first.', 'Short yardage here.'])
-    : g.down >= 3 && g.toGo >= 8 ? pick(B, 'needl', ['Long way to go for the sticks.', `${T.name} need ${g.toGo} to move the chains.`, 'Obvious passing down.']) : '';
-  const form = !lp.formation || need || rnd(B) < 0.7 ? '' : pick(B, `form-${lp.formation}`, FORM_CALL[lp.formation] ?? ['']);
-  const front = FRONT_CALL[lp.defFormation] && !form && (g.down >= 3 || goal) && rnd(B) < 0.5 ? FRONT_CALL[lp.defFormation] : '';
-  out.push(pbp([lead1, pick(B, 'dd', [
-    `${dd} ${where}.`,
-    `${red ? 'In the red zone, ' : ''}${dd.toLowerCase()} for the ${T.name} ${where}.`,
-    `${T.name} ball, ${dd.toLowerCase()} ${where}.`,
-    `${dd}. ${qb} brings them to the line ${where}.`,
-    `${dd}, ball ${where}. ${qb} surveys the defense.`,
-    `${qb} and the ${T.name}, ${dd.toLowerCase()} ${where}.`,
-  ]), need, form, front].filter(Boolean).join(' '), 1));
-  // The analyst only on some downs, and always on the big ones.
-  const big = g.down >= 3 || late || g.spot >= 90;
-  if (big || rnd(B) < 0.4) {
-    const c = presnapColor(B, g, lp, { lead, late, goal });
-    if (c) out.push(color(c, big ? 1 : 0));
+  const dd = `${ORD[g.down]} and ${goal ? 'goal' : g.toGo === 1 ? 'one' : say(g.toGo)}`;
+  const where = ballOn(g, o);
+  const qb = known(T.lineup.QB) ? nm(T.lineup.QB) : 'the quarterback';
+  const big = g.down >= 3 || late || g.spot >= 80;
+  // A routine first or second down gets the down and distance only about half the time.
+  if (big || rnd(B) < 0.5) {
+    let head = '';
+    if (late && g.quarter >= 4 && lead < 0) head = pick(B, 'latepre', [`${clockWords(g.clock)} to go, and the ${T.name} need ${lead >= -3 ? 'a field goal' : lead >= -8 ? 'a touchdown' : 'a miracle'}.`, `Under two minutes, the ${T.name} down ${-lead}.`]);
+    else if (late && g.quarter === 2) head = pick(B, 'halfpre', [`${clockWords(g.clock)} left in the half.`, 'Inside two minutes before halftime.']);
+    const tail = goal ? '' : g.down >= 3 && g.toGo <= 1 ? pick(B, 'needs', ['They need a yard.', 'Just a yard to go.', 'Short yardage.'])
+      : g.down >= 3 && g.toGo >= 8 ? pick(B, 'needl', ['Long way to go.', 'An obvious passing down.']) : '';
+    out.push(pbp([head, pick(B, 'dd', [
+      `${dd} ${where}.`,
+      `${dd} for the ${T.name} ${where}.`,
+      `${T.name} ball, ${dd.toLowerCase()} ${where}.`,
+      `${dd}. ${qb} brings them to the line.`,
+      g.down === 1 && !goal ? `${qb} and the ${T.name} offense, first and ten ${where}.` : '',
+      goal ? `${dd} from the ${yardWord(100 - g.spot)}.` : '',
+    ]), tail].filter(Boolean).join(' '), 1));
   }
-  return out.filter(Boolean);
+  // The analyst: only on the big downs, now and then, and not right after he spoke.
+  if (big && B.plays - B.colorAt >= 2 && rnd(B) < 0.5) {
+    const c = presnapColor(B, g, lp, { lead, late, goal });
+    if (c) { out.push(color(c, 1)); B.colorAt = B.plays; }
+  }
+  return out;
 }
 function presnapColor(B, g, lp, { lead, late, goal }) {
   const o = lp.o, T = g.teams[o], D = g.teams[lp.d];
   const opts = [];
-  if (g.down === 4) opts.push(`They're going for it on fourth down! ${lead < 0 ? 'They have to.' : 'Gutsy call.'}`);
+  if (g.down === 4) opts.push(lead < 0 ? 'They have to go for it here. The whole game might ride on this snap.' : 'They are going for it on fourth down. Gutsy call.');
   if (g.down === 3) {
     const [made, tries] = T.team?.third ?? [0, 0];
-    if (tries >= 2) opts.push(`The ${T.name} are ${made} of ${tries} on third down today.`);
-    if (g.toGo >= 8) opts.push(`Third and long. The ${D.name} can pin their ears back and get after the quarterback, or sit back in coverage and rally to the tackle short of the sticks.`, `On third and long, Mack, watch for a disguised blitz. The ${D.name} love to show one look and play another.`);
-    else if (g.toGo <= 2) opts.push('Short yardage. Everybody in the building knows they need a push up front.', 'This is a big-boy down. Win the line of scrimmage, and you move the chains.');
-    else opts.push(`Third and manageable. The ${T.name} have the whole playbook open here.`);
+    if (tries >= 3 && made <= tries) opts.push(made / tries >= 0.5 ? `They have been good on third down today, ${made} of ${tries}.` : `Third down has been a problem for them. Just ${made} of ${tries}.`);
+    if (g.toGo >= 8) opts.push(`Third and long. The ${D.name} can pin their ears back and get after the quarterback.`, 'Watch for a disguised blitz here. Show one look, play another.');
+    else if (g.toGo <= 2) opts.push('Short yardage. Whoever wins up front wins this down.', 'Everybody in the building knows they need a push up front.');
+    else opts.push("Third and manageable. They've got the whole playbook available here.");
   }
-  if (goal && g.spot >= 95) opts.push('Goal line. This is where you find out who wants it more.', 'Inside the five, the field gets awfully small. No room to throw it, so it comes down to the trenches.');
-  if (g.spot >= 80 && g.spot < 95) opts.push('Red zone. The field shrinks, and those throwing windows get tight.', 'You have to come away with seven down here, Mack. Settling for three is a win for the defense.');
-  if (lp.play?.pa) opts.push('Watch the backfield. This has play-action written on it.', 'If they can sell the run here, the linebackers are going to bite.');
-  if (g.down === 1 && g.toGo >= 10 && !goal && rnd(B) < 0.25) opts.push('First down is where you stay ahead of the chains. Get four or five here and the whole playbook opens up.');
-  if (g.down === 2 && g.toGo >= 8) opts.push('Second and long. They need to get some of that back before third down.');
-  if (lp.disguise === 'show') opts.push('Look at the linebackers creeping up. They are showing blitz!');
-  // A Pokémon zoning in, or already in the zone.
-  for (const ti of [o, lp.d]) {
-    const pw = g.pw?.s?.[ti];
-    if (!pw) continue;
-    for (const [id, st] of Object.entries(pw)) {
-      const w = POWER_OF[id];
-      if (!w || !Object.values(g.teams[ti].lineup).includes(Number(id))) continue;
-      if (st.on) opts.push(`${nm(id)} is in the zone with ${w.name}. ${ti === o ? 'Get him the ball.' : 'You have to account for him on every snap.'}`);
-      else if (st.n > 0 && st.n === w.zone.need - 1) opts.push(`${nm(id)} is one play from zoning in. ${w.name} is close.`);
-    }
-  }
-  // Size: the biggest mismatch across from a receiver.
-  for (const [os, ds] of [['WR1', 'CB1'], ['WR2', 'CB2'], ['TE', 'SS']]) {
-    const a = T.lineup[os], b = D.lineup[ds];
-    if (a == null || b == null) continue;
-    const wa = kg(a), wb = kg(b);
-    if (wa >= wb * 5 && wa - wb > 60) opts.push(`Look at this matchup outside: ${nm(a)} at ${wa} kilos against ${nm(b)} at ${wb}. That's not fair.`);
-    else if (wb >= wa * 5 && wb - wa > 60) opts.push(`${nm(b)} outweighs ${nm(a)} by ${wb - wa} kilos. ${nm(a)} has to win with quickness.`);
-    const m = bestMatchup(PLAYERS[a], PLAYERS[b]);
-    if (m.mult > 1) opts.push(`Watch ${nm(a)} against ${nm(b)}. ${m.type} on ${PLAYERS[b].types.join(' and ')}, that's super effective.`);
-  }
-  if (g.weather !== 'clear' && !venueOf(g).roof && rnd(B) < 0.3) {
-    const W = WEATHER[g.weather];
-    const boosted = Object.values(T.lineup).filter((id) => PLAYERS[id]?.types.includes(W.boost)).map(nm);
-    if (boosted.length) opts.push(`${W.name} out there, and ${boosted[0]} loves it.`);
-  }
-  if (Math.abs(lead) >= 17 && !late) opts.push(lead > 0 ? `The ${T.name} are rolling. They just have to keep it clean now.` : `The ${T.name} need something to get going. Down ${-lead}.`);
-  if (B.streak.n >= 3 && B.streak.ti != null) opts.push(B.streak.kind === 'stop' ? `The ${g.teams[B.streak.ti].name} defense has been dominant. ${say(B.streak.n)} straight stops.` : `The ${g.teams[B.streak.ti].name} have all the momentum right now.`);
+  if (goal && g.spot >= 95) opts.push('Goal line. No room to throw it down here, it comes down to the big guys up front.');
+  else if (g.spot >= 80) opts.push('Red zone. The field shrinks, and those throwing windows get tight.', "You've got to come away with seven down here. Three is a win for the defense.");
+  if (late) opts.push(lead < 0 ? 'Clock management matters now. Get out of bounds, use your timeouts wisely.' : 'Keep the ball in bounds, keep the clock running. That is the job now.');
+  if (B.streak.n >= 3 && B.streak.ti != null) opts.push(B.streak.kind === 'stop' ? `The ${g.teams[B.streak.ti].name} defense has been all over it. ${say(B.streak.n)} straight stops.` : `The ${g.teams[B.streak.ti].name} have all the momentum right now.`);
   const tw = playerToWatch(g, o);
-  if (tw && tw.line && !/No stats/.test(tw.line)) opts.push(`${tw.name} has been the story: ${spokenLine(tw.line)}.`);
-  if (!opts.length) return '';
-  return pick(B, 'precolor', opts);
-}
-// A stat line as words.
-function spokenLine(s) {
-  return s.replace(/(\d+)\/(\d+)/, '$1 of $2').replace(/yds/g, 'yards').replace(/ TDs?/g, (m) => (m.endsWith('s') ? ' touchdowns' : ' touchdown')).replace(/INT/g, 'interception').replace(/ · /g, ', ');
+  const s = tw ? T.stats?.[tw.id] : null;
+  if (s && (s.ry + s.rcy >= 60 || s.py >= 150)) opts.push(s.py >= 150 ? `${tw.name} is dealing today, ${s.py} yards through the air.` : `${tw.name} has been the story, ${s.ry + s.rcy} yards from scrimmage.`);
+  return opts.length ? pick(B, 'precolor', opts) : '';
 }
 
 // ---------- during the play ----------
-// One live event: Mack's call for it, or nothing. Keeps to a few words; the speech queue drops
-// a call the play has already run past.
+// One live event: Mack's call for it, or nothing. The big moments always get a call; the routine
+// ones (a short throw, a plain handoff) only sometimes, and the play gets a few calls at most:
+// the speech queue drops a call the play has already run past, and a crew that says everything
+// talks over itself.
 export function liveLine(B, lp, e) {
-  const P = B.play?.lp === lp ? B.play : (B.play = { lp, said: new Set(), calls: [], marks: new Set(), deep: false, carrierAt: 0 });
-  const g = lp.g;
+  const P = B.play?.lp === lp ? B.play : (B.play = { lp, said: new Set(), calls: 0, marks: new Set(), deep: false });
+  const ln = liveRaw(B, P, lp, e);
+  if (!ln) return null;
+  if (ln.pri < 3 && P.calls >= 3) return null;
+  P.calls++;
+  return finish(B, lp.g, [ln])[0] ?? null;
+}
+function liveRaw(B, P, lp, e) {
   const who = e.who, other = e.other;
   const n = who ? nm(who.id) : '', m = other ? nm(other.id) : '';
   const once = (k) => { if (P.said.has(k)) return false; P.said.add(k); return true; };
+  const some = (p) => rnd(B) < p;
   switch (e.kind) {
     case 'handoff': {
       if (!once('handoff')) return null;
       const dir = lp.play?.dir;
       const call = {
-        inside: [`Handoff to ${n}, inside zone.`, `${n} takes it up the middle, looking for a crease.`, `Give to ${n}, he presses the line.`],
-        outside: [`${n} on the stretch play, heading for the edge.`, `Outside zone, ${n} stretching it wide.`],
-        power: [`Power, the guard pulls, and ${n} follows him.`, `${n} off tackle behind the pulling guard.`],
-        counter: [`Counter, ${n} cuts back against the grain.`, `Misdirection, the counter to ${n}.`],
+        counter: [`Counter, ${n} cuts back against the grain.`, `Misdirection, and ${n} has it going the other way.`],
         toss: [`Toss to ${n}, racing for the corner.`, `Pitch to ${n}, he wants the edge.`],
-        dive: [`Quick hitter, ${n} straight up the gut.`, `Dive play, ${n} hits it downhill.`],
-        trap: [`Trap play, ${n} right up the middle.`, `They let the tackle in, trap block, ${n} with the ball.`],
-        sweep: [`Sweep, ${n} with linemen out in front.`, `${n} on the sweep, he has convoy.`],
-        draw: [`Draw play! Delayed handoff to ${n}.`, `Shows pass, and it's a draw to ${n}.`],
-        read: [`Zone read, and he gives it to ${n}.`, `Read option, the end crashes, give to ${n}.`],
-      }[dir] ?? [];
-      return pbp(pick(B, `handoff-${dir ?? 'run'}`, [...call, `Handoff, ${n}.`, `${n} with the carry.`]), 2);
+        sweep: [`Sweep, ${n} with linemen pulling in front.`],
+        draw: [`Draw play! ${n} on the delayed handoff.`, `Shows pass, and it's a draw to ${n}.`],
+        read: [`Zone read, he gives it to ${n}.`],
+        outside: [`${n} stretching it toward the sideline.`],
+        power: [`${n} off tackle behind the pulling guard.`],
+      }[dir];
+      // A plain inside run is only called now and then.
+      if (!call && !some(0.3)) return null;
+      return pbp(pick(B, `handoff-${dir ?? 'run'}`, call ?? [`Handoff, ${n}.`, `${n} up the middle.`, `Give to ${n}.`]), 2);
     }
-    case 'keep': return once('keep') ? pbp(pick(B, 'keep', [`He pulls it! ${n} keeps!`, `The end crashed, and ${n} keeps it himself!`, `Fakes the give, ${n} keeps!`]), 2, 1) : null;
+    case 'keep': return once('keep') ? pbp(pick(B, 'keep', [`He pulls it! ${n} keeps!`, `Fakes the give, and ${n} keeps it himself!`]), 2, 1) : null;
     case 'scramble': return once('scramble') ? pbp(pick(B, 'scramble', [
-      `The pocket breaks down, and ${n} takes off!`,
+      `Pocket breaks down, and ${n} takes off!`,
       `${n} steps up and runs!`,
-      `Flushed out of the pocket, ${n} on the move!`,
-      `Nobody open, so ${n} tucks it and runs!`,
+      'Nobody open, so he tucks it and goes!',
     ]), 2, 1) : null;
     case 'throw': {
       if (!once('throw')) return null;
-      if (!other) return pbp(pick(B, 'away', [`Nothing open, ${n} throws it away.`, 'He gets rid of it, out of bounds.', `${n} throws it into the stands. Live to play another down.`]), 2);
+      if (!other) return pbp(pick(B, 'away', ['Nothing there, and he throws it away.', 'He gets rid of it out of bounds.']), 2);
       const air = (other.x ?? 0) - (who?.x ?? 0);
-      const heat = lp.pressure ? pick(B, 'heat', ['Under pressure, ', 'With a man in his face, ', 'Off his back foot, ']) : '';
       P.deep = air >= 18;
       const c = lp.offCall;
-      const lead = (t) => (heat && !t.startsWith(n) && !t.startsWith(m) ? heat + t[0].toLowerCase() + t.slice(1) : heat + t);
-      if (P.deep) return pbp(heat + pick(B, `deep-${c}`, [
-        ...(c === 'four_verts' ? [`everybody's going deep. ${n} launches one for ${m}!`] : []),
-        ...(c === 'pa_deep' ? [`play-action, ${n} sets and fires deep for ${m}!`] : []),
-        ...(c === 'post' ? [`${n} lets it fly, deep post for ${m}!`] : []),
-        `${n} goes deep for ${m}!`,
-        `here's the shot down the field, for ${m}!`,
-        `${n} airs it out, ${m} is going!`,
+      if (P.deep) return pbp(pick(B, 'deep', [
+        `Here's the shot downfield, for ${m}!`,
+        `${n} lets it fly, ${m} is going deep!`,
+        c === 'pa_deep' ? `Play-action, he sets, and fires deep for ${m}!` : `${n} airs it out for ${m}!`,
+        `Deep ball, ${m} has a step!`,
       ]), 2, 1);
-      const call = {
-        slant: [`${n} on the quick slant for ${m}.`, `Three-step drop, slant to ${m}.`],
-        out: [`${n} throws the out, to ${m} on the sideline.`, `Quick out for ${m}.`],
-        stick: [`${n} looks for ${m} on the stick route.`],
-        curl: [`${n} throws for ${m}, sitting down in the zone.`, `Curl route, ${m} turns for the ball.`],
-        curl_flat: [`${n} throws for ${m}, sitting down in the zone.`, `High-low on the flat defender, ${n} throws for ${m}.`],
-        mesh: [`${n} throws for ${m} on the shallow cross.`, `Crossers underneath, ${n} hits ${m} on the move.`],
-        smash: [`${n} throws for ${m}.`, `Smash concept, ${n} throws for ${m}.`],
-        dagger: [`${n} throws the dig, over the middle for ${m}.`],
-        levels: [`${n} throws over the middle for ${m}.`],
-        flood: [`${n} throws to the sideline for ${m}.`],
-        y_cross: [`${m} working all the way across the field, here's the throw.`],
-        te_seam: [`${n} throws up the seam for ${m}.`, `Up the seam, looking for ${m}.`],
-        screen: [`Screen pass! ${n} dumps it to ${m}, and he has blockers.`, `They let the rush in, and it's a screen to ${m}.`],
-        bubble: [`Bubble screen out to ${m}.`, `Quick screen to ${m}, he has blockers out front.`],
-        pa_boot: [`Bootleg, ${n} rolls out and throws for ${m}.`, `Play-action, ${n} on the boot, looking for ${m}.`],
-      }[c] ?? [];
-      return pbp(lead(pick(B, `throw-${c}`, [
-        ...call,
-        `${n} throws for ${m}.`,
-        `${n} delivers it on time to ${m}.`,
-        air < 6 ? `${n} checks it down to ${m}.` : `${n} finds ${m}.`,
-      ])), 2);
+      if (/screen|bubble/.test(c ?? '')) return some(0.6) ? pbp(pick(B, 'screen', [`Screen pass to ${m}, and he's got blockers.`, `They set up the screen for ${m}.`]), 2) : null;
+      if (c === 'pa_boot') return some(0.6) ? pbp(pick(B, 'boot', [`Bootleg, ${n} rolls out, throws for ${m}.`, `Play-action, he's on the move, looking for ${m}.`]), 2) : null;
+      if (lp.pressure && some(0.6)) return pbp(pick(B, 'heat', [`Under pressure, he gets it off to ${m}.`, `Throws with a man in his face, for ${m}.`]), 2);
+      // A routine short throw: let the wrap tell it, most of the time.
+      if (!some(0.25)) return null;
+      return pbp(pick(B, `throw-${c}`, [
+        c === 'slant' ? `Quick slant for ${m}.` : c === 'out' ? `Quick out to ${m}.` : c === 'te_seam' ? `Up the seam for ${m}.` : c === 'mesh' ? `${m} on the crosser.` : `${n} throws for ${m}.`,
+        `Looking for ${m}.`,
+        air < 6 ? `Checks it down to ${m}.` : `${n} fires for ${m}.`,
+      ]), 2);
     }
     case 'catch': {
-      if (lp.kick) return once('kcatch') ? pbp(pick(B, 'kcatch', [
-        `${n} fields it, and here comes the return.`,
-        `${n} brings it out, looking for a seam.`,
-        `${n} gathers it in and takes off.`,
-      ]), 2, 1) : null;
+      if (lp.kick) return once('kcatch') ? pbp(pick(B, 'kcatch', [`${n} fields it and brings it out.`, `${n} takes it, here comes the return.`, `${n} gathers it in and goes.`]), 2, 1) : null;
       if (!once('catch')) return null;
-      const at = fieldAt(lp, who?.x);
-      const side = lp.play?.sideline && Math.abs(who?.y ?? 0) > 20;
-      return P.deep ? pbp(pick(B, 'deepcatch', [`Caught at ${at}! ${n} hauls it in!`, `What a grab by ${n}!`, `${n} goes up and gets it!`, `He's got it! ${n} over the top!`]), 3, 2) : pbp(pick(B, side ? 'scatch' : 'catch', side ? [
-        `${n} gets a foot down, caught at ${at}.`,
-        `Toe tap on the sideline, ${n} makes the catch.`,
-      ] : [
-        `Caught by ${n} at ${at}.`,
-        `${n} makes the catch, and he looks for more.`,
-        `Complete to ${n}.`,
-        `${n} hauls it in at ${at}.`,
-        `Got it, ${n}, yards after the catch!`,
-      ]), 2);
+      if (P.deep) return pbp(pick(B, 'deepcatch', [`Caught! ${n} hauls it in at ${fieldAt(lp, who?.x)}!`, `What a grab by ${n}!`, `${n} goes up and gets it!`, `He's got it! ${n} over the top!`]), 3, 2);
+      if (lp.play?.sideline && Math.abs(who?.y ?? 0) > 20 && some(0.5)) return pbp(pick(B, 'scatch', [`${n} gets a foot down on the sideline.`, "Toe tap, and he's got it."]), 2);
+      return null;
     }
     case 'int': return once('int') ? pbp(pick(B, 'int', [
       `Intercepted! ${n} jumps the route!`,
       `Picked off! ${n} undercuts it!`,
-      `Into coverage, and it's intercepted by ${n}!`,
-      `He never saw him! Picked off by ${n}!`,
+      `Intercepted, ${n}! The quarterback never saw him!`,
+      `Picked off by ${n}!`,
     ]), 3, 2) : null;
     case 'incomplete': {
       if (!once('inc')) return null;
       const t = e.text || '';
-      if (/dropped/i.test(t)) return pbp(pick(B, 'drop', ['Dropped! Right through his hands.', `Off the hands of ${n}! He has to make that catch.`, 'He dropped it! That was right on the money.', `${n} can't hang on!`, 'Dropped! Hit him in the hands.', `Ball goes right off ${n}'s hands.`]), 2, 1);
-      if (/broken up|knock/i.test(t) && other) return pbp(pick(B, 'pbu', [`Broken up by ${m}!`, `${m} gets a hand in there!`, `Great coverage, ${m} knocks it away.`, `${m} breaks it up!`]), 2, 1);
-      return pbp(pick(B, 'inc', ['Incomplete.', 'Falls incomplete.', 'Nobody there, incomplete.', 'Off target, incomplete.', 'Overthrown, incomplete.']), 2);
+      if (/dropped/i.test(t)) return pbp(pick(B, 'drop', ['Dropped!', `Right through the hands of ${n}.`, "He can't hang on!", 'Dropped! Hit him right in the hands.', `${n} lets it get away.`, 'Should have had it. Dropped.', 'On the hands, and off.']), 2, 1);
+      if (/broken up|knock/i.test(t) && other) return pbp(pick(B, 'pbu', [`Broken up by ${m}!`, `${m} gets a hand in there!`, `Knocked away by ${m}.`]), 2, 1);
+      return pbp(pick(B, 'inc', ['Incomplete.', 'Falls incomplete.', 'Off target, incomplete.', 'Overthrown.', 'Thrown behind him, incomplete.', 'Nobody there.']), 2);
     }
-    case 'deflect': return once('deflect') ? pbp(pick(B, 'tip', ['Tipped!', 'Batted at the line!', 'Got a finger on it!', 'Tipped in the air!']), 2, 1) : null;
+    case 'deflect': return once('deflect') ? pbp(pick(B, 'tip', ['Tipped at the line!', 'Batted down!', 'Got a finger on it!']), 2, 1) : null;
     case 'broken': {
+      if (!once('broken')) return null;
       const how = /trucks|runs over/.test(e.text) ? 'truck' : /spins/.test(e.text) ? 'spin' : /jukes/.test(e.text) ? 'juke' : 'shake';
-      if (P.said.has(`brk:${who?.id}`) && P.calls.length > 3) return null;
-      P.said.add(`brk:${who?.id}`);
-      const opts = {
-        truck: [`${n} runs right over ${m}!`, `${n} trucks ${m}!`, `Oh, ${n} just bowled over ${m}!`],
-        spin: [`Spin move! ${n} gets away from ${m}!`, `${n} spins out of it!`],
-        juke: [`${n} jukes ${m}!`, `Oh, ${n} made ${m} miss!`, `${m} grabs nothing but air!`],
-        shake: [`${n} shakes ${m}!`, `${n} breaks a tackle!`, `He breaks a tackle. ${m} cannot bring him down!`],
-      }[how];
-      return pbp(pick(B, `brk-${how}`, opts), 2, 1);
+      return pbp(pick(B, `brk-${how}`, {
+        truck: [`${n} runs right over him!`, `Oh, ${n} just trucked him!`, `${n} lowers the shoulder and runs through him!`],
+        spin: ['Spin move, and he gets away!', `${n} spins out of the tackle!`],
+        juke: [`${n} makes him miss!`, `Oh, what a cut by ${n}!`, `${m} grabs nothing but air!`],
+        shake: [`${n} breaks a tackle!`, 'He shakes off the tackler!', `${n} slips out of it!`, `${n} stays on his feet!`, 'Broken tackle!', `${n} bounces off the hit!`],
+      }[how]), 2, 1);
     }
-    case 'ghost': return pbp(pick(B, 'ghost', [`${n} goes right through ${m}! You can't tackle a ghost!`, `${n} phases through him!`]), 2, 2);
-    case 'slip': return once('slip') ? pbp(pick(B, 'slip', [`${n} slips!`, `${n} loses his footing!`]), 2) : null;
-    case 'bighit': return pbp(pick(B, 'bighit', ['Boom! What a shot!', `What a hit by ${n}!`, `${n} lays the lumber!`, `Oh, ${n} unloads on him!`, `${n} delivers the blow!`]), 2, 2);
+    case 'ghost': return once('ghost') ? pbp(pick(B, 'ghost', [`${n} goes right through him! You can't tackle a ghost!`, `${n} phases right through the tackle!`]), 2, 2) : null;
+    case 'slip': return once('slip') && some(0.5) ? pbp(pick(B, 'slip', [`${n} loses his footing!`, `${n} slips!`]), 2) : null;
+    case 'bighit': return once('bighit') && some(0.6) ? pbp(pick(B, 'bighit', ['Boom! What a shot!', `What a hit by ${n}!`, `${n} delivers the blow!`, `Oh, ${n} unloads on him!`]), 2, 2) : null;
     case 'sack': return once('sack') ? pbp(pick(B, 'sack', [
-      `The pocket collapses, and he's sacked! ${n} gets him!`,
-      `${n} off the edge, and he gets home! Sack!`,
-      `Down goes ${m}! ${n} with the sack!`,
-      `${m} is in trouble, and he's sacked by ${n}!`,
+      `${n} gets home! Sacked!`,
+      `Down goes the quarterback! ${n} with the sack!`,
+      `Pressure, and he's sacked! ${n} got him!`,
+      `${n} off the edge, and that's a sack!`,
     ]), 3, 2) : null;
-    case 'flag': return once('flag') ? pbp(pick(B, 'flag', ['Flag on the play.', "There's a flag down.", 'And we have laundry on the field.', 'Yellow flag is out.']), 2, 1) : null;
+    case 'flag': return once('flag') ? pbp(pick(B, 'flag', ['Flag on the play.', "There's a flag down.", 'Yellow flag is out.']), 2, 1) : null;
     case 'power':
       if (!who?.power || !once(`pw:${who.id}`)) return null;
       return pbp(pick(B, 'power', [`${who.power.name}! ${n}!`, `There's ${who.power.name} from ${n}!`]), 3, 2);
-    case 'typefx':
-      if (e.fx !== 'se' && !/super effective/i.test(e.text)) return null;
-      if (!once('se') || rnd(B) < 0.45) return null;
-      return color(pick(B, 'se', ["It's super effective!", "Super effective! You'll feel that one.", 'Type advantage, right there!', `${n} had the type on him there.`, 'Oh, that is super effective!']), 2, 1);
-    case 'kickoff': return once('kickoff') ? pbp(pick(B, 'kickoff', [
-      `${n} approaches, and the kick is away. Nice and high.`,
-      `${n} puts his foot into it, and the kick is away.`,
-      `Here's the kickoff. The kick is away, good hang time.`,
-    ]), 2, 1) : null;
-    case 'punt': return once('puntk') ? pbp(pick(B, 'puntk', [
-      `Snap is back to ${n}, and the punt is away.`,
-      `${n} gets it off. The punt is away, high and deep.`,
-      `Protection holds, the punt is away.`,
-    ]), 2, 1) : null;
-    case 'fgkick': return once('fgk') ? pbp(pick(B, 'fgk', ['The snap, the hold, the kick is up...', 'Snap is good, hold is down, here is the kick...', 'Down, and the kick is on the way...']), 2, 1) : null;
-    case 'fg_good': return once('fgres') ? pbp(pick(B, 'fggood', ["Through the uprights. It's good!", 'Right down the middle. It is good!', 'And it is good!', "Split the uprights. It's good!"]), 3, 2) : null;
-    case 'fg_miss': return once('fgres') ? pbp(pick(B, 'fgmiss', ['Off the mark. No good!', "Wide right! It's no good!", "Wide left! It's no good!", "It hits the upright, and it's no good!", 'Short, and no good!']), 3, 2) : null;
+    case 'kickoff': return once('kickoff') ? pbp(pick(B, 'kickoff', ['And the kick is away.', `${n} puts his foot into it, and the kick is away.`, 'Here is the kickoff.', `${n} approaches, and we are underway.`, 'Off the tee, end over end.', `${n} gets into it.`]), 2, 1) : null;
+    case 'punt': return once('puntk') ? pbp(pick(B, 'puntk', ['Snap is back, and the punt is away.', `${n} gets it off. High and deep.`, 'Protection holds, the punt is away.']), 2, 1) : null;
+    case 'fgkick': return once('fgk') ? pbp(pick(B, 'fgk', ['The snap, the hold, the kick is up...', 'Snap is good, hold is down, here is the kick...', 'The kick is on the way...', 'Here it is...', 'The kick...', 'Down, and kicked...']), 2, 1) : null;
+    case 'fg_good': return once('fgres') ? pbp(pick(B, 'fggood', ["It's good!", 'Right down the middle. It is good!', "Split the uprights. It's good!", 'And that is good.', "Plenty of leg. It's good!", 'Through.']), 3, 2) : null;
+    case 'fg_miss': return once('fgres') ? pbp(pick(B, 'fgmiss', ["Wide right! It's no good!", "Wide left! It's no good!", 'Off the upright, and no good!', 'Short, and no good!']), 3, 2) : null;
     case 'block': return once('block') ? pbp(pick(B, 'block', ['Blocked! It is blocked!', `${n} gets a hand on it! Blocked!`]), 3, 2) : null;
     case 'fair': return once('fair') ? pbp(`Fair catch, ${n}.`, 2) : null;
-    case 'downed': return once('downed') ? pbp('Downed by the coverage.', 2) : null;
-    case 'fake': return once('fake') ? pbp(pick(B, 'fake', ['They sold the kick. It is a fake!', 'Fake! They are running a fake!']), 3, 2) : null;
-    case 'recover': return once('recover') ? pbp(pick(B, 'recover', [`${n} recovers!`, `${n} falls on it!`, `Who has it? ${n} has it!`]), 3, 2) : null;
+    case 'downed': return once('downed') ? pbp('Downed by the coverage team.', 2) : null;
+    case 'fake': return once('fake') ? pbp(pick(B, 'fake', ["It's a fake!", 'Fake! They are running a fake!']), 3, 2) : null;
+    case 'recover': return once('recover') ? pbp(pick(B, 'recover', [`${n} recovers!`, `${n} falls on it!`]), 3, 2) : null;
     default: return null;
   }
 }
 
-// While a kickoff or a punt hangs, one call of the landing: hash and yard line, so you can get under it.
+// While a kickoff or a punt hangs, one call of where it is coming down.
 function kickSpotLine(B, lp) {
   const K = lp.kick, F = K?.F;
   if (!F || K.onside || K.stage !== 'air' || lp.ball?.state !== 'air' || !(K.ko || K.punt)) return null;
@@ -462,24 +400,16 @@ function kickSpotLine(B, lp) {
   const g = lp.g;
   const from = K.ko ? (g.spot || 35) : g.spot;
   const abs = from + F.tx;
-  const side = F.ty >= 0 ? 'right' : 'left';
-  const a = Math.abs(F.ty);
-  const hash = a < 4 ? 'middle' : a < 16 ? `${side} hash` : `${side} numbers`;
-  let where;
-  if (abs >= 100) where = 'into the end zone';
-  else {
-    const their = Math.max(1, Math.min(50, Math.round(100 - abs)));
-    where = their >= 45 ? 'near midfield' : `around the ${yardWord(their)}`;
-  }
-  const depth = abs >= 90 ? 'Deep' : 'Short';
-  return pbp(`${depth}, ${hash}, ${where}.`, 2, 1);
+  if (abs >= 100) return pbp(pick(B, 'kspot', ['High and deep, into the end zone.', 'That one is headed for the end zone.']), 2, 1);
+  const their = Math.max(1, Math.min(50, Math.round(100 - abs)));
+  return pbp(their >= 45 ? 'Short kick, near midfield.' : pick(B, 'kspot2', [`Coming down around the ${yardWord(their)}.`, `High kick, down to the ${yardWord(their)}.`]), 2, 1);
 }
 
-// The run in the open field: called off the carrier's progress each frame. Returns a line the
-// first time he breaks into the clear and as he passes the 30, 20 and 10 on a long run.
+// The run in the open field, called off the carrier's progress each frame: once when he breaks
+// into the clear, once more as he closes on the goal line.
 export function progressLine(B, lp) {
   const spot = kickSpotLine(B, lp);
-  if (spot) return spot;
+  if (spot) return finish(B, lp.g, [spot])[0] ?? null;
   const P = B.play;
   if (!P || P.lp !== lp || lp.phase !== 'live') return null;
   const c = lp.ball?.holder;
@@ -487,37 +417,26 @@ export function progressLine(B, lp) {
   const up = c.side === 'off';
   const gained = up ? c.x : -c.x;
   const toGo = up ? lp.goalX - c.x : c.x - lp.ownGoalX;
-  // Defenders (from the carrier's point of view) between him and the goal line, and close.
   const chasers = lp.players.filter((q) => q.side !== c.side && (up ? q.x > c.x - 1 : q.x < c.x + 1) && Math.hypot(q.x - c.x, q.y - c.y) < 6).length;
   const n = nm(c.id);
   const mark = (k) => { if (P.marks.has(k)) return false; P.marks.add(k); return true; };
+  let ln = null;
   // A quarterback run has no handoff to call: say it as he takes off.
-  const qdir = lp.play?.dir;
-  if (c === lp.off.QB && lp.kind === 'run' && ['sneak', 'qbdraw', 'qbpower'].includes(qdir) && lp.t > (qdir === 'qbdraw' ? 0.9 : 0.25) && mark('qbrun')) {
-    const dir = qdir;
-    return pbp(pick(B, `qbrun-${dir}`, {
-      sneak: [`Quarterback sneak, ${n} pushes behind the center.`, `${n} on the sneak.`],
-      qbdraw: [`Quarterback draw! ${n} takes off up the middle.`, `He drops like it's a pass, and ${n} takes off!`],
-      qbpower: [`${n} keeps it on the power, guard leading the way.`, `Quarterback power, ${n} follows his blockers.`],
-    }[dir] ?? [`${n} keeps it and runs.`]), 2, dir === 'qbdraw' ? 1 : 0);
+  const dir = lp.play?.dir;
+  if (c === lp.off?.QB && lp.kind === 'run' && ['sneak', 'qbdraw', 'qbpower'].includes(dir) && lp.t > (dir === 'qbdraw' ? 0.9 : 0.25) && mark('qbrun')) {
+    ln = pbp(pick(B, `qbrun-${dir}`, {
+      sneak: ['Quarterback sneak.', `${n} on the sneak.`],
+      qbdraw: [`Quarterback draw! ${n} takes off up the middle.`, `He drops back, and ${n} takes off!`],
+      qbpower: [`${n} keeps it, guard leading the way.`],
+    }[dir]), 2, dir === 'qbdraw' ? 1 : 0);
+  } else if (gained >= 12 && chasers === 0 && toGo > 25 && mark('open')) {
+    ln = pbp(pick(B, 'open', [`${n} breaks into the clear!`, `He's got daylight! ${n} is loose!`, `Nothing but green grass in front of ${n}!`, `${n} turns the corner, and he's got room!`]), 2, 2);
+  } else if (gained >= 15 && toGo <= 20 && toGo > 8 && P.marks.has('open') && mark('close')) {
+    ln = pbp(chasers === 0 ? pick(B, 'allway', ['He could go all the way!', 'Nobody is going to catch him!', `${n} is gone!`]) : pick(B, 'close', ['Inside the twenty, still going!', `${n}, down to the ${yardWord(Math.round(toGo))}!`]), 2, 2);
   }
-  if (gained >= 12 && chasers === 0 && toGo > 25 && mark('open')) return pbp(pick(B, 'open', [
-    `${n} breaks into the clear!`,
-    `He's got daylight! ${n} is loose!`,
-    `Nothing but green grass in front of ${n}!`,
-    `${n} hits the second level, and he is gone!`,
-    `${n} turns the corner, and he's got room to run!`,
-  ]), 2, 2);
-  for (const yd of [30, 20, 10]) {
-    if (toGo <= yd && toGo > yd - 6 && gained >= 15 && mark(`yd${yd}`)) {
-      if (yd === 20 && chasers === 0 && mark('allway')) return pbp(pick(B, 'allway', ['He could go all the way!', `${n} could go all the way!`, 'Nobody is going to catch him!', `${n}, the twenty, the fifteen...`]), 2, 2);
-      return pbp(yd === 10 ? pick(B, 'yd10', ['Inside the ten!', `${n} to the ten!`, 'Down to the ten, and still going!']) : pick(B, `yd${yd}`, [`The ${yardWord(yd)}!`, `He's at the ${yardWord(yd)}!`, `${n}, to the ${yardWord(yd)}!`]), 2, 2);
-    }
-  }
-  return null;
+  return ln ? finish(B, lp.g, [ln])[0] ?? null : null;
 }
-// How tense the stadium should sound right now (0 calm .. 1 everyone on their feet): the ball
-// in the air on a deep shot, a runner loose in the open field.
+// How tense the stadium should sound right now (0 calm .. 1 everyone on their feet).
 export function tension(lp) {
   if (!lp || lp.phase !== 'live') return 0;
   const b = lp.ball;
@@ -535,10 +454,17 @@ export function tension(lp) {
 }
 
 // ---------- after the whistle ----------
-// The play went into the game as `e` (its log entry); `before` is the game as it was at the
-// snap; `lp` the live play (null for a play resolved without the field). Mack wraps it up if
-// the live calls didn't already say it all, and Dee tells you what it meant.
-export function afterLines(B, g, e, before = null, lp = null) { return finish(g, afterRaw(B, g, e, before, lp)); }
+// The play went into the game as `e` (its log entry); `before` is the game at the snap; `lp` the
+// live play (null for a play resolved without the field). Mack wraps it in a line unless the live
+// calls said it all, and Dee speaks up when there is something worth saying.
+export function afterLines(B, g, e, before = null, lp = null) {
+  const lines = afterRaw(B, g, e, before, lp);
+  B.plays++;
+  // Dee once after the play at most.
+  let seen = false;
+  const kept = lines.filter((l) => { if (!l || l.who !== 'color') return true; if (seen) return false; seen = true; B.colorAt = B.plays; return true; });
+  return finish(B, g, kept);
+}
 function afterRaw(B, g, e, before, lp) {
   if (!e) return [];
   const out = [];
@@ -546,57 +472,56 @@ function afterRaw(B, g, e, before, lp) {
   const said = P?.said ?? new Set();
   B.play = null;
   const o = e.team ?? before?.poss ?? g.poss;
-  const T = g.teams[o], D = g.teams[1 - o];
+  const D = g.teams[1 - o];
   const yd = e.yards ?? 0;
   const scoredBy = before ? [0, 1].find((i) => g.score[i] - before.score[i] >= 6) : null;
   const td = e.highlight === 'td' || (e.kind === 'score' && /TOUCHDOWN/.test(e.text ?? '')) || (scoredBy != null && !e.conversion);
   const c = e.carrier;
-  const notes = lp?.notes ?? [];
   const changed = before && g.poss !== before.poss && !g.final;
-  // The game's own clock events: the end of a quarter, the two-minute warning, timeouts.
+  // Dee speaks after a routine play only every few plays.
+  const colorOk = B.plays - B.colorAt >= 3;
   if (e.kind === 'quarter') return quarterLines(B, g, e);
-  if (e.kind === 'timeout') return [pbp(pick(B, 'to', [`Timeout, ${(e.text ?? '').match(/^(.+?) (call|use|take)/)?.[1] ?? 'on the field'}.`, 'And there is a timeout.']), 1)].filter(Boolean);
-  if (e.kind === 'info') return e.head && /two-minute/i.test(e.head) ? [pbp("That's the two-minute warning.", 1), color(`${scoreLine(g)}. Here's where games are won, Mack.`, 1)] : [];
+  if (e.kind === 'timeout') return [pbp(pick(B, 'to', [`Timeout, ${(e.text ?? '').match(/^(.+?) (call|use|take)/)?.[1] ?? 'on the field'}.`, 'And they will take a timeout.']), 1)];
+  if (e.kind === 'info') return e.head && /two-minute/i.test(e.head) ? [pbp(`That's the two-minute warning. ${scoreLine(g)}.`, 1), color("Here's where games are won, Mack.", 1)] : [];
   if (e.kind === 'sub') return [];
-  // Penalties: the referee's call.
+  // Penalties: the referee's call, in his words.
   if (e.kind === 'penalty' || e.highlight === 'flag') {
     const txt = (e.text ?? '').replace(/\s+/g, ' ').trim();
-    out.push(pbp(txt ? `${said.has('flag') ? '' : 'Flag. '}${txt}` : 'There is a flag on the play.', 1));
-    out.push(color(pick(B, 'flagc', ['You cannot do that. Drive killer.', "That's a mental mistake.", 'Discipline, Mack. That hurts.']), 0));
-    return out.filter(Boolean);
+    out.push(pbp(txt || 'There is a flag on the play.', 1));
+    if (colorOk && rnd(B) < 0.5) out.push(color(pick(B, 'flagc', ["You can't do that. That's a drive killer.", 'Mental mistake, and it costs them.', 'Discipline, Mack. That one hurts.']), 0));
+    return out;
   }
-  // Kicks resolved on the spot or played out on the field.
   if (e.conversion) {
-    const good = g.score[o] > (before?.score?.[o] ?? g.score[o]) || /good|is good|GOOD/.test(e.text ?? '');
-    if (/two|2-point|conversion/i.test(e.head ?? '') && !/Extra point/i.test(e.head ?? '')) out.push(pbp(good ? pick(B, '2good', ['They get it! Two-point try is good!', 'In for two!']) : pick(B, '2no', ['They come up short on the try.', 'No good on the two-point try.']), 2, good ? 2 : 1));
-    else if (!said.has('fgres')) out.push(pbp(good ? pick(B, 'xpgood', ['The extra point is good.', 'And the point after is good.']) : 'The extra point is no good!', 1, good ? 0 : 1));
+    const good = g.score[o] > (before?.score?.[o] ?? g.score[o]) || /good|GOOD/.test(e.text ?? '');
+    if (/two|2-point|conversion/i.test(e.head ?? '') && !/Extra point/i.test(e.head ?? '')) out.push(pbp(good ? pick(B, '2good', ['They get it! The two-point try is good!', 'In for two!']) : pick(B, '2no', ['They come up short on the try.', 'Stopped. No good on the two-point try.']), 2, good ? 2 : 1));
+    else if (!said.has('fgres')) out.push(pbp(good ? pick(B, 'xpgood', ['The extra point is good.', 'And the kick is good.']) : 'The extra point is no good!', 1, good ? 0 : 1));
     out.push(pbp(`${scoreLine(g)}.`, 1));
-    return out.filter(Boolean);
+    return out;
   }
   const kind = OFF_PLAYS[e.off]?.kind;
   if (e.kind === 'kick' || /Kickoff/i.test(e.head ?? '')) {
-    if (/Touchback/i.test(e.text ?? '')) out.push(pbp(pick(B, 'tb', ['Into the end zone, touchback.', 'Touchback.']), 1));
+    if (/Touchback/i.test(e.text ?? '')) out.push(pbp(pick(B, 'tb', ['Touchback.', "That'll be a touchback.", 'Into the end zone, and it will be a touchback.']), 1));
     else if (/onside/i.test(e.text ?? '')) out.push(pbp(e.text, 2, 1));
     else if (lp && e.text) out.push(pbp(`${e.text.replace(/\.$/, '')}.`, 1));
     if (td) out.push(...scoreCall(B, g, e, before, scoredBy ?? 1 - o, 'return'));
-    return out.filter(Boolean);
+    return out;
   }
-  if (kind === 'punt' && !OFF_PLAYS[e.off]?.fake || e.kind === 'punt') {
+  if ((kind === 'punt' && !OFF_PLAYS[e.off]?.fake) || e.kind === 'punt') {
     out.push(pbp(e.text ? e.text.replace(/\s+/g, ' ') : 'The punt.', 1));
     if (td) out.push(...scoreCall(B, g, e, before, scoredBy ?? 1 - o, 'return'));
-    return out.filter(Boolean);
+    return out;
   }
   if (e.kind === 'score' && e.highlight === 'fg') {
     if (!said.has('fgres')) out.push(pbp(pick(B, 'fgg', ['The field goal is good.', "And it's good."]), 1, 1));
     out.push(pbp(`${scoreLine(g)}.`, 1));
     const late = g.quarter >= 4 && g.clock <= 300 && Math.abs(g.score[0] - g.score[1]) <= 3;
-    out.push(color(late ? 'Points on the board, and this one goes down to the wire.' : pick(B, 'fgc', ['The drive stalled, but you take the points.', 'Three points. You would like seven, but you take three.']), 0));
-    return out.filter(Boolean);
+    if (late || colorOk) out.push(color(late ? 'Points on the board, and this one is going down to the wire.' : pick(B, 'fgc', ['The drive stalled, but you take the points.', 'You want seven there, but you take three.']), 0));
+    return out;
   }
   if (e.kind === 'fg' || (kind === 'fg' && !OFF_PLAYS[e.off]?.fake && !e.highlight)) {
     if (!said.has('fgres')) out.push(pbp('The kick is no good.', 1, 1));
     out.push(color(pick(B, 'fgm', ['Points left on the field, Mack.', 'That one is going to sting.']), 0));
-    return out.filter(Boolean);
+    return out;
   }
   if (/safety/i.test(e.text ?? '') && e.kind === 'score') {
     out.push(pbp(`Safety! Two points for the ${D.name}!`, 3, 2));
@@ -604,91 +529,83 @@ function afterRaw(B, g, e, before, lp) {
     return out;
   }
   // Takeaways.
-    if (e.turnover === 'fumble' || /FUMBLE!/.test(e.text ?? '') && changed) {
-    out.push(pbp(pick(B, 'fum', [
-      `Contact, and the ball is out. Fumble! The ${D.name} recover!`,
-      `He did not protect it. Fumble! ${D.name} have it!`,
-    ]), 3, 2));
-    out.push(color(pick(B, 'fumc', [`${nm(c)} has to protect the football there. Two hands in traffic.`, 'Huge turnover. That changes everything.']), 1, 1));
+  if (e.turnover === 'fumble' || (/FUMBLE!/.test(e.text ?? '') && changed)) {
+    out.push(pbp(pick(B, 'fum', [`The ball is out! Fumble! The ${D.name} recover!`, `Fumble! And the ${D.name} come up with it!`]), 3, 2));
+    out.push(color(pick(B, 'fumc', [`${known(c) ? nm(c) : 'He'} has to protect the football there. Two hands in traffic.`, 'Huge turnover. That changes everything.']), 1, 1));
     if (td) out.push(...scoreCall(B, g, e, before, scoredBy, 'defense'));
     streak(B, 1 - o, 'stop');
-    return out.filter(Boolean);
+    return out;
   }
   if (e.turnover === 'int' || (e.kind === 'turnover' && /INTERCEPT/i.test(e.text ?? ''))) {
     const by = e.returner ?? c;
     if (!said.has('int')) out.push(pbp(`Intercepted by ${nm(by)}!`, 3, 2));
     if (td) out.push(...scoreCall(B, g, e, before, scoredBy, 'pick'));
-    else out.push(color(pick(B, 'intc', [`${nm(by)} read that all the way. The quarterback never saw him.`, 'Bad decision. You cannot throw that ball into coverage.', `What a play by ${nm(by)}. That's a game changer.`]), 1, 1));
-    const n = T.team?.to ?? 0;
-    if (n >= 2) out.push(color(`That's ${plural(n, 'turnover')} for the ${T.name} today.`, 0));
+    else out.push(color(pick(B, 'intc', [`${nm(by)} read that all the way. The quarterback never saw him.`, "Bad decision. You can't throw that ball into coverage.", `What a play by ${nm(by)}. That's a game changer.`]), 1, 1));
     streak(B, 1 - o, 'stop');
-    return out.filter(Boolean);
+    return out;
   }
   if (td) {
     out.push(...scoreCall(B, g, e, before, scoredBy ?? o, kind === 'pass' ? 'pass' : 'run'));
     streak(B, scoredBy ?? o, 'score');
-    return out.filter(Boolean);
+    return out;
   }
   if ((changed && ['run', 'pass', 'sack', 'play', 'turnover'].includes(e.kind)) || /Turnover on downs/i.test(e.text ?? '')) {
     out.push(pbp(pick(B, 'tod', ['They come up short! Turnover on downs!', `Stopped! The ${D.name} take over on downs.`]), 3, 2));
     out.push(color(pick(B, 'todc', ['Huge stand by that defense.', 'You roll the dice, you live with it.']), 1, 1));
     streak(B, 1 - o, 'stop');
-    return out.filter(Boolean);
+    return out;
   }
-  // Sacks.
   if (e.kind === 'sack' || e.highlight === 'sack') {
-    if (!said.has('sack')) out.push(pbp(`${(e.text ?? '').split('.')[0]}.`, 2, 1));
-    out.push(color(pick(B, 'sackc', [
+    if (!said.has('sack')) out.push(pbp(`${(e.text ?? 'Sacked').split('.')[0]}.`, 2, 1));
+    if (colorOk || rnd(B) < 0.4) out.push(color(pick(B, 'sackc', [
       'The pocket collapsed. He had nowhere to go.',
       'Great push up front. That is a drive killer.',
-      `The ${D.name} front is winning the battle in the trenches.`,
-      'He held onto it too long, Mack. Everybody was covered, and the rush got there.',
-      'Watch the edge rusher on the replay. Beats the tackle with a speed rush and bends around the corner.',
-      'Drive-killing sack. Now they are behind the chains.',
+      'He held onto it too long. Everybody was covered, and the rush got there.',
+      "Now they're behind the chains.",
     ]), 1));
     streak(B, 1 - o, 'stop');
-    return out.filter(Boolean);
+    return out;
   }
-  // Runs, catches and incompletions.
+  // Runs, catches and incompletions: one line that says it all.
   const first = before && !changed && g.down === 1 && before.down >= 1 && yd > 0 && g.poss === before.poss;
   const inc = lp?.end?.how === 'incomplete' || (kind === 'pass' && yd === 0 && /incomplete|broken up|dropped|thrown away|throws it away|overthrown|off the hands/i.test(e.text ?? ''));
   if (inc) {
     if (!said.has('inc')) out.push(pbp(pick(B, 'incw', ['Incomplete.', 'The pass falls incomplete.']), 1));
-    if (g.down === 4 || (before?.down === 3)) out.push(color(pick(B, 'inc3', ['Bring on the punt team.', 'They have a decision to make on fourth down.']), 0));
+    if (before?.down === 3 && colorOk) out.push(color(pick(B, 'inc3', ['That will bring up fourth down.', 'They have a decision to make on fourth down.']), 0));
     streak(B, 1 - o, 'stop');
   } else if (c != null) {
-    const wrap = endWrap(B, g, e, lp, yd);
-    if (wrap) out.push(pbp(wrap, 1, yd >= 20 ? 1 : 0));
     const fgoal = first && g.spot + g.toGo >= 100;
-    if (first) out.push(pbp(fgoal ? pick(B, 'firstg', ['And that sets up first and goal.', `First and goal, ${T.name}.`]) : pick(B, 'first', ['First down.', `And that's a first down, ${T.name}.`, 'That will move the chains.', 'Past the sticks for a first down.', "He's got the marker. First down.", `First down, ${T.name}, and they keep it moving.`, 'And they pick up the first.', 'Enough for the first down.']), 1, yd >= 15 ? 1 : 0));
+    out.push(pbp(wrapLine(B, g, e, lp, yd, first ? (fgoal ? 'goal' : 'first') : ''), 1, yd >= 20 ? 1 : 0));
     if (yd <= 0) streak(B, 1 - o, 'stop'); else if (first) streak(B, o, 'go');
   }
-  // Dee: why it happened. A power switching on, a type, an ability, size, the weather, a
-  // milestone, the drive; otherwise a word on how the play was won, now and then.
-  const why = whyLine(B, g, e, before, lp, notes, { yd, first, inc });
-  if (why) out.push(color(why, why.length > 0 && (e.powers?.length || yd >= 20) ? 1 : 0, e.powers?.some((p) => p.on) ? 1 : 0));
-  return out.filter(Boolean);
+  // Dee: why it happened, on the big plays always, otherwise every few plays.
+  const bigPlay = yd >= 20 || (e.powers ?? []).some((p) => p.on) || (before?.down >= 3 && (first || yd <= 0));
+  if (bigPlay || (colorOk && rnd(B) < 0.6)) {
+    const why = whyLine(B, g, e, before, lp, { yd, first, inc });
+    if (why) out.push(color(why, bigPlay ? 1 : 0, (e.powers ?? []).some((p) => p.on) ? 1 : 0));
+  }
+  return out;
 }
-// The whistle on a play the live calls followed: where he went down, unless it was obvious.
-function endWrap(B, g, e, lp, yd) {
+// The whistle on a run or a catch, with the first down folded in: "Gengar picks up nine, and
+// that's a first down."
+function wrapLine(B, g, e, lp, yd, first) {
   const c = e.carrier, n = nm(c);
   const how = lp?.end?.how;
   const tk = lp?.end?.tackler ? nm(lp.end.tackler.id) : (e.text ?? '').match(/Tackled by ([^.]+)\./)?.[1];
-  const at = yardLine(g, g.poss, g.spot);
   const spot = hereLine(g);
-  if (how === 'out') return pick(B, 'oob', [`${n} steps out of bounds at ${at}.`, `${n} gets out of bounds, ${yd > 0 ? `a gain of ${yd}` : 'no gain'}.`, `${n} runs out of bounds to stop the clock${yd > 0 ? `, ${yd} yards on the play` : ''}.`]);
-  if (how === 'slide') return pick(B, 'slide', [`${n} slides down at ${spot}. Smart, and the clock stops.`, `${n} gets down at ${spot}. Lives to play another down.`]);
-  if (yd < 0) return pick(B, 'loss', [`${tk ? `${tk} drops ${n}` : `${n} is dropped`} for a loss of ${-yd}.`, `Stuffed in the backfield! Loss of ${-yd}.`, `${tk ? `${tk} blows it up` : 'They blow it up'} in the backfield. Tackle for loss.`]);
-  if (yd === 0) return pick(B, 'nogain', [`${tk ? `Stopped by ${tk}` : 'Stopped'} for no gain.`, 'Stuffed at the line of scrimmage, no gain.', `${n} goes nowhere.`, `${tk ? `${tk} plugs the hole.` : 'They plug the hole.'} No gain.`]);
-  if (yd >= 20) return pick(B, 'bigwrap', [`${n} for ${yd}! ${tk ? `Finally brought down by ${tk} at ${spot}.` : ''}`, `A gain of ${yd} on the play!`, `${yd} yards! ${tk ? `${tk} saves the touchdown.` : ''}`, `Big play! ${n} picks up ${yd} before ${tk ? `${tk} drags him down` : 'they drag him down'}.`]).trim();
-  if (yd <= 3) return pick(B, 'short', [`${n} grinds out ${say(yd)}.`, `${n} for a short gain of ${say(yd)}.`, `${n} falls forward for ${say(yd)}.`, `${tk ? `${tk} wraps him up` : 'Wrapped up'} after a gain of ${say(yd)}.`]);
-  return pick(B, 'gain', [
-    `${n} picks up ${say(yd)}, brought down at ${spot}.`,
-    `${tk ? `${tk} makes the stop` : 'Brought down'} at ${spot}, a gain of ${say(yd)}.`,
-    `Nice gain, ${say(yd)} yards for ${n}.`,
-    `${n} picks up ${say(yd)}.`,
-    `${n} gets ${say(yd)} before ${tk ? tk : 'the defense'} gets him down.`,
-  ]);
+  const caught = OFF_PLAYS[e.off]?.kind === 'pass';
+  let w;
+  if (how === 'out') w = pick(B, 'oob', [`${n} steps out of bounds at ${spot}`, `${n} gets out of bounds${yd > 0 ? ` after a gain of ${say(yd)}` : ''}`]);
+  else if (how === 'slide') w = pick(B, 'slide', [`He slides down at ${spot}`, `${n} gets down at ${spot}, smart football`]);
+  else if (yd < 0) w = pick(B, 'loss', [`${tk ? `${tk} drops him` : 'Dropped'} for a loss of ${say(-yd)}`, `Stuffed in the backfield, a loss of ${say(-yd)}`, `${tk ? `${tk} blows it up` : 'Blown up'} in the backfield`]);
+  else if (yd === 0) w = pick(B, 'nogain', [`${tk ? `${tk} plugs the hole` : 'Stopped at the line'}, no gain`, 'Nothing doing, no gain on the play', `${n} goes nowhere`]);
+  else if (yd >= 20) w = pick(B, 'bigwrap', [`${n} for ${yd} yards${tk ? ` before ${tk} finally drags him down` : ''}`, `A big gain of ${yd} on the play`, `${yd} yards on the play, and he's brought down at ${spot}`]);
+  else if (caught) w = pick(B, 'cgain', [`${n} makes the catch for ${say(yd)}`, `Complete to ${n}, a gain of ${say(yd)}`, `${n} hauls it in, ${say(yd)} yards`, `Caught by ${n} at ${spot}`, `${n} with the grab, down at ${spot}`]);
+  else if (yd <= 3) w = pick(B, 'short', [`${n} grinds out ${say(yd)}`, `${n} for a short gain`, `${n} falls forward for ${say(yd)}`, `${n} pushes ahead for ${say(yd)}`]);
+  else w = pick(B, 'gain', [`${n} picks up ${say(yd)}`, `${n} for ${say(yd)}, brought down at ${spot}`, `Nice run by ${n}, ${say(yd)} yards`, tk ? `${n} gets ${say(yd)} before ${tk} brings him down` : `${n} gets ${say(yd)} on the carry`]);
+  if (first === 'goal') return `${w}, and that sets up first and goal.`;
+  if (first) return `${w}${pick(B, 'first', [", and that's a first down.", ', enough for the first down.', '. That will move the chains.', ', and he gets past the sticks.', '. First down.'])}`;
+  return `${w}.`;
 }
 function scoreCall(B, g, e, before, ti, how) {
   ti = ti ?? e.team ?? g.poss;
@@ -697,94 +614,77 @@ function scoreCall(B, g, e, before, ti, how) {
   const yd = e.yards ?? 0;
   const out = [];
   const cry = how === 'pick' ? 'Pick six!' : how === 'return' ? 'He took it to the house!' : 'Touchdown!';
-  const from = how === 'pass' || how === 'run' ? `from ${yd === 1 ? 'a yard' : `${yd} yards`} out` : 'all the way';
-  const scorer = c != null ? nm(c) : T.name;
+  const scorer = known(c) ? nm(c) : `the ${T.name}`;
+  const from = yd === 1 ? ' from a yard out' : yd > 1 ? ` from ${yd} yards out` : '';
   out.push(pbp(pick(B, `td-${how}`, [
-    `He will not be denied! ${cry} ${T.name}!`,
+    how === 'pass' || how === 'run' ? `${cry} ${scorer}${from}!` : `${cry} ${scorer}!`,
     `He's in! ${cry} ${scorer}!`,
-    `${cry} ${scorer} ${from}!`,
     `${scorer} into the end zone! ${cry}`,
-    how === 'run' ? `${scorer} punches it in! ${cry}` : how === 'pass' ? `Pitch and catch, and that's a ${cry.toLowerCase().replace('!', '')}! ${scorer}!` : `Nobody is catching him! ${cry}`,
-  ]), 3, 2));
+    how === 'run' ? `${scorer} punches it in! ${cry}` : how === 'pass' ? `Caught in the end zone! ${cry} ${scorer}!` : `Nobody is catching him! ${cry}`,
+  ]).replace('Touchdown! ', 'Touchdown, '), 3, 2));
   const lead = g.score[ti] - g.score[1 - ti];
   const late = g.quarter >= 4 && g.clock <= 300;
   const d = g.drives[g.drives.length - 1];
-  const opts = [boothAfter(g, e, before, [])];
+  const opts = [];
   if (late && lead > 0 && lead <= 8) opts.push(`The ${T.name} take the lead late! What a moment in this building.`);
-  if (d && d.team === ti && d.plays >= 8) opts.push(`A ${d.plays}-play drive, capped off in style. That's championship football.`);
-  if (yd >= 40) opts.push(`${nm(c)} ${TYPE_FLAVOR[PLAYERS[c]?.types[0]] ?? 'is special'}. ${yd} yards, and he made it look easy.`);
-  if (how === 'pass' && e.qb != null) opts.push(`${nm(e.qb)} put that ball right on the money for ${nm(c)}.`);
+  if (d && d.team === ti && d.plays >= 8) opts.push(`A ${d.plays}-play drive, and they finish it off. That's how you grind one out.`);
+  if (d && d.team === ti && d.plays <= 2 && how !== 'pick') opts.push('That was quick. They did not waste any time.');
+  if (yd >= 40) opts.push(`${scorer} made that look easy. ${yd} yards.`);
+  if (how === 'pass' && known(e.qb)) opts.push(`${nm(e.qb)} put that ball right on the money.`, 'What a throw. That ball was placed where only his guy could get it.');
+  if (how === 'run') opts.push('Great push up front on that one. The line just moved the pile.');
+  if (how === 'pick') opts.push('You cannot make that throw. It goes the other way for six.');
+  if (lead === 0) opts.push(`And we are all square at ${g.score[0]}.`);
+  opts.push(`${scoreLine(g)}.`);
   out.push(color(pick(B, 'tdc', opts), 1, 1));
-  return out.filter(Boolean);
+  return out;
 }
-function whyLine(B, g, e, before, lp, notes, { yd, first, inc }) {
+function whyLine(B, g, e, before, lp, { yd, first, inc }) {
   const opts = [];
   const pw = (e.powers ?? []).find((p) => p.on);
-  if (pw) {
-    const w = POWER_OF[pw.id];
-    return `${nm(pw.id)} is in the zone! ${w?.name ?? 'His power'} is on. ${w?.text ? w.text.split(':')[0].replace(/\.$/, '') + '.' : ''}`.trim();
-  }
+  if (pw) return `${nm(pw.id)} is in the zone now. ${POWER_OF[pw.id]?.name ?? 'His power'} is switched on, and he is a different player.`;
   const off = (e.powers ?? []).find((p) => !p.on);
-  if (off) return `And that costs ${nm(off.id)} ${POWER_OF[off.id]?.name ?? 'his power'}. He's out of the zone.`;
-  // Each note once a game: an ability that acts on every snap is worth saying the first time.
-  const fresh = notes.filter((x) => !B.said.has(x.text));
-  const n = fresh.find((x) => x.kind === 'ability') ?? fresh.find((x) => x.kind === 'type') ?? fresh.find((x) => x.kind === 'size') ?? fresh.find((x) => x.kind === 'power');
-  if (n && rnd(B) < 0.8) {
-    B.said.add(n.text);
-    const t = n.text.replace(/\.$/, '');
-    opts.push({ ability: pick(B, 'nab', [`Did you see that? ${t}. Abilities matter in this league.`, `${t}. That ability is a big reason that play went the way it did.`]), type: pick(B, 'ntype', [`${t}. The type matchup won that rep.`, `That's ${t.toLowerCase()}. You can't coach around a type disadvantage.`]), size: pick(B, 'nsize', [`${t}. Size matters, Mack.`, `${t}. Too much Pokémon for him.`]), power: `${t}.` }[n.kind] ?? `${t}.`);
-  }
-  if (lp?.end?.how === 'tackle' && lp.end.tackler && e.hit?.speed > 0) {
-    const q = lp.end.tackler.id;
-    if (kg(q) >= 200 && rnd(B) < 0.5) opts.push(`${nm(q)} is ${kg(q)} kilos of bad news. You feel that one in the upper deck.`);
-  }
+  if (off) return `And that knocks ${nm(off.id)} out of the zone.`;
   const sch = schemeLine(B, g, e, lp, { yd, inc });
-  if (sch && rnd(B) < 0.55) opts.push(sch);
-  const bb = boothAfter(g, e, before, notes);
-  if (bb) opts.push(bb);
-  if (!opts.length && !inc && yd >= 10 && rnd(B) < 0.7) {
-    const c = e.carrier;
-    opts.push(pick(B, 'praise', [`${typeFlavor(c)}. Great vision on that one.`, 'The line opened a hole you could drive a Snorlax through.', `${nm(c)} found the soft spot in that zone. Smart football.`, 'That is great play design. They had the right call on.']));
+  if (sch) opts.push(sch);
+  const T = g.teams[e.team ?? g.poss];
+  const s = known(e.carrier) ? T?.stats?.[e.carrier] : null;
+  if (s && yd > 0) {
+    for (const [have, what] of [[s.ry, 'rushing'], [s.rcy, 'receiving']]) if (have >= 100 && have - yd < 100) opts.push(`That puts ${nm(e.carrier)} over a hundred ${what} yards on the day.`);
   }
-  if (!opts.length && yd <= 0 && !inc && rnd(B) < 0.5) {
-    const tk = lp?.end?.tackler?.id;
-    opts.push(pick(B, 'stuffc', [tk ? `${nm(tk)} ${TYPE_FLAVOR[PLAYERS[tk]?.types[0]] ?? 'was right there'}. He read it from the snap.` : 'The defense read that one from the snap.', 'Nowhere to go. They sold out for the run.']));
-  }
-  if (!opts.length && first && rnd(B) < 0.3) opts.push(pick(B, 'chains', ['Keep the chains moving and good things happen.', 'Methodical. They are taking what the defense gives them.']));
+  if (before?.down === 3 && first && rnd(B) < 0.6) opts.push(pick(B, 'conv3', ['Huge conversion on third down.', 'Big third-down conversion. That keeps the drive alive.', 'Clutch. They needed that one.', 'Moving the chains on third down, that is how you keep a defense on the field.', "That's a money down, and they came through.", 'The drive stays alive.']));
+  if (before?.down === 3 && yd <= 0 && !first && rnd(B) < 0.6) opts.push(pick(B, 'stop3', ['Big stop on third down by that defense.', 'Get off the field on third down. That is what good defenses do.', 'They held. That will bring up fourth down.', 'Great tackling there. Nothing after contact.', 'The defense wins that one.']));
+  if (g.weather !== 'clear' && !venueOf(g).roof && rnd(B) < 0.15) opts.push(pick(B, 'wx', WEATHER_TALK[g.weather] ?? []));
   return opts.length ? pick(B, 'why', opts) : '';
 }
-// The X's and O's: what the two calls did to each other, said the way an analyst breaks down
-// the replay.
+// The X's and O's: what the two calls did to each other.
 function schemeLine(B, g, e, lp, { yd, inc }) {
   const off = lp?.offCall ?? e.off, def = lp?.defCall ?? e.def;
   const O = OFF_PLAYS[off], kind = O?.kind;
-  if (!O || !def) return '';
+  if (!O || !def || !DEF_PLAYS[def]) return '';
   const blitz = /blitz|dogs|mug|cover0|fire_zone/.test(def);
   const zone = /cover2|tampa2|cover3|cover4|prevent/.test(def);
-  const n = e.carrier != null && PLAYERS[e.carrier] ? nm(e.carrier) : 'he';
+  const n = known(e.carrier) ? nm(e.carrier) : 'he';
   if (kind === 'pass' && !inc && yd >= 12) {
-    if (def === 'cover0') return pick(B, 'sx-c0', ['Cover zero. They sent everybody, and the deep middle was empty. You make them pay for that.', 'They brought the house, and he beat it. When you blitz with no safety, that is the risk.']);
-    if (blitz) return pick(B, 'sx-bl', ['They brought pressure, and he stood in there and delivered. Hot read, right where the blitzer came from.', 'Blitz, and he knew exactly where to go with it. That is beating the pressure.']);
-    if (/cover2|tampa2/.test(def)) return pick(B, 'sx-c2', ['That is the hole in Cover 2, right between the corner and the safety. Perfect throw.', 'Cover 2 look, and he hit the honey hole along the sideline.']);
-    if (/cover3|cover4/.test(def)) return pick(B, 'sx-c3', [`They were in zone, and ${n} sat down right in the soft spot.`, 'Three deep, four under, and he found the seam between the hook defenders.']);
-    if (/man|base|robber/.test(def)) return pick(B, 'sx-man', [`Man coverage, and ${n} just beat his guy. Great release off the line.`, `${n} won the one-on-one. You cannot play man on him all day.`]);
+    if (def === 'cover0') return pick(B, 'sx-c0', ['They sent everybody, and the deep middle was empty. You make them pay for that.', 'They brought the house, and he beat it. That is the risk with no safety help.']);
+    if (blitz) return pick(B, 'sx-bl', ['They brought pressure, and he stood in there and delivered.', 'Blitz, and he knew exactly where to go with the ball.']);
+    if (/cover2|tampa2/.test(def)) return pick(B, 'sx-c2', ['That is the hole in Cover 2, right between the corner and the safety.', 'Perfect throw into the soft spot of that Cover 2.']);
+    if (zone) return pick(B, 'sx-z', [`They were in zone, and ${n} sat down right in the soft spot.`, 'Found the seam between the zone defenders. Great feel.']);
+    return pick(B, 'sx-man', [`Man coverage, and ${n} just beat his guy.`, `${n} won the one-on-one. You can't play man on him all day.`]);
   }
-  if (kind === 'pass' && !inc && off === 'mesh' && /man|base/.test(def) && yd >= 5) return 'Mesh against man coverage. The crossers rub the defenders off, and that is the perfect call.';
-  if (kind === 'pass' && !inc && /screen|bubble/.test(off) && yd >= 6) return pick(B, 'sx-scr', ['The screen was set up beautifully. Let the rush come, get the big guys out in front.', 'Great job by the linemen getting out on that screen.']);
-  if (kind === 'pass' && !inc && O.pa && yd >= 8) return pick(B, 'sx-pa', ['The play-action froze the linebackers. Watch them bite on the fake.', 'They sold the run, and the second level came up. That opened the window behind them.']);
-  if (kind === 'pass' && inc && zone && rnd(B) < 0.5) return pick(B, 'sx-inc', ['Good coverage on the back end. Nobody broke open.', 'The defense took that away. Sticky coverage all over the field.']);
+  if (kind === 'pass' && !inc && /screen|bubble/.test(off) && yd >= 6) return 'The screen was set up beautifully. Let the rush come, get the big guys out in front.';
+  if (kind === 'pass' && !inc && O.pa && yd >= 8) return 'The play-action froze the linebackers. That opened the window behind them.';
   if (kind === 'run' && yd >= 6) {
-    if (blitz) return pick(B, 'rx-bl', ['They blitzed, and he ran right through the gap the linebacker left.', 'The run against the blitz. Once he gets past that first wave, the second level is wide open.']);
+    if (blitz) return 'They blitzed, and he ran right through the gap the linebacker left.';
     if (O.dir === 'counter') return 'The counter gets the linebackers flowing the wrong way, and then he cuts it back.';
-    if (O.dir === 'draw') return 'The draw, perfect call. The rush gets upfield, and he runs right past them.';
-    if (zone) return pick(B, 'rx-z', ['They were sitting back in coverage, light box, and you run the ball against that all day.', 'Light box, Mack. Six in the box and you can run the football.']);
-    if (/outside|toss|sweep/.test(O.dir ?? '')) return 'He got to the edge, and the corner never set the edge. Contain was lost.';
-    return pick(B, 'rx-gen', ['Great blocking up front. The combination blocks got to the second level.', `${n} followed his blockers and hit the hole hard.`]);
+    if (O.dir === 'draw') return 'Perfect call. The rush gets upfield, and he runs right past them.';
+    if (zone) return 'Light box. They were sitting back in coverage, and you run the ball against that all day.';
+    if (/outside|toss|sweep/.test(O.dir ?? '')) return 'He got to the edge. The defense lost contain on that one.';
+    return pick(B, 'rx-gen', ['Great blocking up front. The line got to the second level.', `${n} followed his blockers and hit the hole hard.`]);
   }
   if (kind === 'run' && yd <= 0) {
-    if (def === 'run_blitz') return 'Great call on defense. The Mike linebacker shoots the A gap, right into the play.';
+    if (def === 'run_blitz') return 'Great call on defense. The linebacker shoots the gap, right into the play.';
     if (def === 'goal_line') return 'They stacked the box, and there was nowhere to go.';
-    return pick(B, 'rx-stuff', ['Penetration up front. The line got knocked back, and the play never had a chance.', 'Defense was gap sound there. Everybody fit their run responsibility.']);
+    return pick(B, 'rx-stuff', ['Penetration up front. The play never had a chance.', 'Defense was gap sound. Everybody fit their run responsibility.']);
   }
   return '';
 }
@@ -798,10 +698,10 @@ function quarterLines(B, g, e) {
   if (g.final) {
     const W = g.winner != null ? g.teams[g.winner] : null;
     return [pbp(W ? pick(B, 'final', [`And that's the ballgame! The ${W.name} win it, ${g.score[g.winner]} to ${g.score[1 - g.winner]}!`, `It's over! ${W.name} ${g.score[g.winner]}, ${g.teams[1 - g.winner].name} ${g.score[1 - g.winner]}. That's your final.`]) : `It's over, and it ends in a tie at ${g.score[0]}.`, 3, 2),
-      color(W ? pick(B, 'finalc', [`What a performance by the ${W.name}. For ${CREW.pbp.name}, I'm ${CREW.color.name}. Good night everybody.`, `The ${W.name} earned that one. Great game to call, Mack.`]) : 'Nobody wanted to lose this one.', 1, 1)].filter(Boolean);
+      color(W ? pick(B, 'finalc', [`What a performance by the ${W.name}. For ${CREW.pbp.name}, I'm ${CREW.color.name}. Good night, everybody.`, `The ${W.name} earned that one. Great game to call, Mack.`]) : 'Nobody wanted to lose this one.', 1, 1)];
   }
-  if (q === 2) return [pbp(`That's halftime here. ${scoreLine(g)}.`, 1, 1), color(halftimeNote(g), 1)].filter(Boolean);
-  return [pbp(`That's the end of the ${QUARTER[q] ?? 'quarter'}. ${scoreLine(g)}.`, 1)].filter(Boolean);
+  if (q === 2) return [pbp(`That's halftime. ${scoreLine(g)}.`, 1, 1), color(halftimeNote(g), 1)];
+  return [pbp(`That's the end of the ${QUARTER[q] ?? 'quarter'}. ${scoreLine(g)}.`, 1)];
 }
 function halftimeNote(g) {
   let best = null;
@@ -814,23 +714,27 @@ function halftimeNote(g) {
 }
 
 // ---------- between plays ----------
-// When the call sheet is up and the booth has been quiet a while: one of Dee's notes.
+// When the call sheet is up and the booth has been quiet a while: one of Dee's notes, and not
+// over and over.
 export function fillerLine(B, g) {
   if (!g || g.final || g.phase !== 'play') return null;
+  if (B.plays - B.colorAt < 2) return null;
   B.fillers++;
   const o = g.poss, T = g.teams[o], D = g.teams[1 - o];
   const opts = [];
   const tw = playerToWatch(g, o);
-  if (tw && !/No stats/.test(tw.line)) opts.push(`${tw.name} today: ${spokenLine(tw.line)}.`);
-  const key = keyMatchup(g);
-  if (key && B.fillers % 3 === 1) opts.push(`I keep coming back to ${key}.`);
+  const s = tw ? T.stats?.[tw.id] : null;
+  if (s && s.rc >= 3) opts.push(`${tw.name} has ${plural(s.rc, 'catch')} today. They keep finding ways to get him the ball.`);
+  else if (s && s.ra >= 5) opts.push(`${tw.name} has ${s.ra} carries already. They are leaning on him.`);
   const def = g.log.filter((x) => x.team === o && x.def && DEF_PLAYS[x.def]).slice(-6);
   const blitz = def.filter((x) => /blitz|dogs|mug|cover0|fire_zone/.test(x.def)).length;
-  if (def.length >= 5 && blitz >= 3) opts.push(`The ${D.name} have been bringing pressure all day. ${blitz} blitzes in the last ${def.length} snaps.`);
+  if (def.length >= 5 && blitz >= 3) opts.push(`The ${D.name} have been bringing pressure all day. The quarterback has to get the ball out quick.`);
   const runs = g.log.filter((x) => x.team === o && x.off && OFF_PLAYS[x.off]?.kind === 'run').slice(-8);
-  const ry = runs.reduce((s, x) => s + (x.yards ?? 0), 0);
-  if (runs.length >= 4) opts.push(ry / runs.length >= 5 ? `The ${T.name} are averaging ${(ry / runs.length).toFixed(1)} a carry lately. Keep pounding it.` : `The ${T.name} run game has been bottled up. ${(ry / runs.length).toFixed(1)} a carry.`);
-  if (g.weather !== 'clear' && !venueOf(g).roof) opts.push(`This ${WEATHER[g.weather].name.toLowerCase()} is a factor. ${WEATHER[g.weather].text.split(';')[0]}.`);
-  opts.push(`${scoreLine(g)} in the ${QUARTER[g.quarter] ?? 'overtime'}.`);
-  return color(pick(B, 'filler', opts), 0);
+  const ry = runs.reduce((sum, x) => sum + (x.yards ?? 0), 0);
+  if (runs.length >= 4 && B.fillers % 2) opts.push(ry / runs.length >= 5 ? pick(B, 'rungood', ['They are running the ball well. Keep pounding it until somebody stops it.', 'The offensive line is winning up front. That run game is humming.']) : pick(B, 'runbad', ['The run game has been bottled up. They might have to throw it more.', 'Not much room on the ground today. The defensive front is winning.', 'They cannot get the run game going. That puts a lot on the quarterback.']));
+  if (g.weather !== 'clear' && !venueOf(g).roof) opts.push(...(WEATHER_TALK[g.weather] ?? []));
+  if (B.streak.n >= 3 && B.streak.ti != null) opts.push(`The ${g.teams[B.streak.ti].name} have the momentum right now. You can feel it in the building.`);
+  if (!opts.length) return null;
+  B.colorAt = B.plays;
+  return finish(B, g, [color(pick(B, 'filler', opts), 0)])[0] ?? null;
 }
