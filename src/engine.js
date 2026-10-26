@@ -786,9 +786,22 @@ export function runPlay(g, offCall, defCall) {
   else if (play.kind === 'run') r = doRun(g, simOff(offCall), simDef(defCall), play.qb === true || (play.qb > 0 && chance(g, play.qb)));
   else if (play.kind === 'pass') r = doPass(g, simOff(offCall), simDef(defCall));
   else r = clockPlay(g, 'spike');
-  const secs = play.kind === 'spike' ? 1 : play.kind === 'kneel' ? 2 : between(g, 4, 8);
+  const secs = play.kind === 'spike' ? 1 : play.kind === 'kneel' ? 2 : statSnap ? whistleSeconds(simPlayTime(g, r)) : between(g, 4, 8);
   if (statSnap && !r.special) { const fouls = simFouls(g, r); if (fouls.length) { r.fouls = fouls; r.statSnap = statSnap; } }
   return finishPlay(g, r, base, offCall, defCall, secs);
+}
+
+// One clock model for both games: a play takes the seconds from the snap to the whistle, plus the
+// beat it takes the officials to blow it dead (live.js playSeconds passes the real whistle time).
+export function whistleSeconds(t) { return Math.max(4, Math.round(t + 2.5)); }
+// The sim's snap-to-whistle time, from what happened: the averages the live field plays to
+// (test/live.mjs), a little longer the farther the ball went, give or take half a second.
+function simPlayTime(g, r) {
+  const y = Math.max(0, r.yards ?? 0), jitter = rand(g) - 0.5;
+  if (r.kind === 'sack') return 3 + jitter;
+  if (r.kind === 'run') return 2.6 + 0.145 * y + jitter;
+  if (r.clockStop) return 3.5 + jitter;
+  return 2.7 + 0.1 * y + jitter;
 }
 
 // A spike (an incomplete pass into the ground) or a kneel (a yard lost, the clock running).
@@ -1473,6 +1486,9 @@ function doPass(g, call, defCall) {
   if (deep) pc += (arm - 80) * 0.004;
   if (depth === 'mid') pc += (arm - 80) * 0.0015;
   if (pressure) pc -= 0.13 * (has(qb, 'focus') ? 0.5 : 1) * (pressAbility ? 1.3 : 1);
+  // The difficulty's catch radius for the user's receivers, as the live field plays it (about 6
+  // points of completion rate per yard of reach), so a simmed or coached drive gets it too.
+  if (diffUser(g) === o) pc += diffOf(g).catchReach * 0.06;
   pc = clamp(pc, 0.04, 0.95);
 
   qs.pa++;

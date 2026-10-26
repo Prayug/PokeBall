@@ -2,7 +2,8 @@
 // tune three things for games the user coaches:
 //   aiRead     how quickly the AI side reads the play: its quarterback's beat per read and how
 //              long its defenders take to react to cuts and to a thrown ball (above 1 is slower)
-//   catchReach yards added to how far the user's receivers reach for a pass
+//   catchReach yards added to how far the user's receivers reach for a pass (in the fast sim,
+//              the completion rate it is worth: see doPass)
 //   form       how far the per-game form roll swings (see PARITY in parity.js; 1 = as is)
 //   edge       a rating multiplier for the user's side on top of form (0.04 means 4%)
 // AI-against-AI games never carry a difficulty, so the rest of the league plays as before.

@@ -56,7 +56,7 @@ export function renderHome() {
           ${LEAGUE_SIZES.map((n) => `<label class="pill"><input type="radio" name="teams" value="${n}" ${(st.teams ?? 8) === n ? 'checked' : ''}> ${n} teams${n === 8 ? ', 7 weeks, top 4 in the playoffs' : n === 12 ? ', 3 divisions, 14 weeks, 6 in the playoffs' : ', 4 divisions, 18 weeks, 8 in the playoffs'}</label>`).join('')}
         </fieldset>
         <fieldset><legend>Draft length</legend>
-          <label class="pill"><input type="radio" name="rounds" value="24" ${st.rounds === 24 ? 'checked' : ''}> 24 rounds, starters, kicker and punter</label>
+          <label class="pill"><input type="radio" name="rounds" value="24" ${st.rounds === 24 ? 'checked' : ''}> 24 rounds, starters, kicker and punter. No bench: an injury puts a starter on both sides of the ball</label>
           <label class="pill"><input type="radio" name="rounds" value="28" ${st.rounds === 28 ? 'checked' : ''}> 28 rounds, with 4 bench</label>
           <span class="small muted">A 16-team league without legendaries drafts 24 rounds: the pool runs short at 28.</span>
         </fieldset>

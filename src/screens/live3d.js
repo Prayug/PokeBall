@@ -215,7 +215,7 @@ export function startLive(off, def, opts) {
   L3.paused = false;
   L3.off = off; L3.def = def; L3.acc = 0; L3.deadT = 0; L3.ev = 0; L3.committed = null;
   L3.autoSnap = opts.autoSnap ?? null;
-  L3.pclock = Math.max(L3.pclock, 10);
+  L3.pclock = Math.max(L3.pclock, 10); L3.pcHold = false;
   L3.edges.clear(); L3.hold = null; L3.lob = null;
   S.menuOpen = false; S.psPick = null;
   hideBanner();
@@ -241,6 +241,8 @@ export function doSnap() {
   // The snap ends the last play's challenge window.
   if (L3.review) L3.review.done = true;
   snap(lp);
+  // The first snap of a career with the ball in your hands (see pclockHeld).
+  if (!S.snapped && lp.user === lp.o && !lp.kick && !twoPlayer()) { S.snapped = true; savePrefs(); }
   L3.autoSnap = null;
   S.psPick = null;
   render();
@@ -322,7 +324,7 @@ function commitPlay() {
   L3.hold = lp.end?.how === 'td' ? 3.2 : big ? 2.6 : lp.end?.how === 'incomplete' ? 1.6 : 2.0;
   L3.tickerUntil = performance.now() + 6500;
   if (b) for (const i of [0, 1]) if (g.score[i] !== b.score[i]) L3.scoreFlash[i] = performance.now() + 2200;
-  L3.pclock = 40;
+  L3.pclock = 40; L3.pcHold = false;
   save();
   render();
   showBanner(resultBanner(entry, lp, b));
@@ -381,7 +383,7 @@ export function afterLivePlay(entry) {
 export function resetBetweenGames() {
   L3.lp = null; L3.preview = null; L3.spots = null; L3.rec = null; L3.before = null; L3.committed = null; L3.review = null;
   clearReel();
-  L3.pclock = 40; L3.paused = false; L3.resultUntil = 0; L3.resetUntil = 0; L3.tickerUntil = 0; L3.scoreFlash = [0, 0];
+  L3.pclock = 40; L3.pcHold = false; L3.paused = false; L3.resultUntil = 0; L3.resetUntil = 0; L3.tickerUntil = 0; L3.scoreFlash = [0, 0];
   L3.deadT = 0; L3.hold = 0; L3.lob = null; L3.snapWant = false; L3.autoSnap = null; L3.keys.clear(); L3.edges.clear();
   if (L3.replay) stopReplay();
   hideBanner();
@@ -775,8 +777,12 @@ function loop(now) {
         }
       } else clearInput();
       if (L3.autoSnap != null && lp.set) { L3.autoSnap -= dt; if (L3.autoSnap <= 0) doSnap(); }
-      // Play clock: when it runs out on a lined-up play, the ball is snapped.
-      if (lp.set && L3.autoSnap == null) { L3.pclock = Math.max(0, L3.pclock - dt); if (L3.pclock <= 0) doSnap(); }
+      // Play clock: when it runs out on a lined-up scrimmage play it is a delay of game, never a
+      // snap with nobody on the stick (see playClockOut); a kickoff or a try is kicked.
+      if (lp.set && L3.autoSnap == null && g && !pclockHeld(g)) {
+        L3.pclock = Math.max(0, L3.pclock - dt);
+        if (L3.pclock <= 0) { if (g.phase === 'play') playClockOut(); else doSnap(); }
+      }
     } else {
       L3.acc += dt;
       while (L3.acc >= DT) {
@@ -831,7 +837,7 @@ function loop(now) {
     }
     // The play clock runs while the call is yours; at :00 it is a delay of game on offense, or
     // the fitting call is made for you (see playClockOut).
-    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && !S.menuOpen && !L3.replay && !FILM.open && L3.flow === 'PLAY_SELECTION') {
+    if (g && !g.final && needsUser(g) && !pclockHeld(g) && L3.flow === 'PLAY_SELECTION') {
       L3.pclock = Math.max(0, L3.pclock - dt);
       if (L3.pclock <= 0) { L3.pclock = 40; playClockOut(); }
     }
@@ -868,6 +874,23 @@ function loop(now) {
 }
 
 // ---------- pause, replay and the controls card ----------
+// The play clock stands still while anything is open over the call (the controls card, the menu,
+// the Edges board, the full playbook, a picker at the line, sound, the film room, a replay, a
+// pause), after a delay of game until the next call, and on Pro and Legend for the first
+// offensive snap of a career (Rookie makes the fitting call for you instead).
+export function pclockHeld(g) {
+  if (S.busy || S.helpOpen || S.menuOpen || S.csScout || S.csAll || S.soundOpen || S.skipOpen || S.psPick) return true;
+  if (L3.paused || L3.replay || FILM.open || L3.pcHold) return true;
+  return !S.snapped && !twoPlayer() && g.phase === 'play' && g.poss === userSide() && S.difficulty !== 'rookie';
+}
+// A play lined up and taken back without a snap (a delay of game): the players stay where they
+// stand and the call sheet comes back.
+export function takeBack() {
+  const lp = L3.lp;
+  if (!lp || lp.phase !== 'pre') return;
+  L3.spots = worldSpots(lp); L3.preview = null; L3.lp = null; L3.rec = null;
+  L3.autoSnap = null; L3.snapWant = false; S.psPick = null; S.coachDown = false;
+}
 function endKey(lp) { return `${lp.end?.how ?? lp.phase}@${(lp.spotX ?? lp.ball.x).toFixed(2)},${lp.ball.y.toFixed(2)}`; }
 function isPaused() { return !!L3.lp && L3.lp.phase !== 'dead' && (L3.paused || S.helpOpen || (S.menuOpen && L3.lp.phase === 'live')); }
 export function togglePause() {
