@@ -2,6 +2,7 @@
 // the end of the play. Everything under src/live/ and src/live.js builds on this module, and it
 // imports none of them, so the live modules form a tree with no import cycles.
 import { clamp, nm, st } from '../engine.js';
+import { simFouls } from '../penalties.js';
 
 // How a kick's result is read (src/live/kicks.js registers it), so this module needs no import
 // back into the kicking game.
@@ -466,6 +467,13 @@ export function finish(lp, end) {
   const T = lp.tackle;
   if (!lp.kick && T && end.tackler && !lp.intercepted && lp.result) lp.result.hit = { carrier: T.c.id, tackler: T.q.id, speed: T.impact };
   if (lp.fake && lp.result.text) lp.result.text = `${lp.fake === 'punt' ? 'Fake punt!' : 'Fake field goal!'} ${lp.result.text}`;
+  // Fouls during the play: the fast simulator's rolls (penalties.js simFouls), one model for both
+  // games, made at the whistle from what happened here and flagged where the player stands.
+  if (lp.flags && !lp.kick && !lp.result.noPlay) for (const f of simFouls(lp.g, lp.result)) {
+    const who = lp.players.find((p) => p.id === f.player && p.ti === f.team);
+    lp.fouls.push({ ...f, y: who?.y ?? 0, t: lp.t });
+    event(lp, 'flag', '', who ?? null);
+  }
   if (lp.fouls?.length) { lp.result.fouls = lp.fouls; lp.result.statSnap = lp.statSnap; }
 }
 
@@ -482,7 +490,8 @@ export function buildResult(lp, end) {
   if (end.how === 'incomplete') {
     st(g, o, qb.id).pa++;
     if (stats.target) st(g, o, stats.target.id).tg++;
-    return { kind: 'pass', yards: 0, carrier: qb.id, qb: qb.id, text: end.text, clockStop: true };
+    return { kind: 'pass', yards: 0, carrier: qb.id, qb: qb.id, text: end.text, clockStop: true, incomplete: true,
+      cov: stats.cov?.id ?? null, air: Math.round(lp.thrown?.air ?? 8) };
   }
   // Whoever actually has the ball is the runner the play is scored from.
   const hb = lp.ball.holder;

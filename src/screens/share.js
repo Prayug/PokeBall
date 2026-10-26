@@ -115,7 +115,7 @@ export function loadShared(replay, challenge = false) {
   }
   S.shareIn = null; S.shareErr = '';
   S.league = L; S.game = null; S.gameMeta = null;
-  S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false };
+  S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false, queueAuto: false };
   save();
   setScreen(L.phase === 'draft' ? 'draft' : 'grades');
 }

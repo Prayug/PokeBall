@@ -13,13 +13,13 @@ export const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce
 
 export const S = {
   screen: 'home', league: null, game: null, gameMeta: null,
-  draft: { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false },
+  draft: { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false, queueAuto: false },
   depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', teams: 8, rounds: 24, legendaries: false, typeCap: true, clock: true, scheme: 'balanced' },
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
   menuOpen: false, cam: 'gameplay', weatherFx: true, quality: 'auto',
   names: true, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
   sound: true, vol: { master: 0.8, booth: 0.9, crowd: 0.8, fx: 0.8, music: 0.45 }, booth: true, boothVoice: true, captions: true, realCries: true, music: true, soundOpen: false,
-  seenHelp: false, helpOpen: false, difficulty: 'pro', slot: 1, confirmDelete: null,
+  seenHelp: false, snapped: false, helpOpen: false, csFold: true, difficulty: 'pro', slot: 1, confirmDelete: null,
   online: false, net: null, netMsg: '',
 };
 export const timers = { draft: null, clock: null, auto: null, banner: null };
@@ -106,6 +106,10 @@ export function loadPrefs() {
       if (p.vol && typeof p.vol === 'object') for (const k of Object.keys(S.vol)) if (typeof p.vol[k] === 'number' && p.vol[k] >= 0 && p.vol[k] <= 1) S.vol[k] = p.vol[k];
       for (const k of ['booth', 'boothVoice', 'captions', 'realCries', 'music']) if (p[k] != null) S[k] = !!p[k];
       if (p.seenHelp) S.seenHelp = true;
+      if (p.snapped) S.snapped = true;
+      // The call sheet starts folded to its one-line bar for a new player; after that it
+      // opens the way it was left.
+      S.csFold = p.csFold ?? !S.seenHelp;
       if (['rookie', 'pro', 'legend'].includes(p.difficulty)) S.difficulty = p.difficulty;
       if (p.slot >= 1 && p.slot <= SAVE_SLOTS) S.slot = p.slot;
       // Lens settings saved before version 5 belong to the older framing and are dropped.
@@ -114,7 +118,7 @@ export function loadPrefs() {
   } catch { /* ignore */ }
 }
 export function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, spectate: !!S.spectate, setup: S.setup, cam: S.cam, camV: 5, weatherFx: S.weatherFx, quality: S.quality, names: S.names, namesV: 2, pips: !!S.pips, sound: S.sound, vol: S.vol, booth: S.booth, boothVoice: S.boothVoice, captions: S.captions, realCries: S.realCries, music: S.music, seenHelp: S.seenHelp, difficulty: S.difficulty, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, spectate: !!S.spectate, setup: S.setup, cam: S.cam, camV: 5, weatherFx: S.weatherFx, quality: S.quality, names: S.names, namesV: 2, pips: !!S.pips, sound: S.sound, vol: S.vol, booth: S.booth, boothVoice: S.boothVoice, captions: S.captions, realCries: S.realCries, music: S.music, seenHelp: S.seenHelp, snapped: !!S.snapped, csFold: !!S.csFold, difficulty: S.difficulty, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
 }
 export function clearTimers() {
   for (const k of Object.keys(timers)) { clearTimeout(timers[k]); clearInterval(timers[k]); timers[k] = null; }

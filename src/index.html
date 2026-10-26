@@ -147,6 +147,31 @@ legend { font-size: 13px; color: var(--chalk-dim); margin-bottom: 4px; }
 .pk b { font-weight: 600; }
 .leg { font: 600 11px/1 var(--f-data); color: var(--amber); text-transform: uppercase; letter-spacing: 0.08em; font-style: normal; }
 .fit { white-space: nowrap; }
+.fitcell { display: grid; gap: 2px; min-width: 112px; }
+.fitnum { font: 700 16px/1 var(--f-data); font-variant-numeric: tabular-nums; color: var(--chalk); }
+.fitsub { display: flex; gap: 4px; align-items: center; }
+.fitwhy { font-size: 11px; color: var(--chalk-dim); white-space: nowrap; }
+.board-table td.acts { white-space: nowrap; }
+.star { min-width: 30px; }
+.star.on { color: var(--amber); }
+.needs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 8px 0; padding: 8px 10px; border-radius: var(--r); background: rgba(0, 0, 0, 0.25); border: 1px solid var(--line); }
+.needs-l { font: 700 12px/1 var(--f-data); letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber); margin-right: 4px; }
+.needs .check { margin-left: auto; }
+.chip-btn { font: 700 12px/1 var(--f-data); letter-spacing: 0.06em; padding: 5px 8px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04); color: var(--chalk); cursor: pointer; }
+.chip-btn.on { border-color: var(--amber); color: var(--amber); background: rgba(255, 181, 71, 0.12); }
+#detail { scroll-margin-top: calc(var(--top-h, 64px) + 12px); }
+.why { display: grid; gap: 4px; padding: 8px 10px; border-left: 3px solid var(--amber); background: rgba(255, 181, 71, 0.06); border-radius: 0 var(--r) var(--r) 0; }
+.why h4 { margin: 0; }
+.why p { margin: 0; }
+.qlist { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.qlist li { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.qlist li.blocked { opacity: 0.5; }
+.qname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; }
+.qbtns { display: flex; gap: 2px; }
+.qbtns .btn.tiny { padding: 4px 6px; }
+.swaplist { list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 6px; }
+.swaplist li { display: flex; gap: 8px; align-items: center; }
+.swaplist li > span.small { flex: 1; }
 .sort { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; }
 .sort.on { color: var(--amber); }
 .empty { text-align: center; padding: 24px; color: var(--chalk-dim); }
@@ -373,6 +398,10 @@ table.kicking thead th { font: 600 12px/1 var(--f-data); color: var(--chalk-dim)
 .eside { display: flex; gap: 4px; align-items: center; min-width: 0; flex-wrap: wrap; }
 .eside .en { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vsx { font: 600 11px/1 var(--f-data); color: var(--chalk-dim); text-transform: uppercase; }
+.enet { font: 600 11px/1.1 var(--f-data); color: var(--chalk-dim); text-transform: uppercase; letter-spacing: 0.03em; text-align: center; }
+.edge.good .enet { color: var(--good); }
+.edge.bad .enet { color: var(--bad); }
+.ewhy { grid-column: 1 / -1; font-size: 11px; }
 .eff { font: 600 10px/1.1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; color: var(--chalk-dim); }
 .eff.se { color: var(--good); }
 .eff.nve { color: var(--warn); }
@@ -601,7 +630,7 @@ body.g3d-on main { max-width: none; }
 .menubtn { align-self: start; justify-self: end; z-index: 4; margin: 12px 12px 0 0; display: flex; gap: 8px; align-items: center; cursor: pointer; border-radius: 6px; padding: 9px 12px;
   background: rgba(9, 22, 17, 0.8); border: 1px solid rgba(238,242,230,0.18); font: 600 14px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.08em; }
 .menubtn kbd { font-size: 11px; }
-.gmenu { align-self: start; justify-self: end; z-index: 5; margin: 60px 12px 0 0; width: min(290px, calc(100% - 24px)); max-height: calc(100% - 140px); overflow-y: auto; display: grid; gap: 5px; padding: 10px 12px; font-size: 14px;
+.gmenu { align-self: start; justify-self: end; z-index: 5; margin: 60px 12px 0 0; width: min(352px, calc(100% - 24px)); max-height: calc(100% - 140px); overflow-y: auto; display: grid; gap: 5px; padding: 10px 12px; font-size: 14px;
   background: rgba(9, 22, 17, 0.94); backdrop-filter: blur(8px); }
 .gmenu h4 { margin-top: 6px; display: flex; gap: 8px; align-items: center; }
 .gm-row { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -765,7 +794,7 @@ body.g3d-on main { max-width: none; }
 /* Watch mode (spectator / streamer): the broadcast scoreboard grows, the menu fades back, and
    the only other HUD is one chip in the bottom-left corner. */
 .game.spectate .bcast { margin-top: 16px; border-radius: 8px; }
-.game.spectate .bc-row { height: 60px; }
+.game.spectate .bcast { --bc-h: 60px; }
 .game.spectate .bc-team::before { width: 72px; }
 .game.spectate .bc-strip { font-size: 16px; padding: 6px 16px; }
 .game.spectate .bc-abbr { width: 72px; font-size: 26px; }
@@ -782,7 +811,7 @@ body.g3d-on main { max-width: none; }
 .pill.spec { justify-self: start; margin: 0 0 14px 12px; padding: 6px 6px 6px 14px; gap: 8px; font-size: 12px; }
 .pill.spec .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); animation: pc-warn 1.6s ease-in-out infinite; box-shadow: 0 0 0 2px rgba(255,255,255,0.12); }
 @media (max-width: 900px) {
-  .game.spectate .bc-row { height: 46px; }
+  .game.spectate .bcast { --bc-h: 46px; }
   .game.g3d.spectate .hud { padding-top: 136px; }
   .game.spectate .bc-team::before { width: 52px; }
   .game.spectate .bc-abbr { width: 52px; font-size: 19px; }
@@ -790,7 +819,7 @@ body.g3d-on main { max-width: none; }
   .game.spectate .bc-score { font-size: 28px; } .game.spectate .bc-cell { font-size: 16px; padding: 0 10px; } .game.spectate .bc-clock { font-size: 20px; }
 }
 @media (max-width: 560px) {
-  .game.spectate .bc-row { height: 40px; }
+  .game.spectate .bcast { --bc-h: 40px; }
   .game.g3d.spectate .hud { padding-top: 108px; }
   .game.spectate .bc-team::before { width: 40px; }
   .game.spectate .bc-abbr { width: 40px; font-size: 15px; }
@@ -870,7 +899,12 @@ body.g3d-on main { max-width: none; }
 /* The broadcast package: the scorebug's kit colors, records, state tag and booth strip; the
    open, the stingers, the player lower-third and the drive chart (screens/broadcast.js). */
 .bcast { flex-direction: column; height: auto; }
-.bc-row { display: flex; align-items: stretch; height: 42px; }
+.bc-row { display: flex; flex-wrap: wrap; justify-content: center; }
+/* Score, then situation: one row when it fits, two when it does not (each half fills its row). */
+.bc-teams, .bc-info { display: flex; align-items: stretch; height: var(--bc-h, 42px); flex: 1 0 auto; }
+.bc-teams { justify-content: center; }
+.bc-info > .bc-cell { flex: 1 0 auto; }
+.bc-info > .bc-q { align-items: center; justify-content: center; }
 .bc-team::before { content: ''; position: absolute; left: 0; bottom: 0; width: 52px; height: 4px; background: var(--team2); }
 .bc-abbr { color: var(--team-ink, #fff); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; align-self: stretch; }
 .bc-rec { font: 600 10px/1 var(--f-data); letter-spacing: 0.06em; opacity: 0.8; text-shadow: none; }
@@ -879,7 +913,7 @@ body.g3d-on main { max-width: none; }
 .bc-tag.to { background: rgba(238,242,230,0.16); color: #fff; }
 .bc-tag.rz { background: rgba(229, 64, 43, 0.85); color: #fff; }
 .bc-strip { padding: 4px 12px 5px; font: 600 13px/1.2 var(--f-data); letter-spacing: 0.05em; text-transform: uppercase; color: var(--chalk); background: rgba(238,242,230,0.08);
-  border-top: 1px solid rgba(238,242,230,0.12); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: strip-in 0.35s ease-out; }
+  border-top: 1px solid rgba(238,242,230,0.12); text-align: center; overflow-wrap: anywhere; animation: strip-in 0.35s ease-out; }
 @keyframes strip-in { from { opacity: 0; transform: translateY(-4px); } }
 /* The bigger bug for watching (Watch mode builds on it). */
 .l3-booth { margin: 6px 0 0; font-size: 13px; font-style: italic; color: #dfe8d9; display: flex; gap: 7px; align-items: baseline; }
@@ -937,10 +971,9 @@ td.dchart { padding-block: 4px; }
 @media (max-width: 900px) {
   .bcast { max-width: calc(100% - 24px); margin-top: 56px; }
   .ov-badge { top: 104px; }
-  .bc-row { height: 36px; }
+  .bcast { --bc-h: 36px; }
   .bc-rec, .bc-tag.rz { display: none; }
   .bc-drive, .bc-third { display: none; }
-  .bc-spot { display: none; }
   .bc-q small { display: none; }
   .ticker { display: none; }
   .callsheet { max-height: 52%; }
@@ -1266,8 +1299,8 @@ main.enter .col > :nth-child(n+4) { animation-delay: 0.14s; }
 .booth-cap.hype .bc-say { font-weight: 700; color: #fff; }
 .booth-cap .bc-mic { flex: none; align-self: center; width: 7px; height: 10px; border-radius: 4px; background: currentColor; color: var(--amber); box-shadow: 0 6px 0 -3px currentColor; }
 .booth-cap.color .bc-mic { color: #4fc3f7; }
-.game.spectate .booth-cap { top: 128px; }
-@media (max-width: 640px) { .booth-cap { top: 58px; font-size: 13px; } .game.spectate .booth-cap { top: 112px; } }
+.game.g3d .booth-cap { top: var(--bug-b, 64px); }
+@media (max-width: 640px) { .booth-cap { font-size: 13px; } }
 @media (prefers-reduced-motion: reduce) { .booth-cap { transition: none; } }
 /* The speaker button and the sound panel in the top bar. */
 .sndwrap { margin-left: auto; position: relative; }
@@ -1279,6 +1312,33 @@ main.enter .col > :nth-child(n+4) { animation-delay: 0.14s; }
 .snd-row { display: grid; grid-template-columns: 92px 1fr 34px; gap: 8px; align-items: center; font-size: 13px; }
 .snd-row input { width: 100%; accent-color: var(--amber); }
 .snd-row output { text-align: right; font: 600 12px/1 var(--f-data); color: var(--chalk-dim); }
-.snd-voices { margin: 0; }</style>
+.snd-voices { margin: 0; }
+/* The game menu's checkboxes: the label wraps beside the box rather than running off the drawer. */
+.gmenu label.check { align-items: flex-start; line-height: 1.3; }
+.gmenu label.check input { margin-top: 1px; flex: none; }
+.gmenu label.check > span { min-width: 0; overflow-wrap: anywhere; }
+.gmenu label.check small { display: block; font-size: 12px; }
+.gmenu .modes { flex-wrap: nowrap; }
+.gmenu .modes .btn { flex: 1 1 0; min-width: 0; padding-inline: 6px; }
+/* The game details drawer: the tabs from under the field, over its right side. */
+.gdrawer { align-self: start; justify-self: end; z-index: 5; margin: max(60px, var(--bug-b, 60px)) 12px 0 0; width: min(480px, calc(100% - 24px)); max-height: calc(100% - max(60px, var(--bug-b, 60px)) - 16px); overflow-y: auto; overscroll-behavior: contain;
+  display: grid; gap: 8px; align-content: start; padding: 10px 12px; font-size: 14px; background: rgba(9, 22, 17, 0.95); backdrop-filter: blur(8px);
+  border-top: 3px solid var(--me); box-shadow: inset 0 1px 0 var(--panel-hi), 0 14px 36px rgba(0, 0, 0, 0.45); }
+.gdrawer .gd-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gdrawer .gd-head h4 { margin: 0; }
+.gdrawer .tabs { flex-wrap: wrap; }
+.gdrawer .tabbody { padding: 8px; background: rgba(0, 0, 0, 0.2); }
+.stage-slot:has(.gdrawer) .bc-drive, .stage-slot:has(.gmenu) .bc-drive { display: none; }
+/* Challenge, Film room and Replay ride in the call sheet's header while it is up. */
+.cs-acts:empty { display: none; }
+.cs-acts { display: contents; }
+.cs-acts .hud-acts { position: static; max-width: none; gap: 6px; flex-wrap: wrap; }
+.cs-acts .hud-replay { padding: 4px 8px; font-size: 12px; }
+.cs-acts .hud-acts:not(:has(.hud-replay:not([hidden]))) { display: none; }
+/* The controls card: eight keys, the rest behind More. */
+.keys8 { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); color: var(--chalk); }
+.keys-more { margin-top: 6px; }
+.keys-more summary { cursor: pointer; font: 600 13px/1.3 var(--f-data); text-transform: uppercase; letter-spacing: 0.08em; color: var(--chalk-dim); padding: 4px 0; }
+.ov-help .small { margin: 2px 0 4px; }</style>
 <div id="app"></div>
 <!--APP-->

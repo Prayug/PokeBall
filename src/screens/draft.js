@@ -1,5 +1,5 @@
 // Draft room and draft grades, with the post-draft trade offer (and the deal cards the trade desk shares).
-import { ATTRS, BASELINE, DEF_SLOTS, OFF_SLOTS, PLAYERS, SLOT, SLOT_KEYS, ST_SLOTS } from '../ratings.js';
+import { ATTRS, BASELINE, DEF_SLOTS, OFF_SLOTS, PLAYERS, SLOT_KEYS, ST_SLOTS } from '../ratings.js';
 import { TYPE_COLORS, TYPE_TRAITS } from '../types.js';
 import * as LG from '../league.js';
 import { SCHEMES, coachLabel } from '../coach.js';
@@ -11,21 +11,121 @@ import { send as netSend } from '../net.js';
 import * as TR from '../trades.js';
 
 // ---------- draft ----------
+// The board's Fit is the number it sorts by. With "Best open slot", that is a Pokémon's value
+// to your roster: the slot's weight times how far its rating there clears a typical starter
+// (LG.slotValue), at the open slot where that is highest; once every slot is filled, 90% of the
+// weighted gap to the starter it would back up (LG.benchValue). Rated at one position, Fit is
+// the rating there, and the board sorts by that.
+const TOP_POSITIONS = 3;
+const playsAt = (id, k) => P(id).best.slice(0, TOP_POSITIONS).includes(k);
+
+export function draftFit(team, id, d = S.draft) {
+  const p = P(id);
+  if (d.rate !== 'fit') return { slot: d.rate, v: p.ovr[d.rate], score: p.ovr[d.rate], rated: true };
+  const need = typeof d.needs === 'string' && team.slots[d.needs] == null ? d.needs : null;
+  if (need) return { slot: need, v: p.ovr[need], score: LG.slotValue(id, need), open: true };
+  if (LG.openSlots(team).length) {
+    const k = LG.bestOpenSlot(team, id);
+    return { slot: k, v: p.ovr[k], score: LG.slotValue(id, k), open: true };
+  }
+  const b = LG.benchValue(team, id);
+  return { slot: b.slot, v: p.ovr[b.slot], score: b.score, incumbent: b.incumbent };
+}
+const fitNum = (f) => (f.rated ? String(f.v) : `${f.score >= 0 ? '+' : '−'}${Math.abs(Math.round(f.score))}`);
+
+// Where a Pokémon ranks at a slot among the ones still on the board (1: the best left).
+function rankerFor(L, team) {
+  const pool = LG.available(L).filter((id) => !LG.blockReason(L, team, id));
+  const cache = {};
+  return (id, k) => {
+    const list = (cache[k] ??= pool.map((x) => P(x).ovr[k]).sort((a, b) => b - a));
+    const v = P(id).ovr[k];
+    let lo = 0, hi = list.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid] > v) lo = mid + 1; else hi = mid; }
+    return lo + 1;
+  };
+}
+const nth = (n) => (n === 1 ? 'Best' : `${n}${(n % 100 >= 11 && n % 100 <= 13) ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}-best`);
+
+// One line for the board: why the Fit is what it is.
+function fitShort(f, rank) {
+  if (f.rated) return `${nth(rank)} ${f.slot} left`;
+  if (f.open) return `${nth(rank)} ${f.slot} left · open`;
+  return `Backs up ${f.slot}`;
+}
+
+// The longer case for a pick, for the detail card.
+function whyHtml(L, team, id) {
+  const f = draftFit(team, id), p = P(id);
+  const rank = rankerFor(L, team)(id, f.slot);
+  const cur = team.slots[f.slot];
+  const lines = [];
+  if (f.rated) {
+    lines.push(`${nth(rank)} ${f.slot} left at ${f.v}.${cur != null ? ` You start ${esc(P(cur).name)} (${P(cur).ovr[f.slot]}) there.` : ` Your ${f.slot} spot is open.`}`);
+  } else if (f.open) {
+    lines.push(`${nth(rank)} ${f.slot} left, and your ${f.slot} spot is open.`);
+    lines.push(`Fit ${fitNum(f)}: ${f.v} at ${f.slot} against ${BASELINE[f.slot]} for a typical starter, times how much the ${f.slot} spot counts.`);
+  } else {
+    const inc = f.incumbent != null ? P(f.incumbent) : null;
+    const gap = inc ? f.v - inc.ovr[f.slot] : 0;
+    lines.push(inc ? (gap > 0 ? `Beats your ${f.slot} ${esc(inc.name)} (${inc.ovr[f.slot]}) by ${gap}: it would start.` : `Backup ${f.slot}, ${-gap} under ${esc(inc.name)} (${inc.ovr[f.slot]}).`) : `Backup ${f.slot}.`);
+    lines.push(`Fit ${fitNum(f)}: 90% of that gap, times how much the ${f.slot} spot counts.`);
+  }
+  const next = nextOwnPick(L, team.id);
+  if (next != null) {
+    const between = next - L.pickIndex - (L.picks[L.pickIndex]?.team === team.id ? 1 : 0);
+    const better = rank - 1;
+    lines.push(between > 0 ? `${between} pick${between === 1 ? '' : 's'} before your next turn${L.picks[L.pickIndex]?.team === team.id ? ' after this one' : ''}${better ? `; ${better} better ${f.slot}${better === 1 ? ' is' : 's are'} still on the board` : ''}.` : 'You pick again right after this.');
+  }
+  if (p.legendary) lines.push('Legendary.');
+  return `<div class="why"><h4>Why this player</h4>${lines.map((l) => `<p class="small">${l}</p>`).join('')}</div>`;
+}
+function nextOwnPick(L, teamId) {
+  for (let i = L.pickIndex + (L.picks[L.pickIndex]?.team === teamId ? 1 : 0); i < L.picks.length; i++) if (L.picks[i].team === teamId) return i;
+  return null;
+}
+
+// Your queue: the Pokémon you starred, in order, while they are still on the board.
+export function draftQueue(L = S.league, team = user()) {
+  const free = new Set(LG.available(L));
+  return (L.draftQueue ?? []).filter((id) => free.has(id));
+}
+export function queueTop(L = S.league, team = user()) {
+  return draftQueue(L, team).find((id) => !LG.blockReason(L, team, id)) ?? null;
+}
+export function toggleQueue(id) {
+  const L = S.league, q = (L.draftQueue ??= []);
+  const i = q.indexOf(id);
+  if (i >= 0) q.splice(i, 1); else q.push(id);
+  L.draftQueue = draftQueue(L);
+  save();
+}
+export function moveQueue(id, by) {
+  const L = S.league, q = (L.draftQueue = draftQueue(L));
+  const i = q.indexOf(id), j = i + by;
+  if (i < 0 || j < 0 || j >= q.length) return;
+  [q[i], q[j]] = [q[j], q[i]];
+  save();
+}
+// The pick the clock (or auto-draft) makes for you: the top of your queue, else the AI's choice.
+function autoChoice(L, teamId) {
+  const team = L.teams[teamId];
+  const q = team.user && !S.online ? queueTop(L, team) : null;
+  return q != null ? { id: q, slot: null } : LG.aiChoosePick(L, teamId);
+}
+
 function boardIds() {
   const L = S.league, me = user(), d = S.draft;
   const q = d.search.trim().toLowerCase();
-  // Drafted Pokémon leave the board, and so do ones this team can't take (type cap).
-  let ids = LG.available(L).filter((id) => !LG.blockReason(L, me, id) && (!q || P(id).name.toLowerCase().includes(q)) && (!d.type || P(id).types.includes(d.type)) && (!d.gen || P(id).gen === Number(d.gen)));
   const open = LG.openSlots(me);
-  const fit = (id) => {
-    if (d.rate !== 'fit') return { slot: d.rate, v: P(id).ovr[d.rate] };
-    const slots = open.length ? open : SLOT_KEYS;
-    const s = slots.reduce((a, b) => (SLOT[b].value * (P(id).ovr[b] - BASELINE[b]) > SLOT[a].value * (P(id).ovr[a] - BASELINE[a]) ? b : a));
-    return { slot: s, v: P(id).ovr[s], score: SLOT[s].value * (P(id).ovr[s] - BASELINE[s]) };
-  };
-  const rows = ids.map((id) => ({ id, fit: fit(id) }));
+  const need = typeof d.needs === 'string' && open.includes(d.needs) ? d.needs : null;
+  // Drafted Pokémon leave the board, and so do ones this team can't take (type cap). Open
+  // spots keeps the ones with an open slot among their best three positions.
+  const ids = LG.available(L).filter((id) => !LG.blockReason(L, me, id) && (!q || P(id).name.toLowerCase().includes(q)) && (!d.type || P(id).types.includes(d.type)) && (!d.gen || P(id).gen === Number(d.gen))
+    && (need ? playsAt(id, need) : !d.needs || !open.length || open.some((k) => playsAt(id, k))));
+  const rows = ids.map((id) => ({ id, fit: draftFit(me, id, { ...d, needs: need }) }));
   const key = d.sort;
-  rows.sort((a, b) => key === 'fit' ? (b.fit.score ?? b.fit.v) - (a.fit.score ?? a.fit.v) || b.fit.v - a.fit.v
+  rows.sort((a, b) => key === 'fit' ? b.fit.score - a.fit.score || b.fit.v - a.fit.v
     : key === 'name' ? P(a.id).name.localeCompare(P(b.id).name) : P(b.id).attrs[key] - P(a.id).attrs[key]);
   return rows;
 }
@@ -34,17 +134,71 @@ export function boardRowsHtml() {
   const L = S.league, me = user();
   const myTurn = LG.currentPick(L)?.team === me.id;
   const rows = boardIds();
-  if (!rows.length) return `<tr><td colspan="16" class="empty">No Pokémon match. Clear the search, type or generation filter.</td></tr>`;
+  if (!rows.length) return `<tr><td colspan="17" class="empty">No Pokémon match. Clear the search, type, generation or open-spots filter.</td></tr>`;
+  const rank = rankerFor(L, me);
+  const queued = new Set(draftQueue(L, me));
+  const canQueue = !S.online;
   return rows.map(({ id, fit }) => {
     const p = P(id);
     const block = LG.blockReason(L, me, id);
+    const why = fitShort(fit, rank(id, fit.slot));
     return `<tr class="${S.draft.sel === id ? 'sel' : ''}" data-act="select" data-id="${id}">
       <td class="pk">${sprite(id, 'sm')}<span><b>${esc(p.name)}</b>${p.legendary ? '<i class="leg">Legendary</i>' : ''}${roleHtml(p)}<span class="types">${typeChips(p.types)}</span></span></td>
-      <td class="fit"><span class="slot">${fit.slot}</span>${ovr(fit.v)}</td>
+      <td class="fit" title="${esc(why)}"><div class="fitcell"><b class="fitnum">${fitNum(fit)}</b><span class="fitsub"><span class="slot">${fit.slot}</span>${fit.rated ? '' : ovr(fit.v)}</span><span class="fitwhy">${esc(why)}</span></div></td>
       ${Object.keys(ATTRS).map((k) => `<td class="num a-${k}">${p.attrs[k]}</td>`).join('')}
-      <td><button class="btn tiny ${myTurn && !block ? 'primary' : ''}" data-act="draftbtn" data-id="${id}" ${myTurn && !block ? '' : 'disabled'} title="${block ? esc(block) : ''}">${block ? 'Blocked' : 'Draft'}</button></td>
+      <td class="acts">${canQueue ? `<button class="btn tiny ghost star ${queued.has(id) ? 'on' : ''}" data-act="queue" data-id="${id}" aria-pressed="${queued.has(id)}" title="${queued.has(id) ? 'Take off your queue' : 'Add to your queue'}">${queued.has(id) ? '★' : '☆'}</button>` : ''}<button class="btn tiny ${myTurn && !block ? 'primary' : ''}" data-act="draftbtn" data-id="${id}" ${myTurn && !block ? '' : 'disabled'} title="${block ? esc(block) : ''}">${block ? 'Blocked' : 'Draft'}</button></td>
     </tr>`;
   }).join('');
+}
+
+// Pinned over the board: the slots still open, each a filter.
+function needsHtml(team) {
+  const open = LG.openSlots(team), d = S.draft;
+  if (!open.length) return `<div class="needs"><span class="muted small">Every slot is filled. Fit now rates each Pokémon as a backup.</span></div>`;
+  return `<div class="needs"><span class="needs-l">Still need</span>
+    ${open.map((k) => `<button class="chip-btn ${d.needs === k ? 'on' : ''}" data-act="needslot" data-slot="${k}" aria-pressed="${d.needs === k}">${k}</button>`).join('')}
+    <label class="check small"><input type="checkbox" id="d-needs" ${d.needs ? 'checked' : ''}> Open spots only</label></div>`;
+}
+
+function queueHtml(L, team, myTurn) {
+  if (S.online) return '';
+  const q = draftQueue(L, team), top = queueTop(L, team);
+  const d = S.draft;
+  return `<div class="card queue"><h3>Your queue <span class="muted">${q.length || ''}</span></h3>
+    ${q.length ? `<ol class="qlist">${q.map((id, i) => {
+    const block = LG.blockReason(L, team, id);
+    const f = draftFit(team, id, { ...d, rate: 'fit', needs: false });
+    return `<li class="${block ? 'blocked' : ''}">${sprite(id, 'xs')}<button class="qname" data-act="select" data-id="${id}">${esc(P(id).name)}</button><span class="slot">${f.slot}</span>${ovr(f.v)}
+      <span class="qbtns"><button class="btn tiny ghost" data-act="queueup" data-id="${id}" ${i ? '' : 'disabled'} aria-label="Move ${esc(P(id).name)} up">↑</button><button class="btn tiny ghost" data-act="queuedown" data-id="${id}" ${i < q.length - 1 ? '' : 'disabled'} aria-label="Move ${esc(P(id).name)} down">↓</button><button class="btn tiny ghost" data-act="queue" data-id="${id}" aria-label="Take ${esc(P(id).name)} off your queue">✕</button></span></li>`;
+  }).join('')}</ol>` : '<p class="small muted">Star Pokémon on the board (☆) to line them up. When the pick clock runs out, or auto-draft picks for you, it takes the top of your queue first.</p>'}
+    ${q.length ? `<div class="actions"><button class="btn primary" data-act="draftqueue" ${myTurn && top != null ? '' : 'disabled'}>${top != null ? `Draft ${esc(P(top).name)}` : 'Nobody you can draft'}</button>
+      <label class="check small"><input type="checkbox" id="d-qauto" ${d.queueAuto ? 'checked' : ''}> Draft my queue when I'm on the clock</label></div>` : ''}
+  </div>`;
+}
+
+// Trade down while you are on the clock, and the swaps made so far this draft.
+function swapsHtml(L, myTurn) {
+  if (S.online) return '';
+  const season = L.season ?? 1;
+  const done = (L.draftDeals ?? []).filter((x) => x.season === season);
+  const offers = myTurn && !S.draft.autoAll ? TR.draftSwapOffers(L) : [];
+  if (!offers.length && !done.length) return '';
+  const lab = (i) => esc(TR.draftPickLabel(L, i, true));
+  const full = (i) => esc(TR.draftPickLabel(L, i));
+  return `<div class="card swaps"><h3>Trade down</h3>
+    ${offers.length ? `<p class="small muted">Teams picking soon will move up. Two picks each way, so your roster still fills.</p>
+    <ul class="swaplist">${offers.map((o) => `<li>${teamBadge(L.teams[o.team])}<span class="small">You get <b title="${full(o.get[0])}">${lab(o.get[0])}</b> and <b title="${full(o.get[1])}">${lab(o.get[1])}</b> for <b title="${full(o.give[0])}">${lab(o.give[0])}</b> and <b title="${full(o.give[1])}">${lab(o.give[1])}</b></span>
+      <button class="btn tiny" data-act="draftswap" data-team="${o.team}">Accept</button></li>`).join('')}</ul>` : ''}
+    ${done.length ? `<p class="small muted">${done.map((x) => `You sent ${lab(x.give[0])} and ${lab(x.give[1])} to ${esc(L.teams[x.team].abbr)} for ${lab(x.get[0])} and ${lab(x.get[1])}.`).join(' ')}</p>` : ''}
+  </div>`;
+}
+
+export function draftSwap(teamId) {
+  const L = S.league;
+  if (S.online || L.phase !== 'draft') return;
+  if (!TR.acceptDraftSwap(L, teamId)) { render(); return; }
+  clearTimers();
+  afterPick();
 }
 
 export function renderDraft() {
@@ -79,12 +233,13 @@ export function renderDraft() {
           <input id="d-search" type="search" placeholder="Search Pokémon" value="${esc(d.search)}" aria-label="Search Pokémon">
           <select id="d-type" aria-label="Type filter"><option value="">All types</option>${types.map((t) => `<option ${d.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
           <select id="d-gen" aria-label="Generation filter"><option value="">All gens</option>${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<option value="${n}" ${String(d.gen ?? '') === String(n) ? 'selected' : ''}>Gen ${n}</option>`).join('')}</select>
-          <select id="d-rate" aria-label="Rate at position"><option value="fit" ${d.rate === 'fit' ? 'selected' : ''}>Best open slot</option>${SLOT_KEYS.map((k) => `<option value="${k}" ${d.rate === k ? 'selected' : ''}>Rate at ${k}</option>`).join('')}</select>
+          <select id="d-rate" aria-label="Rate at position"><option value="fit" ${d.rate === 'fit' ? 'selected' : ''}>Fit: value to your roster</option>${SLOT_KEYS.map((k) => `<option value="${k}" ${d.rate === k ? 'selected' : ''}>Rate at ${k}</option>`).join('')}</select>
         </div>
+        ${needsHtml(me)}
         <div class="tablewrap">
           <table class="board-table">
             <thead><tr><th><button class="sort ${d.sort === 'name' ? 'on' : ''}" data-act="sort" data-key="name">Pokémon</button></th>
-            <th><button class="sort ${d.sort === 'fit' ? 'on' : ''}" data-act="sort" data-key="fit">Fit</button></th>
+            <th><button class="sort ${d.sort === 'fit' ? 'on' : ''}" data-act="sort" data-key="fit" title="${d.rate === 'fit' ? 'Value to your roster: the slot weight times the rating over a typical starter, at your best open slot' : `Rating at ${d.rate}`}">${d.rate === 'fit' ? 'Fit' : d.rate}</button></th>
             ${Object.keys(ATTRS).map((k) => head(k, ATTR_SHORT[k])).join('')}<th></th></tr></thead>
             <tbody id="board-body">${boardRowsHtml()}</tbody>
           </table>
@@ -92,6 +247,8 @@ export function renderDraft() {
       </div>
       <aside class="draft-side">
         <div class="card detail" id="detail">${detailHtml()}</div>
+        ${swapsHtml(L, myTurn)}
+        ${queueHtml(L, me, myTurn)}
         <div class="card">
           <h3>Your roster <span class="muted">${me.roster.length} of ${L.settings.rounds}</span></h3>
           ${rosterSlotsHtml(me)}
@@ -114,6 +271,14 @@ function rosterSlotsHtml(team) {
     ${team.bench.length ? `<p class="muted small">Bench: ${team.bench.map((id) => esc(P(id).name)).join(', ')}</p>` : ''}`;
 }
 
+// The type matchups against everyone rivals have drafted, as net verdicts with the names.
+function rivalEdgeHtml({ good, bad, total }) {
+  if (!total) return '<p class="small muted">Type matchups show here once rivals have drafted.</p>';
+  const names = (ids) => ids.slice(0, 3).map((x) => esc(P(x).name)).join(', ') + (ids.length > 3 ? ` and ${ids.length - 3} more` : '');
+  return `<p class="small">Against the ${total} Pokémon on rival rosters: <span class="good">you have the edge on <b>${good.length}</b></span>${good.length ? ` (${names(good)})` : ''},
+    <span class="bad">they have the edge on <b>${bad.length}</b></span>${bad.length ? ` (${names(bad)})` : ''}.</p>`;
+}
+
 export function detailHtml() {
   const id = S.draft.sel;
   if (id == null || !PLAYERS[id]) return `<p class="muted">Select a Pokémon on the board to see its positions, ability, power and type matchups.</p>`;
@@ -127,10 +292,12 @@ export function detailHtml() {
   const s = p.stats;
   return `<div class="dhead">${sprite(id, 'lg')}<div><h3>${esc(p.name)}</h3>${roleHtml(p)}<div class="types">${typeChips(p.types)}</div>
       <p class="small muted">Gen ${p.gen} · ${(p.height / 10).toFixed(1)} m · ${(p.weight / 10).toFixed(1)} kg</p></div></div>
+    ${taken ? '' : whyHtml(L, me, id)}
+    ${typeCapHtml(L, me, p)}
     <p class="small"><b>${esc(p.ability)}.</b> ${esc(abilityText(id))}</p>
     ${p.types.map((t) => `<p class="small"><b>${t} trait.</b> ${TYPE_TRAITS[t].text}</p>`).join('')}
     ${powerHtml(id)}
-    <p class="small">Super effective against <b>${edge.n}</b> of ${edge.total} Pokémon on rival rosters.</p>
+    ${rivalEdgeHtml(edge)}
     <h4>Best positions</h4>
     <ul class="best">${p.best.slice(0, 3).map((k) => `<li><span class="slot">${k}</span>${bar(p.ovr[k])}${ovr(p.ovr[k])}</li>`).join('')}</ul>
     <p class="small muted mono">HP ${s.hp} · Atk ${s.atk} · Def ${s.def} · SpA ${s.spa} · SpD ${s.spd} · Spe ${s.spe}</p>
@@ -138,6 +305,18 @@ export function detailHtml() {
       <select id="d-slot" aria-label="Draft into slot">${open.map((k) => `<option value="${k}" ${k === bestOpen ? 'selected' : ''}>${k} · ${p.ovr[k]}</option>`).join('')}${open.length === 0 ? '<option value="BENCH">Bench</option>' : ''}</select>
       <button class="btn primary" data-act="draftsel" ${myTurn && !block ? '' : 'disabled'}>${block ? esc(block) : myTurn ? `Draft ${esc(p.name)}` : 'Wait for your pick'}</button>
     </div>`}`;
+}
+
+// The primary-type cap, and how many of your Pokémon share each of this one's types either way,
+// so a dual-type stack the cap lets through still shows.
+function typeCapHtml(L, team, p) {
+  const prim = (t) => team.roster.filter((x) => P(x).types[0] === t).length;
+  const second = (t) => team.roster.filter((x) => P(x).types[1] === t).length;
+  const parts = p.types.map((t, i) => {
+    const a = prim(t), b = second(t);
+    return `${t}: ${a} primary${b ? `, ${b} more with ${t} second` : ''}${i === 0 && L.settings.typeCap ? ` (cap 4 primary)` : ''}`;
+  });
+  return `<p class="small muted">Your roster · ${parts.join(' · ')}</p>`;
 }
 
 // Online: the server's pick clock, counted down here between updates.
@@ -165,13 +344,13 @@ export function draftTick() {
   if (!L || L.phase !== 'draft' || S.screen !== 'draft') return;
   const pk = LG.currentPick(L);
   const mine = L.teams[pk.team].user;
-  if (!mine || S.draft.autoAll) {
+  if (!mine || S.draft.autoAll || (S.draft.queueAuto && queueTop(L) != null)) {
     // AI picks come quicker in a bigger league, so the wait between your picks stays about the same.
     timers.draft = setTimeout(() => {
-      const c = LG.aiChoosePick(L, pk.team);
+      const c = autoChoice(L, pk.team);
       LG.makePick(L, c.id, c.slot);
       afterPick();
-    }, mine ? 120 : Math.max(90, Math.round(260 * 8 / L.teams.length)));
+    }, mine ? (S.draft.autoAll ? 120 : 700) : Math.max(90, Math.round(260 * 8 / L.teams.length)));
     return;
   }
   S.draft.clock = 60;
@@ -182,7 +361,7 @@ export function draftTick() {
       if (el) el.textContent = S.draft.clock;
       if (S.draft.clock <= 0) {
         clearInterval(timers.clock);
-        const c = LG.aiChoosePick(L, pk.team);
+        const c = autoChoice(L, pk.team);
         LG.makePick(L, c.id, c.slot);
         afterPick();
       }
@@ -198,7 +377,7 @@ export function draftSkip() {
   while (L.phase === 'draft') {
     const pk = LG.currentPick(L);
     if (L.teams[pk.team].user && !S.draft.autoAll) break;
-    const c = LG.aiChoosePick(L, pk.team);
+    const c = autoChoice(L, pk.team);
     LG.makePick(L, c.id, c.slot);
   }
   afterPick();
@@ -206,7 +385,6 @@ export function draftSkip() {
 function afterPick() {
   save();
   if (S.league.phase !== 'draft') { S.draft.autoAll = false; setScreen('grades'); return; }
-  if (S.draft.sel != null && !LG.available(S.league).includes(S.draft.sel)) { /* keep showing as drafted */ }
   render();
   draftTick();
 }

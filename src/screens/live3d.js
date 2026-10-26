@@ -22,31 +22,39 @@ import { boothAfter } from '../broadcast.js';
 import { boothAfter as callAfter, boothFlow, boothHush, boothLive, boothReset, boothReview, captionHtml } from './booth.js';
 import { afterPlay as broadcastAfter, afterReview as broadcastReview, layersHtml, onCall as broadcastCall, onFlow as broadcastFlow, resetBroadcast } from './broadcast.js';
 
+// The controls card: the eight keys a first game needs, and every other key behind More.
 function keysHelp() {
-  return `<div class="keygrid">
-    <span><kbd>1</kbd>-<kbd>8</kbd> between plays: call that play on the open page · <kbd>←</kbd> <kbd>→</kbd> turn the page</span>
-    <span><kbd>Enter</kbd> between plays: call the play that fits the down · <kbd>R</kbd> call your last call again</span>
-    <span><kbd>Space</kbd> after the whistle: skip the result and the walk back to the line</span>
-    <span><kbd>C</kbd> change camera (gameplay, tactical, broadcast, player) · <kbd>M</kbd> menu · <kbd>U</kbd> mute · <kbd>Esc</kbd> change the play</span>
-    <span><kbd>Space</kbd> snap (hurries everyone to the line), juke with the ball, dive to tackle</span>
+  return `<div class="keygrid keys8">
+    <span><kbd>1</kbd>-<kbd>8</kbd> call a play · <kbd>Enter</kbd> call the one that fits</span>
+    <span><kbd>H</kbd> open or fold the full call sheet</span>
+    <span><kbd>Space</kbd> snap, then juke with the ball or dive to tackle</span>
     <span><kbd>W A S D</kbd> or arrows: move your player</span>
     <span><kbd>Shift</kbd> sprint</span>
+    <span><kbd>1</kbd>-<kbd>5</kbd> throw to that receiver</span>
+    <span><kbd>Esc</kbd> change the play once you are lined up</span>
+    <span><kbd>M</kbd> menu · <kbd>?</kbd> this card</span>
+  </div>
+  <p class="small muted">Leave the keys alone and your player runs on autopilot.</p>
+  <details class="keys-more"><summary>More controls</summary>
+  <div class="keygrid">
+    <span><kbd>←</kbd> <kbd>→</kbd> between plays: turn the page · <kbd>R</kbd> call your last call again</span>
+    <span><kbd>Space</kbd> after the whistle: skip the result and the walk back to the line</span>
+    <span><kbd>C</kbd> change camera (gameplay, tactical, broadcast, player) · <kbd>U</kbd> mute</span>
     <span><kbd>1</kbd>-<kbd>5</kbd> throw: tap for touch, hold for a bullet, <kbd>Shift</kbd> + number for a lob</span>
     <span>Hold a direction as you throw to place the ball: up leads him, down brings it back, sideways away from the defender</span>
     <span><kbd>Space</kbd> while the ball is in the air: go up and attack it</span>
     <span><kbd>T</kbd> throw it away</span>
-    <span><kbd>E</kbd> truck through a tackler</span>
-    <span><kbd>R</kbd> spin move</span>
+    <span><kbd>E</kbd> truck through a tackler · <kbd>R</kbd> spin move</span>
     <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
     <span>At the line on offense: <kbd>V</kbd> audible, <kbd>B</kbd> hot route (on a run: flip it to the other side), <kbd>N</kbd> motion, then a number to pick</span>
     <span><kbd>B</kbd> on the play sheet or at the line: flip the runs to the other side</span>
     <span>At the line on defense: <kbd>V</kbd> shade the coverage, <kbd>B</kbd> show blitz, <kbd>N</kbd> back out</span>
-    <span><kbd>I</kbd> on the play sheet: type edges and their tendencies</span>
+    <span><kbd>I</kbd> on the play sheet: type edges and their tendencies · <kbd>X</kbd> every play at once</span>
     <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
-    <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play · <kbd>?</kbd> this list</span>
+    <span><kbd>L</kbd> between plays: play-by-play, box score, drives and lineup</span>
+    <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play</span>
     <span><kbd>G</kbd> between plays: challenge the last call (one a half; a lost challenge costs a timeout) · <kbd>J</kbd> the film room</span>
     <span><kbd>O</kbd> in Watch mode: call the next play yourself (press again to hand it back)</span>
-    <span>Leave the keys alone and your player runs on autopilot.</span>
   </div>
   <h4>Gamepad</h4>
   <div class="keygrid">
@@ -61,7 +69,7 @@ function keysHelp() {
     <span>Player 2 (away): arrows move · <kbd>Right Shift</kbd> sprint · <kbd>Enter</kbd> snap, juke, dive · <kbd>L</kbd> truck · <kbd>K</kbd> spin · <kbd>.</kbd> switch</span>
     <span>Whoever has the ball throws with <kbd>1</kbd>-<kbd>5</kbd> and <kbd>T</kbd>. The offense calls its play first, then the defense, and only the offense can snap.</span>
     <span>One gamepad plays for player 2; with two, the first is player 1 and the second player 2.</span>
-  </div>`;
+  </div></details>`;
 }
 
 // ---------- the live 3D game ----------
@@ -108,6 +116,8 @@ function setFlow(st) {
 const setState = setFlow;
 export let stage = null;
 let stageWrap = null;
+// Challenge, Film room and Replay: in the call sheet's header while it is up, over the field otherwise.
+let hudActs = null;
 // Hooks for the browser tests (test/browser.mjs, test/film.mjs): read-only views of the game's
 // state, the foul rates so a test can force a flag, and the officials' miss rates and the film
 // room so one can force a missed call and open the tape, and the AI's call, so a test can
@@ -147,6 +157,7 @@ export function ensureStage() {
   stageWrap.prepend(stage.el);
   // Click (or tap) one of your defenders on the field to take him over, like Q does.
   stage.el.addEventListener('pointerdown', (e) => { if (e.button === 0 && clickSwitch(e.clientX, e.clientY)) e.preventDefault(); });
+  hudActs = stageWrap.querySelector('.hud-acts');
   bindTouch(stageWrap);
   if (!L3.raf) L3.raf = requestAnimationFrame(loop);
 }
@@ -156,6 +167,7 @@ export function mountStage() {
   if (!slot || !stageWrap) return;
   slot.prepend(stageWrap);
   fitStage();
+  syncOverlays();
   stage.resize();
   // A re-render during the replay (or in the film room) keeps showing it, not the next play lining up.
   if (FILM.open && FILM.lp) stage.setPlay(FILM.lp);
@@ -177,6 +189,20 @@ function fitDock() {
   stage?.setInset(sheet ? sheet.offsetHeight + 10 : 0);
   // The result card sits just above the call sheet rather than on top of its plays.
   stageWrap?.style.setProperty('--dock', `${sheet && !FILM.open ? sheet.offsetHeight + 10 : 0}px`);
+  // The menu or the game details drawer covers the right of the field: the picture slides left
+  // to center in what is left (on a narrow screen the drawer covers it all, so it stays put).
+  const side = document.querySelector('.game.g3d .gmenu, .game.g3d .gdrawer');
+  const w = stageWrap?.clientWidth ?? 0;
+  stage?.setSideInset?.(side && side.offsetWidth < w * 0.6 ? side.offsetWidth + 12 : 0);
+  fitCaption();
+}
+// The commentary caption (and the details drawer) hang under the scorebug, however many rows
+// the bug has wrapped to.
+function fitCaption() {
+  const bug = document.getElementById('bcast'), slot = document.getElementById('stage-slot');
+  if (!bug || !slot) return;
+  const y = `${bug.offsetTop + bug.offsetHeight + 6}px`;
+  if (slot.style.getPropertyValue('--bug-b') !== y) slot.style.setProperty('--bug-b', y);
 }
 
 // Between plays, both teams get up and jog from where the last play ended to the new spot.
@@ -219,9 +245,9 @@ export function startLive(off, def, opts) {
   L3.paused = false;
   L3.off = off; L3.def = def; L3.acc = 0; L3.deadT = 0; L3.ev = 0; L3.committed = null;
   L3.autoSnap = opts.autoSnap ?? null;
-  L3.pclock = Math.max(L3.pclock, 10);
+  L3.pclock = Math.max(L3.pclock, 10); L3.pcHold = false;
   L3.edges.clear(); L3.hold = null; L3.lob = null;
-  S.menuOpen = false; S.psPick = null;
+  S.menuOpen = false; S.detailsOpen = false; S.psPick = null;
   hideBanner();
   stage.setPlay(L3.lp);
   setFlow(L3.lp.set ? 'PRE_SNAP' : 'FORMATION_SETUP');
@@ -245,6 +271,8 @@ export function doSnap() {
   // The snap ends the last play's challenge window.
   if (L3.review) L3.review.done = true;
   snap(lp);
+  // The first snap of a career with the ball in your hands (see pclockHeld).
+  if (!S.snapped && lp.user === lp.o && !lp.kick && !twoPlayer()) { S.snapped = true; savePrefs(); }
   L3.autoSnap = null;
   S.psPick = null;
   render();
@@ -326,7 +354,7 @@ function commitPlay() {
   L3.hold = lp.end?.how === 'td' ? 3.2 : big ? 2.6 : lp.end?.how === 'incomplete' ? 1.6 : 2.0;
   L3.tickerUntil = performance.now() + 6500;
   if (b) for (const i of [0, 1]) if (g.score[i] !== b.score[i]) L3.scoreFlash[i] = performance.now() + 2200;
-  L3.pclock = 40;
+  L3.pclock = 40; L3.pcHold = false;
   save();
   render();
   showBanner(resultBanner(entry, lp, b));
@@ -385,7 +413,7 @@ export function afterLivePlay(entry) {
 export function resetBetweenGames() {
   L3.lp = null; L3.preview = null; L3.spots = null; L3.rec = null; L3.before = null; L3.committed = null; L3.review = null;
   clearReel();
-  L3.pclock = 40; L3.paused = false; L3.resultUntil = 0; L3.resetUntil = 0; L3.tickerUntil = 0; L3.scoreFlash = [0, 0];
+  L3.pclock = 40; L3.pcHold = false; L3.paused = false; L3.resultUntil = 0; L3.resetUntil = 0; L3.tickerUntil = 0; L3.scoreFlash = [0, 0];
   L3.deadT = 0; L3.hold = 0; L3.lob = null; L3.snapWant = false; L3.autoSnap = null; L3.keys.clear(); L3.edges.clear();
   if (L3.replay) stopReplay();
   hideBanner();
@@ -835,8 +863,12 @@ function loop(now) {
         }
       } else clearInput();
       if (L3.autoSnap != null && lp.set) { L3.autoSnap -= dt; if (L3.autoSnap <= 0) doSnap(); }
-      // Play clock: when it runs out on a lined-up play, the ball is snapped.
-      if (lp.set && L3.autoSnap == null) { L3.pclock = Math.max(0, L3.pclock - dt); if (L3.pclock <= 0) doSnap(); }
+      // Play clock: when it runs out on a lined-up scrimmage play it is a delay of game, never a
+      // snap with nobody on the stick (see playClockOut); a kickoff or a try is kicked.
+      if (lp.set && L3.autoSnap == null && g && !pclockHeld(g)) {
+        L3.pclock = Math.max(0, L3.pclock - dt);
+        if (L3.pclock <= 0) { if (g.phase === 'play') playClockOut(); else doSnap(); }
+      }
     } else {
       L3.acc += dt;
       while (L3.acc >= DT) {
@@ -891,7 +923,7 @@ function loop(now) {
     }
     // The play clock runs while the call is yours; at :00 it is a delay of game on offense, or
     // the fitting call is made for you (see playClockOut).
-    if (g && !g.final && needsUser(g) && !S.busy && !S.helpOpen && !S.menuOpen && !L3.replay && !FILM.open && L3.flow === 'PLAY_SELECTION') {
+    if (g && !g.final && needsUser(g) && !pclockHeld(g) && L3.flow === 'PLAY_SELECTION') {
       L3.pclock = Math.max(0, L3.pclock - dt);
       if (L3.pclock <= 0) { L3.pclock = 40; playClockOut(); }
     }
@@ -933,11 +965,29 @@ function loop(now) {
   if (call && call.textContent !== ct) call.textContent = ct;
   if (L3.flashT && now > L3.flashT) { L3.flashT = 0; const f = document.getElementById('hud-flash'); if (f) f.className = 'hud-flash'; }
   syncOverlays();
+  fitCaption();
   stage.frame(now, sim && sim.phase !== undefined && !hold ? Math.min(1, L3.acc / DT) : 1);
   if (S.debug) debugHud();
 }
 
 // ---------- pause, replay and the controls card ----------
+// The play clock stands still while anything is open over the call (the controls card, the menu,
+// the details drawer, the Edges board, the full playbook, a picker at the line, sound, the film
+// room, a replay, a pause), after a delay of game until the next call, and on Pro and Legend
+// for the first offensive snap of a career (Rookie makes the fitting call for you instead).
+export function pclockHeld(g) {
+  if (S.busy || S.helpOpen || S.menuOpen || S.detailsOpen || S.csScout || S.csAll || S.soundOpen || S.skipOpen || S.psPick) return true;
+  if (L3.paused || L3.replay || FILM.open || L3.pcHold) return true;
+  return !S.snapped && !twoPlayer() && g.phase === 'play' && g.poss === userSide() && S.difficulty !== 'rookie';
+}
+// A play lined up and taken back without a snap (a delay of game): the players stay where they
+// stand and the call sheet comes back.
+export function takeBack() {
+  const lp = L3.lp;
+  if (!lp || lp.phase !== 'pre') return;
+  L3.spots = worldSpots(lp); L3.preview = null; L3.lp = null; L3.rec = null;
+  L3.autoSnap = null; L3.snapWant = false; S.psPick = null; S.coachDown = false;
+}
 function endKey(lp) { return `${lp.end?.how ?? lp.phase}@${(lp.spotX ?? lp.ball.x).toFixed(2)},${lp.ball.y.toFixed(2)}`; }
 // A real pause: P, Esc or the menu stop everything on the field (a play lined up or live, the
 // walk to the line) and the play clock with it (L3.paused is read by the play clock too). Between
@@ -1087,6 +1137,8 @@ function settlePreview() {
 export const fieldBusy = () => !!L3.replay || FILM.open;
 export function closeHelp() { S.helpOpen = false; S.seenHelp = true; savePrefs(); syncOverlays(); }
 export function syncOverlays() {
+  const home = document.querySelector('.game.g3d .callsheet .cs-acts') ?? stageWrap;
+  if (hudActs && home && hudActs.parentNode !== home) home.appendChild(hudActs);
   const set = (id, show) => { const el = document.getElementById(id); if (el && el.hidden === show) el.hidden = !show; };
   set('pause-ov', L3.paused && L3.lp?.phase !== 'dead' && !!S.game && !S.game.final);
   set('replay-badge', !!L3.replay || FILM.open);
@@ -1095,6 +1147,9 @@ export function syncOverlays() {
   set('replay-btn', replayReady() && L3.flow === 'PLAY_SELECTION');
   set('film-btn', filmReady() && !L3.replay && L3.flow === 'PLAY_SELECTION');
   set('chal-btn', challengeReady() && (L3.flow === 'PLAY_SELECTION' || L3.flow === 'RESET_FORMATION'));
+  const help = document.getElementById('help-ov');
+  // A two-player game opens the card with the two-player keys showing.
+  if (help && help.hidden === !!S.helpOpen) { const more = help.querySelector('.keys-more'); if (more) more.open = twoPlayer(); }
   set('help-ov', !!S.helpOpen);
 }
 
@@ -1141,6 +1196,12 @@ export function setDebug(on) {
   if (!on) { const el = document.getElementById('dbg-hud'); if (el) el.innerHTML = ''; }
   render();
 }
+// The game details (play-by-play, box score, drives, lineup) as a drawer over the field.
+export function toggleDetails(open = !S.detailsOpen) {
+  S.detailsOpen = open;
+  if (open) S.menuOpen = false;
+  render();
+}
 export function setCamera(k) { S.cam = k; stage?.setCameraMode(k); savePrefs(); if (S.menuOpen) render(); }
 
 export function onKey(e, down) {
@@ -1184,16 +1245,17 @@ export function onKey(e, down) {
     if (code === 'KeyP' && (L3.paused || (L3.lp && L3.lp.phase !== 'dead'))) { e.preventDefault(); togglePause(); return; }
     if (code === 'KeyO' && spectating()) { e.preventDefault(); toggleTakeOver(); return; }
     if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
-    if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; render(); return; }
+    if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; if (S.menuOpen) S.detailsOpen = false; render(); return; }
+    if (code === 'KeyL' && !L3.lp) { e.preventDefault(); toggleDetails(); return; }
     if (code === 'Backquote') { e.preventDefault(); setDebug(!S.debug); return; }
-    if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; render(); return; }
+    if (code === 'KeyH' && !L3.lp) { e.preventDefault(); S.csFold = !S.csFold; savePrefs(); render(); return; }
     // Only while the call sheet is up: a T mashed to throw the ball away as the whistle blows
     // must not burn a timeout.
     if (code === 'KeyT' && !L3.lp && !L3.replay) { e.preventDefault(); if (L3.flow === 'PLAY_SELECTION') userTimeout(); return; }
     if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
     if (code === 'KeyB' && !L3.lp) { e.preventDefault(); S.runFlip = !S.runFlip; render(); return; }
     if (code === 'Escape') {
-      if (S.menuOpen) { S.menuOpen = false; render(); return; }
+      if (S.menuOpen || S.detailsOpen) { S.menuOpen = false; S.detailsOpen = false; render(); return; }
       if (L3.paused || L3.lp?.phase === 'live') { e.preventDefault(); togglePause(); return; }
       if (L3.lp?.phase === 'pre' && !S.coachDown) { recall(); return; }
       // Between plays: pause the call sheet (and its play clock).
