@@ -61,8 +61,8 @@ export function download(name, text, type) {
 export function powerHtml(id) {
   const w = powerText(id);
   if (!w) return '<p class="small muted">No power.</p>';
-  return `<div class="pw-desc" style="--pw:${powerColor(id)}"><p class="small"><b>Power: ${esc(w.name)}</b>${w.signature ? ' <em class="pw-sig">Signature</em>' : ''} <span class="muted">(at ${esc(w.group)})</span></p>
-    <p class="small">${esc(w.text)}</p><p class="small muted">Zones in after ${esc(w.zone)}; lost on ${esc(w.lose)}.</p></div>`;
+  return `<div class="pw-desc" style="--pw:${powerColor(id)}"><p class="small"><b>Power: ${esc(w.name)}</b>${w.signature ? ' <em class="pw-sig">Signature</em>' : ''} <span class="pw-at">${esc(w.at)}</span></p>
+    <p class="small"><b>Boost:</b> ${esc(w.text)}</p><p class="small"><b>Zones in after</b> ${esc(w.zone)} · <b>lost on</b> ${esc(w.lose)}</p></div>`;
 }
 // A small tag for a lineup spot: the power's name, dimmed where it does not work.
 export function powerTag(id, slot) {
@@ -74,11 +74,17 @@ export function powerTag(id, slot) {
 // The powers between plays: your carriers with their meters, and the other side's that are active.
 export function powersRow(g, us) {
   if (!g.pw) return '';
+  // Each chip says whose power it is and how close it is; hovering, focusing or tapping it opens
+  // the card: what it does, the trigger with the count so far, and what turns it off.
   const chip = (ti, r) => {
-    const m = r.meter;
+    const m = r.meter, w = r.power, name = PLAYERS[r.id].name, team = g.teams[ti].abbr;
     const pips = m.need <= 8 ? Array.from({ length: m.need }, (_, i) => `<i class="${i < m.have ? 'on' : ''}"></i>`).join('') : `<i class="num">${m.have}/${m.need}</i>`;
-    return `<span class="pw-chip ${r.active ? 'on' : ''} ${ti === us ? 'mine' : 'theirs'}" style="--pw:${powerColor(r.id)}" title="${esc(`${PLAYERS[r.id].name}, ${r.power.name}: ${r.power.text} ${m.label}.`)}">
-      <b>${esc(PLAYERS[r.id].name)}</b> ${esc(r.power.name)}${r.active ? '' : `<span class="pw-pips" aria-label="${esc(m.label)}">${pips}</span>`}</span>`;
+    const status = r.active ? `In the zone. Lost on ${w.lose.label}${m.need > 1 ? ` (${m.have} of ${m.need})` : ''}.`
+      : `Zones in after ${w.zone.label}: ${m.have} of ${m.need} so far.`;
+    const pop = `<span class="pw-pop" role="tooltip"><b>${esc(name)}</b> <span class="muted">${esc(team)} ${esc(r.slot ?? '')}${ti === us ? ' · yours' : ''}</span>
+      <span class="pw-pname">${esc(w.name)}${w.signature ? ' <em class="pw-sig">Signature</em>' : ''}</span><span>${esc(w.text)}</span><span class="pw-st">${esc(status)}</span></span>`;
+    return `<span class="pw-chip ${r.active ? 'on' : ''} ${ti === us ? 'mine' : 'theirs'}" tabindex="0" style="--pw:${powerColor(r.id)}" aria-label="${esc(`${name} (${team}), ${w.name}: ${w.text} ${status}`)}">
+      <b>${esc(name)}</b> ${esc(w.name)}${r.active ? '' : `<span class="pw-pips" aria-hidden="true">${pips}</span>`}${pop}</span>`;
   };
   const mine = sidePowers(g, us).filter((r) => !r.dormant).slice(0, 5).map((r) => chip(us, r));
   const theirs = sidePowers(g, 1 - us).filter((r) => r.active).slice(0, 3).map((r) => chip(1 - us, r));

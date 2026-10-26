@@ -10,6 +10,7 @@ import { P, esc, ovr, sprite, teamBadge, user } from '../ui.js';
 import { dealSideHtml, tradeCardHtml, tradeKickingHtml, tradeMovesHtml } from './draft.js';
 import { latestPower } from '../weekly.js';
 import { send as netSend } from '../net.js';
+import { capSpace, leagueCap, payroll, salary } from '../freeagency.js';
 
 const STANCE = { contend: 'Contending', middle: 'In the middle', rebuild: 'Rebuilding' };
 
@@ -40,6 +41,7 @@ export function renderTrades() {
         ${open ? builderHtml(L, me, D) : '<div class="card"><h3>Trades are closed</h3><p class="muted">The trade deadline has passed. The desk opens again after next season\'s draft.</p></div>'}
       </div>
       <div class="col">
+        ${payrollHtml(L, me, open ? L.teams[D.team] : null)}
         ${picksHtml(L, me)}
         <div class="card"><h3>Around the league</h3><ul class="tradelog">${order.filter((id) => !L.teams[id].user).map((id) => {
           const t = L.teams[id], s = TR.teamStance(L, id, order), rec = st.find((r) => r.id === id);
@@ -77,7 +79,7 @@ function rosterList(L, team, side, chosen) {
     const hurt = L.injuries?.[id];
     const dis = !on && full;
     return `<li><label class="${on ? 'on' : ''} ${dis ? 'dis' : ''}"><input type="checkbox" data-desk="${side}" value="${id}" ${on ? 'checked' : ''} ${dis ? 'disabled' : ''}>
-      ${sprite(id, 'xs')}<span class="pn">${esc(P(id).name)}</span><span class="tag">${slotOf(id) ?? 'BN'}</span>${ovr(P(id).ovr[k])}${hurt ? ' <span class="cond hurt">Hurt</span>' : ''}</label></li>`;
+      ${sprite(id, 'xs')}<span class="pn">${esc(P(id).name)}</span><span class="tag">${slotOf(id) ?? 'BN'}</span>${ovr(P(id).ovr[k])}<span class="sal">$${salary(L, id)}M</span>${hurt ? ' <span class="cond hurt">Hurt</span>' : ''}</label></li>`;
   }).join('')}</ul>`;
 }
 
@@ -94,6 +96,7 @@ function verdictHtml(L, ev, D) {
   return `<div class="trade"><div class="tswap">${dealSideHtml(L, ev.deal.get, ev.deal.getPicks, 'You get')}<span class="at">for</span>${dealSideHtml(L, ev.deal.send, ev.deal.sendPicks, 'You send')}</div></div>
     <div class="verdict ${ev.verdict}"><p><b>${esc(TR.verdictText(L, ev))}</b></p>
       <p class="small">Your best lineup ${g > 0 ? `improves by ${g}` : g < 0 ? `drops by ${-g}` : 'stays the same'} points${ev.deal.getPicks.length || ev.deal.sendPicks.length ? ', before the picks' : ''}.</p>
+      ${ev.you.payroll != null ? `<p class="small">Payroll after: you $${ev.you.payroll}M (${capLine(L, ev.you.payroll)}), ${esc(L.teams[ev.deal.team].abbr)} $${ev.them.payroll}M (${capLine(L, ev.them.payroll)}).</p>` : ''}
       ${moves}${tradeKickingHtml(L, ev.deal)}</div>
     ${C ? `<div class="verdict yes"><p class="small">${esc(L.teams[C.deal.team].name)} would take it like this:</p>
       <div class="trade"><div class="tswap">${dealSideHtml(L, C.deal.get, C.deal.getPicks, 'You get')}<span class="at">for</span>${dealSideHtml(L, C.deal.send, C.deal.sendPicks, 'You send')}</div></div>
@@ -103,6 +106,19 @@ function verdictHtml(L, ev, D) {
       ${ev.verdict !== 'yes' && !ev.problems.length && !C ? '<button class="btn" data-act="deskcounter">What would it take?</button>' : ''}
       <button class="btn ghost" data-act="deskclear">Clear</button>
     </div>`;
+}
+
+// Season payroll: salaries count from week 1, against the league cap (see trades.js).
+const capLine = (L, pay) => { const room = leagueCap(L) - pay; return room >= 0 ? `$${room}M under the cap` : `$${-room}M over the cap`; };
+function payrollHtml(L, me, them) {
+  const cap = leagueCap(L);
+  const row = (t) => {
+    const pay = payroll(L, t), pct = Math.min(100, Math.round((pay / cap) * 100));
+    return `<li>${teamBadge(t)} <span class="pn">${esc(t.user ? 'You' : t.name)}</span> <b>$${pay}M</b> <span class="small muted">${capSpace(L, t) >= 0 ? `$${capSpace(L, t)}M space` : `$${-capSpace(L, t)}M over`}</span>
+      <span class="capbar" aria-hidden="true"><i style="width:${pct}%"></i></span></li>`;
+  };
+  return `<div class="card payroll"><h3>Payroll <span class="muted small">Cap $${cap}M</span></h3><ul class="tradelog">${row(me)}${them ? row(them) : ''}</ul>
+    <p class="small muted">Every Pokémon's salary counts from week 1. A trade can't take a team over the cap unless it cuts its payroll.</p></div>`;
 }
 
 function picksHtml(L, me) {

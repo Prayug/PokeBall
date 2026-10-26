@@ -16,6 +16,8 @@ import { TYPE_COLORS } from './types.js';
 // Where a power works: the position group of the slot the Pokémon plays.
 export const POWER_GROUPS = { QB: 'QB', RB: 'skill', WR: 'skill', TE: 'skill', OL: 'line', DL: 'rush', LB: 'cover', CB: 'cover', S: 'cover' };
 export const GROUP_NAMES = { QB: 'quarterback', skill: 'running back, receiver or tight end', line: 'offensive line', rush: 'defensive line or outside linebacker', cover: 'linebacker or secondary' };
+// The same groups as position abbreviations, for cards and tooltips.
+export const GROUP_SHORT = { QB: 'QB', skill: 'RB, WR or TE', line: 'OL', rush: 'DL or OLB', cover: 'LB, CB or S' };
 export const groupOfSlot = (slot) => (slot === 'OLB' ? 'rush' : POWER_GROUPS[SLOT[slot]?.group] ?? null);
 
 // One play, from the side of one Pokémon: `d` its own box-score line for the play, `P` the play
@@ -369,12 +371,12 @@ export function powerMeter(g, ti, id) {
 // Every power carrier on a side's lineup, active first, for the HUD and the game screen.
 export function sidePowers(g, ti) {
   const ids = [...new Set(Object.values(g.teams[ti].lineup))].filter((id) => POWER_OF[id]);
-  const rows = ids.map((id) => ({ id, power: POWER_OF[id], meter: powerMeter(g, ti, id), active: !!activePower(g, ti, id),
+  const rows = ids.map((id) => ({ id, slot: slotOf(g, ti, id), power: POWER_OF[id], meter: powerMeter(g, ti, id), active: !!activePower(g, ti, id),
     dormant: groupOfSlot(slotOf(g, ti, id)) !== POWER_OF[id].group }));
   return rows.sort((a, b) => (b.active - a.active) || (b.meter.have / b.meter.need - a.meter.have / a.meter.need));
 }
 export function powerText(id) {
   const w = POWER_OF[id];
   if (!w) return null;
-  return { name: w.name, signature: !!w.signature, group: GROUP_NAMES[w.group], text: w.text, zone: w.zone.label, lose: w.lose.label };
+  return { name: w.name, signature: !!w.signature, group: GROUP_NAMES[w.group], at: GROUP_SHORT[w.group], text: w.text, zone: w.zone.label, lose: w.lose.label };
 }

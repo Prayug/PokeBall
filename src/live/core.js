@@ -1,8 +1,7 @@
 // The live play's shared core: field constants, geometry, movement, blocking help, events and
 // the end of the play. Everything under src/live/ and src/live.js builds on this module, and it
 // imports none of them, so the live modules form a tree with no import cycles.
-import { traitMod } from '../traits.js';
-import { chance, clamp, fumbleCheck, nm, st } from '../engine.js';
+import { clamp, nm, st } from '../engine.js';
 
 // How a kick's result is read (src/live/kicks.js registers it), so this module needs no import
 // back into the kicking game.
@@ -471,6 +470,7 @@ export function finish(lp, end) {
 }
 
 export function buildResult(lp, end) {
+  if (lp.fumble && end.how !== 'flag') return fumbleResult(lp, end);
   const g = lp.g, o = lp.o, d = lp.d;
   const qb = lp.off.QB;
   const stats = lp.stats;
@@ -511,18 +511,8 @@ export function buildResult(lp, end) {
   if (end.how === 'sack') {
     const qs = st(g, o, qb.id);
     qs.sk++; st(g, d, tackler.id).dsk++; st(g, d, tackler.id).tk++; g.teams[o].team.sacks++;
-    let text = `${nm(tackler.id)} sacks ${nm(qb.id)} for a loss of ${Math.max(0, -yards)}.${se ? " It's super effective!" : ''}`;
-    const tSt = traitMod('stripChance', { c: qb, q: tackler });
-    const strip = Math.max(0, 0.07 + tSt.v);
-    if (chance(g, strip)) {
-      qs.fum++; st(g, d, tackler.id).ff++;
-      if (chance(g, 0.6)) {
-        const spotAt = clamp(lp.spot + yards, 1, 99);
-        return { kind: 'sack', yards, carrier: qb.id, text: text + ` Strip sack! ${g.teams[d].name} recover.`, turnover: 'fumble',
-          returnSpot: 100 - spotAt, highlight: 'turnover', clockStop: true, se };
-      }
-      text += ' The ball comes loose, but the offense falls on it.';
-    }
+    // (A strip is played out on the field: see the live fumbles in live.js.)
+    const text = `${nm(tackler.id)} sacks ${nm(qb.id)} for a loss of ${Math.max(0, -yards)}.${se ? " It's super effective!" : ''}`;
     return { kind: 'sack', yards, carrier: qb.id, text, highlight: 'sack', se };
   }
 
@@ -534,13 +524,7 @@ export function buildResult(lp, end) {
     let text = `${nm(qb.id)} finds ${nm(c.id)}${extras} for ${yardsWord(yards)}.${tk}`;
     if (se) text += " It's super effective!";
     const r = { kind: 'pass', yards, carrier: c.id, scorer: c.id, qb: qb.id, text, clockStop: stop, oob: end.how === 'out', highlight, se };
-    if (tackler && end.how === 'tackle') {
-      st(g, d, tackler.id).tk++;
-      if (chance(g, Math.max(0, 0.006 + Math.min(0, traitMod('stripChance', { c, q: tackler }).v)))) {
-        rs.fum++; st(g, d, tackler.id).ff++;
-        return { ...r, text: text + ` FUMBLE! ${g.teams[d].name} recover.`, turnover: 'fumble', returnSpot: 100 - clamp(lp.spot + yards, 1, 99), highlight: 'turnover', clockStop: true };
-      }
-    }
+    if (tackler && end.how === 'tackle') st(g, d, tackler.id).tk++;
     return r;
   }
   // Runs and scrambles
@@ -550,15 +534,35 @@ export function buildResult(lp, end) {
   let text = `${nm(c.id)} ${how}${extras} for ${yardsWord(yards)}.${tk}`;
   if (se) text += " It's super effective!";
   const r = { kind: 'run', yards, carrier: c.id, scorer: c.id, text, clockStop: stop, oob: end.how === 'out', highlight: yards >= 20 ? 'big' : yards < 0 ? 'loss' : null, se };
-  if (tackler && end.how === 'tackle') {
-    st(g, d, tackler.id).tk++;
-    if (fumbleCheck(g, o, d, c.id, tackler.id)) {
-      s.fum++; st(g, d, tackler.id).ff++;
-      if (chance(g, 0.55)) {
-        return { ...r, text: text + ` FUMBLE! ${g.teams[d].name} recover.`, turnover: 'fumble', returnSpot: 100 - clamp(lp.spot + yards, 1, 99), highlight: 'turnover', clockStop: true };
-      }
-      r.text += ' Fumble, but the offense recovers.';
-    }
-  }
+  if (tackler && end.how === 'tackle') st(g, d, tackler.id).tk++;
   return r;
+}
+
+// A fumble played out on the field (live.js popBall): the play up to the strip is scored as a
+// tackle there, then whoever came up with the ball has it where he fell on it, or where his
+// scoop and run ended.
+function fumbleResult(lp, end) {
+  const g = lp.g, o = lp.o, d = lp.d, F = lp.fumble;
+  const c = F.c, q = F.q;
+  const at = lp.spotX, ball = lp.ball;
+  // The play to the strip, as the tackle it was.
+  const view = { ...lp, fumble: null, carrier: c, carrierSet: true, spotX: F.x, ball: { ...ball, state: 'held', holder: c } };
+  const base = buildResult(view, { how: F.sack ? 'sack' : 'tackle', tackler: q });
+  st(g, o, c.id).fum++; st(g, d, q.id).ff++;
+  const rec = F.by ?? null, scoop = !!F.scoop && !!rec;
+  // Where it ended, in the offense's yards: the recovery, the end of the scoop, or where it went out.
+  let endX = at ?? (scoop ? rec.x : ball.x);
+  if (end.how === 'td') endX = rec?.side === 'def' ? lp.ownGoalX : lp.goalX;
+  const text = base.text.replace(/ It's super effective!$/, '');
+  if (rec?.side === 'def') {
+    const returnSpot = end.how === 'td' ? 100 : Math.round(100 - lp.spot - endX);
+    const ran = scoop ? (returnSpot >= 100 ? ' and takes it all the way back' : ` and returns it ${Math.max(0, Math.round(F.at.x - endX))} yards`) : '';
+    return { ...base, kind: base.kind, yards: base.yards, returner: rec.id, turnover: 'fumble', returnSpot, highlight: 'turnover', clockStop: true,
+      text: `${text} FUMBLE! ${nm(rec.id)} recovers for ${g.teams[d].name}${ran}!` };
+  }
+  // The offense keeps it (it fell on it, ran with it, or the ball went out).
+  const yards = Math.max(-lp.spot, Math.round(endX)) || 0;
+  const how = !rec ? (end.how === 'fumbleOut' ? ' It rolls out of bounds.' : ' The officials give it back to the offense at the spot.') : scoop ? ` ${nm(rec.id)} picks it up and runs.` : ` ${nm(rec.id)} falls on it.`;
+  return { ...base, yards, carrier: rec?.id ?? c.id, scorer: rec?.id ?? c.id, clockStop: true, highlight: yards >= lp.goalX ? 'td' : base.highlight,
+    text: `${text} FUMBLE!${how} ${g.teams[o].name} keep it.` };
 }

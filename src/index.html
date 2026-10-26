@@ -663,6 +663,20 @@ body.g3d-on main { max-width: none; }
 .pw-chip b { font-weight: 700; color: #fff; }
 .pw-chip.on { background: color-mix(in srgb, var(--pw) 32%, rgba(0,0,0,.3)); border-color: var(--pw); box-shadow: 0 0 10px color-mix(in srgb, var(--pw) 60%, transparent); }
 .pw-chip.on::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--pw); box-shadow: 0 0 6px var(--pw); }
+.cs-quick.clock { border-color: #ffd23f; color: #ffd23f; }
+.desk-list .sal { font: 600 11px/1 var(--f-data); color: #c9d3cc; margin-left: 4px; }
+.payroll .capbar { display: block; height: 4px; background: rgba(255,255,255,.12); border-radius: 2px; margin-top: 4px; }
+.payroll .capbar i { display: block; height: 100%; background: #ffd23f; border-radius: 2px; }
+.pw-chip { position: relative; cursor: help; }
+.pw-chip:focus-visible { outline: 2px solid var(--pw); outline-offset: 2px; }
+.pw-pop { display: none; position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 20; width: max-content; max-width: min(300px, 80vw); white-space: normal; text-align: left;
+  background: #0c1a14; border: 1px solid var(--pw); border-radius: 6px; padding: 8px 10px; box-shadow: 0 6px 18px rgba(0,0,0,.5); font-size: 12px; line-height: 1.35; color: #e8efe9; }
+.pw-pop > span { display: block; margin-top: 3px; }
+.pw-pop .pw-pname { font-weight: 700; color: var(--pw); text-transform: uppercase; letter-spacing: .04em; }
+.pw-pop .pw-st { color: #ffd23f; }
+.pw-chip:hover .pw-pop, .pw-chip:focus .pw-pop, .pw-chip:focus-within .pw-pop { display: block; }
+.cs-powers .pw-chip.theirs .pw-pop { left: auto; right: 0; }
+.pw-at { font-size: 10px; font-weight: 700; letter-spacing: .05em; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--pw); color: var(--pw); }
 .pw-pips { display: inline-flex; gap: 2px; }
 .pw-pips i { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.18); }
 .pw-pips i.on { background: var(--pw); }
@@ -790,6 +804,27 @@ body.g3d-on main { max-width: none; }
 .game.g3d .hud-call { grid-row: 1; grid-column: 1; justify-self: center; font-size: 12px; padding: 5px 9px; background: rgba(9, 22, 17, 0.72); }
 .game.g3d .hud-flash { grid-row: 2; grid-column: 1; }
 .game.g3d .hud-tip { grid-row: 3; grid-column: 1; justify-self: center; font-size: 13px; background: rgba(9, 22, 17, 0.7); padding: 6px 12px; }
+/* The returner's prompt while a kick is in the air. */
+.kickprompt { position: absolute; top: 112px; left: 50%; transform: translateX(-50%); z-index: 2; pointer-events: none; display: grid; gap: 3px; justify-items: center; text-align: center;
+  background: rgba(9, 22, 17, 0.86); border: 1px solid rgba(255, 210, 63, 0.6); border-radius: 6px; padding: 8px 14px; font: 600 14px/1.25 var(--f-data); max-width: calc(100% - 24px); }
+.kickprompt b { font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #ffd23f; }
+.kickprompt em { font-style: normal; font-size: 12px; } .kickprompt em.hot { color: #ff9a9a; } .kickprompt em.warm { color: #ffd27a; } .kickprompt em.cool { color: #7ff0a8; }
+.kickprompt kbd { font-size: 12px; }
+/* The throw chart: left edge of the field, every receiver's openness during the dropback. */
+.throwchart { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; z-index: 2; font: 600 13px/1.2 var(--f-data); max-width: min(300px, 45vw); }
+.throwchart ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.throwchart li { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 8px; align-items: center; background: rgba(9, 22, 17, 0.78); border-left: 4px solid #8a948f; padding: 5px 9px 5px 6px; border-radius: 4px; }
+.throwchart li b { grid-row: span 2; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: #8a948f; color: #08130e; font-size: 13px; }
+.throwchart li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.throwchart li em { font-style: normal; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.throwchart li.tc-open { border-color: #3fd97a; } .throwchart li.tc-open b { background: #3fd97a; } .throwchart li.tc-open em { color: #7ff0a8; }
+.throwchart li.tc-contested { border-color: #ffb52e; } .throwchart li.tc-contested b { background: #ffb52e; } .throwchart li.tc-contested em { color: #ffd27a; }
+.throwchart li.tc-covered { border-color: #ff4d4d; } .throwchart li.tc-covered b { background: #ff4d4d; } .throwchart li.tc-covered em { color: #ff9a9a; }
+.throwchart li.look { outline: 2px solid rgba(255, 255, 255, 0.55); }
+.throwchart .tc-verdict { background: rgba(9, 22, 17, 0.85); border-left: 4px solid #8a948f; padding: 7px 10px; border-radius: 4px; }
+.throwchart .tc-verdict.ok { border-color: #3fd97a; } .throwchart .tc-verdict.bad { border-color: #ff4d4d; } .throwchart .tc-verdict.miss { border-color: #ffb52e; }
+.throwchart .tc-read { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.75; margin-top: 2px; }
+@media (max-width: 560px) { .throwchart { top: auto; bottom: 150px; transform: none; font-size: 12px; } .throwchart li em { display: none; } }
 .game.g3d .stage-slot:has(.callsheet) .hud-tip, .game.g3d .stage-slot:has(.pill) .hud-tip { display: none; }
 .simrow .btn.skip { color: var(--chalk-dim); background: none; }
 @media (pointer: coarse) { .game.g3d .pcard kbd, .cs-keys, .menubtn kbd { display: none; } }
