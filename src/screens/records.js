@@ -16,27 +16,33 @@ export function renderRecords() {
   const book = RC.recordBook(L, pick);
   const fr = pick != null ? RC.franchiseSummary(L, pick) : null;
   const rivals = RC.rivalries(L);
-  return `<section class="records">
+  const leaders = RC.careerLeaders(L);
+  const anyRec = [...book.game, ...book.season].some((row) => row.rec);
+  const fresh = !L.hof.length && !L.history.length && !anyRec;
+  return `<section class="records trophy">
     <p class="eyebrow">Season ${L.season} · ${L.history.length} complete</p>
-    <h1>Record book</h1>
-    <div class="season-grid">
-      <div class="col">
-        ${hofHtml(L)}
-        <div class="card"><h3>Career leaders <span class="muted small">Every season, this one included</span></h3>
-          <div class="leaders">${Object.entries(RC.careerLeaders(L)).map(([k, rows]) => `<div><h4>${k}</h4><ol>${rows.map((r) =>
-            `<li>${sprite(r.id, 'xs')}<span>${esc(P(r.id).name)}</span><em>${L.teams[r.team]?.abbr ?? ''}</em><b>${r.v}</b></li>`).join('') || '<li class="muted">None yet</li>'}</ol></div>`).join('')}</div></div>
-        <div class="card"><h3>Rivalries <span class="muted small">Teams that have met in the playoffs</span></h3>
-          ${rivals.length ? `<ul class="rivals">${rivals.map((r) => rivalLine(L, r)).join('')}</ul>` : '<p class="muted small">No playoff games yet.</p>'}</div>
-      </div>
-      <div class="col">
-        <div class="card"><h3>Records <label class="inline"><span class="sr">Franchise</span><select id="rec-team">${teamOpts.map(([v, n]) => `<option value="${v}" ${String(v) === String(pick ?? 'league') ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label></h3>
-          ${fr ? `<p class="small">All time: <b>${fr.w}-${fr.l}${fr.t ? `-${fr.t}` : ''}</b> in the regular season, <b>${fr.pw}-${fr.pl}</b> in the playoffs${fr.titles.length ? `, champions in season ${fr.titles.join(', ')}` : ''}.</p>` : ''}
-          <h4>Single game</h4>${recTable(L, book.game, pick == null)}
-          <h4>Single season</h4>${recTable(L, book.season, pick == null)}
-        </div>
-      </div>
-    </div>
+    <h1>Trophy room</h1>
+    ${fresh ? `<div class="card trophy-empty"><h2>Your franchise history begins here.</h2><p>Championships, a Hall of Fame, and single-game records fill these walls as the league is played.</p><ul class="trophy-slots">${['Championship', 'Hall of Fame', 'Career leader', 'Rivalry'].map((n) => `<li><span class="sil" aria-hidden="true"></span><b>${n}</b><em>Not earned yet</em></li>`).join('')}</ul></div>` : ''}
+    ${bannerHtml(L)}
+    ${hofHtml(L)}
+    <div class="card"><h3>Career leaders</h3>
+      <div class="leader-row">${Object.entries(leaders).map(([k, rows]) => {
+        const r = rows[0];
+        return r ? `<button class="leader-card" data-act="profile" data-id="${r.id}">${sprite(r.id, 'lg')}<span><em>${esc(k)}</em><b>${esc(P(r.id).name)}</b><small>${L.teams[r.team]?.abbr ?? ''} · ${r.v}</small></span></button>` : `<div class="leader-card empty"><span class="sil" aria-hidden="true"></span><span><em>${esc(k)}</em><b>Open</b></span></div>`;
+      }).join('')}</div></div>
+    <div class="card"><h3>Rivalries</h3>
+      ${rivals.length ? `<ul class="rivals">${rivals.map((r) => rivalLine(L, r)).join('')}</ul>` : '<p class="muted">Playoff meetings become rivalries. None yet.</p>'}</div>
+    <details class="card" ${anyRec ? '' : ''}><summary>Statistical records</summary>
+      <label class="inline"><span class="sr">Franchise</span><select id="rec-team">${teamOpts.map(([v, n]) => `<option value="${v}" ${String(v) === String(pick ?? 'league') ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+      ${fr ? `<p class="small">All time: <b>${fr.w}-${fr.l}${fr.t ? `-${fr.t}` : ''}</b> regular season, <b>${fr.pw}-${fr.pl}</b> playoffs${fr.titles.length ? `, champions in season ${fr.titles.join(', ')}` : ''}.</p>` : ''}
+      <h4>Single game</h4>${recTable(L, book.game, pick == null)}
+      <h4>Single season</h4>${recTable(L, book.season, pick == null)}
+    </details>
   </section>`;
+}
+function bannerHtml(L) {
+  if (!L.history?.length) return '';
+  return `<div class="banner-row">${L.history.map((h) => `<div class="banner" style="--team:${L.teams[h.champion]?.color ?? '#888'}"><em>Season ${h.season}</em><b>${esc(L.teams[h.champion]?.name ?? '')}</b><span>Champions</span></div>`).join('')}</div>`;
 }
 
 function hofHtml(L) {

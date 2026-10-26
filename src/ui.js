@@ -1,5 +1,5 @@
 // Small view helpers shared by every screen: escaping, sprites, type chips, overall badges.
-import { PLAYERS, roleLabel } from './ratings.js';
+import { ATTRS, PLAYERS, SLOT, roleLabel } from './ratings.js';
 import { SPRITES } from './sprites.js';
 import { ABILITIES, TYPE_COLORS, bestMatchup, effectLabel } from './types.js';
 import { S } from './state.js';
@@ -27,6 +27,58 @@ export function teamBadge(t) { return `<span class="tbadge" style="--team:${t.co
 export function user() { return S.league?.teams.find((t) => t.user); }
 export function abilityText(id) { const a = ABILITIES[P(id).ability]; return a ? a.text : 'No football effect'; }
 export function bar(v) { return `<span class="bar"><span style="width:${Math.max(4, v)}%"></span></span>`; }
+
+// The attributes that actually grade this spot, heaviest first.
+export function keyAttrs(id, slot) {
+  const p = P(id);
+  if (!p) return [];
+  const w = SLOT[slot]?.w ?? SLOT[p.best[0]]?.w ?? {};
+  const ranked = Object.entries(w).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  return ranked.length ? ranked.slice(0, 3) : ['spd', 'str', 'awr'];
+}
+export function attrRow(id, slot) {
+  const p = P(id);
+  if (!p) return '';
+  return keyAttrs(id, slot).map((k) => `<span class="abar" title="${esc(ATTRS[k] ?? k)}"><em>${ATTR_SHORT[k] ?? k}</em>${bar(p.attrs[k] ?? 0)}<b>${Math.round(p.attrs[k] ?? 0)}</b></span>`).join('');
+}
+// A player card: artwork, position, rating, type, and the attributes that matter at this spot.
+export function monCard(id, { slot = null, size = 'lg' } = {}) {
+  const p = P(id);
+  if (!p) return '';
+  const k = slot && p.ovr[slot] != null ? slot : p.best[0];
+  return `<span class="mon" style="--tc:${TYPE_COLORS[p.types[0]]}">${sprite(id, size)}<span class="mon-body"><b>${esc(p.name)}</b>${roleHtml(p)}<span class="mon-meta"><span class="slot">${esc(k)}</span>${ovr(p.ovr[k])}<span class="types">${typeChips(p.types)}</span></span><span class="mon-bars">${attrRow(id, k)}</span></span></span>`;
+}
+// One dismissible hint. The id is remembered in preferences so it does not return.
+export function coachTip(id, text) {
+  if (S.tips?.[id]) return '';
+  return `<div class="coach" role="note"><p>${esc(text)}</p><button type="button" class="btn tiny" data-act="tiptip" data-tip="${esc(id)}">Got it</button></div>`;
+}
+export function profileOverlay(id) {
+  const p = P(id);
+  if (!p) return '';
+  const slot = p.best[0];
+  const cmp = S.profileCmp != null ? P(S.profileCmp) : null;
+  const stats = S.league?.seasonStats?.[id];
+  const bits = [];
+  if (stats) {
+    if (stats.pa) bits.push(`${stats.py ?? 0} pass yds, ${stats.ptd ?? 0} TD, ${stats.pint ?? 0} INT`);
+    if (stats.ra) bits.push(`${stats.ry ?? 0} rush yds`);
+    if (stats.rc) bits.push(`${stats.rc} rec, ${stats.rcy ?? 0} yds`);
+    if ((stats.tk ?? 0) + (stats.dsk ?? 0) + (stats.dint ?? 0) > 0) bits.push(`${stats.tk ?? 0} tkl, ${stats.dsk ?? 0} sacks, ${stats.dint ?? 0} INT`);
+  }
+  const roster = S.league ? user()?.roster ?? [] : [];
+  const options = roster.filter((x) => x !== id).slice(0, 40);
+  return `<div class="modal-back" data-act="profileclose"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="profile-title" data-act="noop">
+    <button type="button" class="btn tiny ghost modal-x" id="profile-close" data-act="profileclose">Close</button>
+    <div class="modal-hero">${monCard(id, { size: 'lg' })}</div>
+    <h2 id="profile-title" class="sr">${esc(p.name)}</h2>
+    <p class="small"><b>${esc(p.ability)}.</b> ${esc(abilityText(id))}</p>
+    <div class="modal-attrs">${Object.entries(SLOT[slot]?.w ?? {}).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k]) => `<span class="abar wide"><em>${esc(ATTRS[k])}</em>${bar(p.attrs[k])}<b>${Math.round(p.attrs[k])}</b></span>`).join('')}</div>
+    ${bits.length ? `<p class="small"><b>This season.</b> ${esc(bits.join(' · '))}</p>` : `<p class="small muted">No season stats yet.</p>`}
+    ${options.length ? `<label>Compare<select id="profile-cmp"><option value="">Pick a teammate</option>${options.map((x) => `<option value="${x}" ${S.profileCmp === x ? 'selected' : ''}>${esc(P(x).name)}</option>`).join('')}</select></label>` : ''}
+    ${cmp ? `<div class="modal-cmp">${monCard(id, { slot })}<span class="at">vs</span>${monCard(S.profileCmp, { slot: cmp.best[0] })}</div>` : ''}
+  </div></div>`;
+}
 
 // One matchup as one verdict (who has the edge), with the type effects behind it underneath,
 // rather than two effect labels to weigh against each other.

@@ -187,21 +187,23 @@ export function callSheetHtml(g) {
   };
   const us = userSide();
   const who = g.phase === 'penalty' ? (twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)}: your call` : 'Your call') : twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)} ${onOff ? 'offense' : 'defense'}${onOff ? '' : ' (the offense has called its play)'}` : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
+  const recommend = !S.csAll && !S.csTab;
   const head = `<div class="cs-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>
-      <div class="cs-tabs" role="tablist">${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${k === cur && !S.csAll ? 'on' : ''}" aria-selected="${k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
+      <div class="cs-tabs" role="tablist"><button role="tab" class="cs-tab ${recommend ? 'on' : ''}" aria-selected="${recommend}" data-act="csrec">Picks</button>${tabs.map(([k, label, cs]) => `<button role="tab" class="cs-tab ${!recommend && k === cur && !S.csAll ? 'on' : ''}" aria-selected="${!recommend && k === cur}" data-act="cstab" data-tab="${k}">${label}<span>${cs.length}</span></button>`).join('')}</div>
       ${edgesChip(g)}
       ${g.phase === 'play' ? formSelect(onOff) : ''}
       ${onOff && g.phase !== 'kickoff' && g.phase !== 'penalty' ? `<button class="btn tiny cs-flip" data-act="csflip" aria-pressed="${!!S.runFlip}" title="Run the runs to the other side">Flip runs <kbd>B</kbd></button>` : ''}
-      <button class="btn tiny cs-all" data-act="csall" aria-pressed="${!!S.csAll}">${S.csAll ? 'Fewer' : 'All plays'} <kbd>X</kbd></button>
+      <button class="btn tiny cs-all" data-act="csall" aria-pressed="${!!S.csAll}">${S.csAll ? 'Recommended' : 'Show all plays'} <kbd>X</kbd></button>
       <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>
-    ${why ? `<p class="cs-fit"><em class="fittag">Fits</em> <b>${esc((onOff ? OFF_PLAYS : DEF_PLAYS)[fit].name)}</b> ${esc(why)}</p>` : ''}
+    ${why && fit ? `<p class="cs-fit"><em class="fittag">Fits this down</em> <b>${esc((onOff ? OFF_PLAYS : DEF_PLAYS)[fit].name)}</b> ${esc(why)}</p>` : ''}
+    ${recommend && onOff && g.phase === 'play' && S.plan && S.plan !== 'balanced' ? `<p class="cs-fit">Pregame lean: ${S.plan === 'pass' ? 'throwing' : 'the run'}. The play that fits the down stays first.</p>` : ''}
     ${S.csScout && !S.csFold ? scoutPanel(g) : ''}`;
-  // The strip: the plays of one category in a row, each a real play diagram with its name.
-  // The expanded playbook (X): every category at once.
+  // The strip: four recommended plays, or one category, or the whole book.
   // (Challenge, Film room and Replay are moved into .cs-acts while the sheet is up: see syncOverlays.)
+  const picks = recommend ? recommendedCalls(tabs, fit, onOff) : tabs.find(([k]) => k === cur)[2];
   const body = S.csAll
     ? `<div class="cs-book">${tabs.map(([k, label, cs]) => `<section><h4>${label}</h4><div class="cs-cards">${cs.map(card).join('')}</div></section>`).join('')}</div>`
-    : `<div class="cs-cards">${tabs.find(([k]) => k === cur)[2].map(card).join('')}</div>`;
+    : `<div class="cs-cards">${picks.map(card).join('')}</div>`;
   return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff, `<span class="cs-acts"></span>${quickHtml(g, onOff)}`)}${powersRow(g, us)}${body}</div>`;
 }
 
@@ -225,6 +227,24 @@ function formSelect(onOff) {
   const cur = (onOff ? S.formPick : S.frontPick) ?? '';
   return `<label class="cs-formsel"><span>${onOff ? 'Formation' : 'Front'} <kbd>Z</kbd></span><select id="cs-form" aria-label="${onOff ? 'Formation' : 'Front'}">
     <option value="" ${cur === '' ? 'selected' : ''}>Play default</option>${opts.map(([k, l]) => `<option value="${k}" ${cur === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
+}
+// Four calls to start from: the one that fits the down, then plays from the pregame lean.
+function recommendedCalls(tabs, fit, onOff) {
+  const all = tabs.flatMap(([k, , cs]) => cs.map((c) => ({ ...c, tab: k })));
+  const fitC = all.find((c) => c.call === fit);
+  const want = !onOff ? null : S.plan === 'pass' ? ['short', 'mid', 'deep'] : S.plan === 'run' ? ['run', 'qbrun'] : null;
+  let pool = all.filter((c) => c.call !== fit);
+  if (want) {
+    const preferred = pool.filter((c) => want.includes(c.tab));
+    if (preferred.length) pool = [...preferred, ...pool.filter((c) => !want.includes(c.tab))];
+  }
+  const out = [];
+  if (fitC) out.push(fitC);
+  for (const c of pool) {
+    if (out.length >= 4) break;
+    if (!out.some((x) => x.call === c.call)) out.push(c);
+  }
+  return out.length ? out : all.slice(0, 4);
 }
 export function csMove(d) {
   const g = S.game;

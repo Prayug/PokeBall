@@ -136,7 +136,7 @@ export function ensureStage() {
   if (S.quality !== 'auto') stage.setQuality(S.quality);
   stageWrap = document.createElement('div');
   stageWrap.className = 'stagewrap';
-  stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
+  stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-dir" id="hud-dir" hidden></div><button type="button" class="hud-cam" id="hud-cam" data-act="camcycle">Camera</button><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
     <div class="lower3" id="lower3" aria-live="polite"></div>${captionHtml()}
     <div class="throwchart" id="throwchart" hidden></div>
     <div class="kickprompt" id="kickprompt" hidden></div>
@@ -543,6 +543,9 @@ function tipText(lp) {
 }
 // Has this player used a gamepad in the last few seconds (its buttons go in the tips)?
 function padRecent(n) { return performance.now() - ((n === 0 ? L3 : L3.p2in).padAt ?? 0) < 8000; }
+function tipKeys(t) {
+  return esc(t).replace(/\b(Space|Enter|Shift|WASD|arrows|Esc|number keys|1-5)\b/g, '<kbd>$1</kbd>');
+}
 function hudTip(lp) {
   const f = L3.flow;
   if (!lp) {
@@ -957,7 +960,20 @@ function loop(now) {
   }
   const tip = document.getElementById('hud-tip');
   const t = tipText(L3.lp);
-  if (tip && tip.textContent !== t) tip.textContent = t;
+  if (tip && tip.dataset.raw !== t) { tip.dataset.raw = t; tip.innerHTML = tipKeys(t); }
+  const dir = document.getElementById('hud-dir');
+  if (dir && stage && g && !g.final && stage.dir != null) {
+    const upfield = (stage.view ?? stage.dir) === stage.dir;
+    const key = upfield ? 'up' : 'down';
+    if (dir.dataset.k !== key) {
+      dir.dataset.k = key; dir.hidden = false;
+      dir.className = `hud-dir ${key}`;
+      dir.innerHTML = upfield ? '<span aria-hidden="true">▲</span> Upfield' : '<span aria-hidden="true">▼</span> Toward you';
+    }
+  } else if (dir && !dir.hidden) dir.hidden = true;
+  const cam = document.getElementById('hud-cam');
+  const camName = CAMERA_MODES.find(([k]) => k === S.cam)?.[1] ?? 'Camera';
+  if (cam && cam.textContent !== camName) cam.textContent = camName;
   const pad = document.getElementById('touch'), mode = touchMode(L3.lp);
   if (pad && pad.dataset.mode !== mode) { pad.dataset.mode = mode; if (mode !== 'pass') pad.classList.remove('lob'); }
   const call = document.getElementById('hud-call');
@@ -1252,7 +1268,7 @@ export function onKey(e, down) {
     // Only while the call sheet is up: a T mashed to throw the ball away as the whistle blows
     // must not burn a timeout.
     if (code === 'KeyT' && !L3.lp && !L3.replay) { e.preventDefault(); if (L3.flow === 'PLAY_SELECTION') userTimeout(); return; }
-    if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
+    if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; if (!S.csAll) S.csTab = null; S.csFold = false; render(); return; }
     if (code === 'KeyB' && !L3.lp) { e.preventDefault(); S.runFlip = !S.runFlip; render(); return; }
     if (code === 'Escape') {
       if (S.menuOpen || S.detailsOpen) { S.menuOpen = false; S.detailsOpen = false; render(); return; }

@@ -5,7 +5,7 @@ import * as LG from '../league.js';
 import { SCHEMES, coachLabel } from '../coach.js';
 import { render, setScreen } from '../app.js';
 import { S, clearTimers, save, timers } from '../state.js';
-import { ATTR_SHORT, P, abilityText, bar, esc, ovr, powerHtml, roleHtml, sprite, teamBadge, typeChips, user } from '../ui.js';
+import { ATTR_SHORT, P, abilityText, bar, coachTip, esc, monCard, ovr, powerHtml, roleHtml, sprite, teamBadge, typeChips, user } from '../ui.js';
 import { shareCardHtml } from './share.js';
 import { send as netSend } from '../net.js';
 import * as TR from '../trades.js';
@@ -214,6 +214,7 @@ export function renderDraft() {
       <div>
         <p class="eyebrow">${(L.season ?? 1) > 1 ? `Season ${L.season} rookie draft · ` : ''}Round ${pk?.round ?? '-'} of ${L.picks[L.picks.length - 1].round} · Pick ${L.pickIndex + 1} of ${L.picks.length}${pk?.from != null ? ` · ${esc(L.teams[pk.from].abbr)}'s pick, traded` : ''}</p>
         <h1>${myTurn ? 'You are on the clock' : `${esc(onClock?.name ?? '')} are picking`}</h1>
+        ${coachTip('draft', 'The rating is for a position. Open a row to see the card, then draft into a spot.')}
         ${S.online && !myTurn && onClock ? `<p class="small muted">${onClock.human ? `${esc(onClock.coachName)} is on the clock` : 'The AI picks for this team'}</p>` : ''}
         ${me.coach !== 'balanced' && SCHEMES[me.coach] ? `<p class="small muted">${esc(SCHEMES[me.coach].name)}: auto-picks reach for ${schemeGroups(me.coach)}.</p>` : ''}
       </div>
@@ -290,17 +291,18 @@ export function detailHtml() {
   const bestOpen = LG.bestOpenSlot(me, id);
   const edge = LG.rivalEdge(L, id);
   const s = p.stats;
-  return `<div class="dhead">${sprite(id, 'lg')}<div><h3>${esc(p.name)}</h3>${roleHtml(p)}<div class="types">${typeChips(p.types)}</div>
-      <p class="small muted">Gen ${p.gen} · ${(p.height / 10).toFixed(1)} m · ${(p.weight / 10).toFixed(1)} kg</p></div></div>
+  return `<div class="dhead">${monCard(id, { size: 'lg' })}<p class="small muted">Gen ${p.gen} · ${(p.height / 10).toFixed(1)} m · ${(p.weight / 10).toFixed(1)} kg</p></div>
     ${taken ? '' : whyHtml(L, me, id)}
     ${typeCapHtml(L, me, p)}
     <p class="small"><b>${esc(p.ability)}.</b> ${esc(abilityText(id))}</p>
-    ${p.types.map((t) => `<p class="small"><b>${t} trait.</b> ${TYPE_TRAITS[t].text}</p>`).join('')}
     ${powerHtml(id)}
     ${rivalEdgeHtml(edge)}
     <h4>Best positions</h4>
     <ul class="best">${p.best.slice(0, 3).map((k) => `<li><span class="slot">${k}</span>${bar(p.ovr[k])}${ovr(p.ovr[k])}</li>`).join('')}</ul>
-    <p class="small muted mono">HP ${s.hp} · Atk ${s.atk} · Def ${s.def} · SpA ${s.spa} · SpD ${s.spd} · Spe ${s.spe}</p>
+    <details><summary>Type notes and base stats</summary>
+      ${p.types.map((t) => `<p class="small"><b>${t}.</b> ${TYPE_TRAITS[t].text}</p>`).join('')}
+      <p class="small muted mono">HP ${s.hp} · Atk ${s.atk} · Def ${s.def} · SpA ${s.spa} · SpD ${s.spd} · Spe ${s.spe}</p>
+    </details>
     ${taken ? '<p class="muted">Already drafted.</p>' : `<div class="draftto">
       <select id="d-slot" aria-label="Draft into slot">${open.map((k) => `<option value="${k}" ${k === bestOpen ? 'selected' : ''}>${k} · ${p.ovr[k]}</option>`).join('')}${open.length === 0 ? '<option value="BENCH">Bench</option>' : ''}</select>
       <button class="btn primary" data-act="draftsel" ${myTurn && !block ? '' : 'disabled'}>${block ? esc(block) : myTurn ? `Draft ${esc(p.name)}` : 'Wait for your pick'}</button>
@@ -390,20 +392,42 @@ function afterPick() {
 }
 
 // ---------- grades ----------
+function gradeCard(L, t, g) {
+  const units = [['passOff', 'Pass'], ['runOff', 'Run'], ['passRush', 'Rush'], ['coverage', 'Coverage'], ['runDef', 'Run D']];
+  const bestU = units.slice().sort((a, b) => g[b[0]].value - g[a[0]].value)[0];
+  const weakU = units.slice().sort((a, b) => g[a[0]].value - g[b[0]].value)[0];
+  const slots = Object.entries(t.lineup).filter(([, id]) => id != null);
+  const star = slots.slice().sort((a, b) => P(b[1]).ovr[b[0]] - P(a[1]).ovr[a[0]])[0];
+  const hole = slots.slice().sort((a, b) => P(a[1]).ovr[a[0]] - P(b[1]).ovr[b[0]])[0];
+  const avg = Math.round(units.reduce((s, [k]) => s + g[k].value, 0) / units.length);
+  const open = S.gradeTeam === t.id;
+  return `<article class="gcard ${t.user ? 'me' : ''} ${open ? 'open' : ''}" style="--team:${t.color}">
+    <button class="gcard-hit" data-act="gradeteam" data-team="${t.id}" aria-expanded="${open}">
+      <span class="gcard-mark">${esc(t.abbr)}</span>
+      <span class="gcard-body"><b>${esc(t.name)}</b><span class="small muted">${esc(coachLabel(t))}</span></span>
+      <span class="gcard-grade">${avg}</span>
+    </button>
+    <p class="gcard-id"><span>Strength <b>${bestU[1]} ${g[bestU[0]].grade}</b></span><span>Soft spot <b>${weakU[1]} ${g[weakU[0]].grade}</b></span></p>
+    ${star ? `<p class="gcard-star">${sprite(star[1], 'md')}<span>Best starter <b>${esc(P(star[1]).name)}</b> ${star[0]} ${P(star[1]).ovr[star[0]]}${hole ? ` · Lowest ${esc(P(hole[1]).name)} ${hole[0]} ${P(hole[1]).ovr[hole[0]]}` : ''}</span></p>` : ''}
+    ${open ? `<div class="gcard-roster">${slots.map(([k, id]) => `<button class="gmini" data-act="profile" data-id="${id}">${sprite(id, 'sm')}<em>${k}</em><b>${P(id).ovr[k]}</b></button>`).join('')}</div>` : ''}
+  </article>`;
+}
 export function renderGrades() {
   const L = S.league;
   const grades = LG.draftGrades(L);
   const units = [['passOff', 'Pass offense'], ['runOff', 'Run offense'], ['passRush', 'Pass rush'], ['coverage', 'Coverage'], ['runDef', 'Run defense']];
-  const order = L.teams.map((t, i) => ({ t, g: grades[i] }));
+  const order = L.teams.map((t, i) => ({ t, g: grades[i], avg: units.reduce((s, [k]) => s + grades[i][k].value, 0) })).sort((a, b) => b.avg - a.avg);
   return `<section class="grades">
     <p class="eyebrow">Draft complete</p>
-    <h1>Draft grades</h1>
-    <p class="lede">Each unit is graded against the other ${L.teams.length - 1} teams. Starters only; your bench subs in as starters tire.</p>
-    <div class="tablewrap card"><table class="gtable">
+    <h1>Draft board</h1>
+    ${coachTip('grades', 'Cards are ordered by starter ratings. Open a club to see every position, or the table for every unit grade.')}
+    <div class="gcards">${order.map(({ t, g }) => gradeCard(L, t, g)).join('')}</div>
+    <details class="card"><summary>Unit grades table</summary>
+    <div class="tablewrap"><table class="gtable">
       <thead><tr><th>Team</th><th>Coach</th>${units.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead>
       <tbody>${order.map(({ t, g }) => `<tr class="${t.user ? 'me' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="muted">${esc(coachLabel(t))}${t.favTypes ? ` (${t.favTypes.join(', ')})` : ''}</td>
         ${units.map(([k]) => `<td><span class="grade g-${g[k].grade[0]}">${g[k].grade}</span><span class="muted small"> ${g[k].value}</span></td>`).join('')}</tr>`).join('')}</tbody>
-    </table></div>
+    </table></div></details>
     ${tradeCardHtml(L)}
     ${S.online ? '' : `<div class="card share"><h3>Share this league</h3>${shareCardHtml(L)}</div>`}
     <div class="actions">

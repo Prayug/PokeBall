@@ -110,9 +110,9 @@ export class Stage {
     this.ballSpin = 0;
     S.add(this.ball);
     // Selection ring under your player and a halo under the ball carrier.
-    this.selRing = new THREE.Mesh(new THREE.RingGeometry(0.84, 1.12, 48), new THREE.MeshBasicMaterial({ color: '#ffe14d', transparent: true, opacity: 0.95, depthWrite: false, fog: false }));
+    this.selRing = new THREE.Mesh(new THREE.RingGeometry(0.7, 1.22, 48), new THREE.MeshBasicMaterial({ color: '#ffe14d', transparent: true, opacity: 1, depthWrite: false, fog: false }));
     this.selRing.rotation.x = -Math.PI / 2; this.selRing.renderOrder = 3; S.add(this.selRing);
-    this.selArrow = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 3), new THREE.MeshBasicMaterial({ color: '#ffe14d', fog: false }));
+    this.selArrow = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.78, 4), new THREE.MeshBasicMaterial({ color: '#ffe14d', fog: false }));
     this.selArrow.rotation.x = Math.PI; S.add(this.selArrow);
     // Player two's marker in a two-player game, in a second color.
     this.selRing2 = new THREE.Mesh(this.selRing.geometry, new THREE.MeshBasicMaterial({ color: '#5fd4ff', transparent: true, opacity: 0.95, depthWrite: false, fog: false }));
@@ -672,7 +672,7 @@ export class Stage {
       const lift = a.fig ? a.anim.lift : 0;
       const top = (a.fig?.template.height ?? a.body.height) * fit + Math.max(0, lift);
       a.ring.position.set(a.pos.x, top + 0.45, a.pos.z);
-      const ps = clampN(this.camera.position.distanceTo(a.ring.position) * 0.011, 0.26, 0.6);
+      const ps = clampN(this.camera.position.distanceTo(a.ring.position) * 0.015, 0.36, 0.82);
       a.ring.scale.set(ps, ps, 1);
       // Position labels: in the tactical view (where they read like a coaching diagram) and
       // in the debug view, named by what the formation has the player doing.
@@ -686,7 +686,7 @@ export class Stage {
         a.tag.scale.set(ts * 2.3, ts, 1);
       }
       // Team rings on the turf: before the snap, in the tactical view, or always if chosen.
-      a.base.visible = !!a.fig && (pre || tactical || this.showPips) && !(lp.phase === 'dead' && a.fallWant) && lp.control !== p && lp.p2?.control !== p;
+      a.base.visible = !!a.fig && (pre || tactical || this.showPips || lp.phase === 'live') && !(lp.phase === 'dead' && a.fallWant) && lp.control !== p && lp.p2?.control !== p;
       if (a.base.visible) {
         // Its size on screen is capped: a disc on the turf right under the lens (the safety
         // nearest a camera behind the defense) would otherwise fill the bottom of the frame.
@@ -969,7 +969,7 @@ export class Stage {
     if (sel) {
       const k = 1 + Math.sin(now / 220) * 0.05;
       this.selRing.position.set(sel.pos.x, 0.045, sel.pos.z);
-      this.selRing.scale.setScalar(sel.body.r * 1.75 * k);
+      this.selRing.scale.setScalar(sel.body.r * 2.45 * k);
       const h = (sel.fig?.template.height ?? 2) + (sel.fig ? sel.anim.lift : 0);
       this.selArrow.position.set(sel.pos.x, h + 0.75 + Math.sin(now / 180) * 0.1, sel.pos.z);
       this.selArrow.rotation.y += dt * 2.5;
