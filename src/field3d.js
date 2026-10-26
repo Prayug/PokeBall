@@ -1320,6 +1320,8 @@ export class Stage {
   // RESULT and the players stay down until NEXT_DOWN.
   setState(st) { this.gameState = st; }
   setInset(px) { this.insetWant = Math.max(0, px || 0); }
+  // A panel over the right of the view (the menu): the picture slides left by half its width.
+  setSideInset(px) { this.sideWant = Math.max(0, px || 0); }
   setCameraMode(m) { this.rig.setMode(m); }
   setWeatherFx(on) { this.weatherFx = on; if (this.lp) this.stadium.setWeather(this.lp.g.weather, on); }
   setQuality(q) { this.quality = q; this.applyRatio(q === 'high' ? this.maxRatio : q === 'low' ? Math.min(1, this.maxRatio) * 0.75 : this.ratio); this.renderer.shadowMap.enabled = q !== 'low'; this.scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); }
@@ -1329,7 +1331,11 @@ export class Stage {
   // comes and goes.
   applyInset(k) {
     this.inset += (this.insetWant - this.inset) * k;
-    if (this.camera.view?.enabled) this.camera.clearViewOffset();
+    this.side = (this.side ?? 0) + ((this.sideWant ?? 0) - (this.side ?? 0)) * k;
+    if (this.side < 0.5 && !this.sideWant) this.side = 0;
+    const w = this.el.clientWidth, h = this.el.clientHeight;
+    if (this.side && w && h) this.camera.setViewOffset(w, h, this.side / 2, 0, w, h);
+    else if (this.camera.view?.enabled) this.camera.clearViewOffset();
   }
 
   // Resolution scaling: drop the pixel ratio when frames run long, raise it when there is room.

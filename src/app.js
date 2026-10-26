@@ -25,7 +25,7 @@ import * as TR from './trades.js';
 import * as FA from './freeagency.js';
 import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, toggleTakeOver, userSide, userTimeout } from './screens/game.js';
 import { applyDifficulty } from './difficulty.js';
-import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, resetBetweenGames, setCamera, setDebug, stage, startReplay, syncOverlays, userChallenge } from './screens/live3d.js';
+import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, resetBetweenGames, setCamera, setDebug, stage, startReplay, syncOverlays, toggleDetails, userChallenge } from './screens/live3d.js';
 import { renderLobby } from './screens/lobby.js';
 import { bindUI, create as netCreate, join as netJoin, joinFromHash, leave as netLeave, roomLink, send as netSend, setName as netSetName } from './net.js';
 import { openFilm } from './screens/film.js';
@@ -275,12 +275,12 @@ function onClick(e) {
     case 'difficulty': setDifficulty(el.dataset.level); break;
     case 'csscout': S.csScout = !S.csScout; render(); break;
     case 'ps': presnapAct(el.dataset.ps, el.dataset.arg); break;
-    case 'csfold': S.csFold = !S.csFold; render(); break;
+    case 'csfold': S.csFold = !S.csFold; savePrefs(); render(); break;
     case 'csall': S.csAll = !S.csAll; S.csFold = false; render(); break;
     case 'csflip': S.runFlip = !S.runFlip; render(); break;
     case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
     case 'quality': S.quality = el.dataset.q; stage?.setQuality(S.quality); savePrefs(); render(); break;
-    case 'details': S.menuOpen = false; render(); document.querySelector('.game.g3d .below')?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' }); break;
+    case 'details': toggleDetails(); break;
     case 'sim': {
       const g = S.game;
       if (!g || S.busy || (L3.lp && L3.lp.phase !== 'pre')) return;

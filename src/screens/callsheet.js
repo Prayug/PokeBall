@@ -185,10 +185,11 @@ export function callSheetHtml(g) {
     ${S.csScout && !S.csFold ? scoutPanel(g) : ''}`;
   // The strip: the plays of one category in a row, each a real play diagram with its name.
   // The expanded playbook (X): every category at once.
+  // (Challenge, Film room and Replay are moved into .cs-acts while the sheet is up: see syncOverlays.)
   const body = S.csAll
     ? `<div class="cs-book">${tabs.map(([k, label, cs]) => `<section><h4>${label}</h4><div class="cs-cards">${cs.map(card).join('')}</div></section>`).join('')}</div>`
     : `<div class="cs-cards">${tabs.find(([k]) => k === cur)[2].map(card).join('')}</div>`;
-  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff, quickHtml(g, onOff))}${powersRow(g, us)}${body}</div>`;
+  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff, `<span class="cs-acts"></span>${quickHtml(g, onOff)}`)}${powersRow(g, us)}${body}</div>`;
 }
 
 // The clock between plays: running or stopped, your timeouts with the button to call one, and
