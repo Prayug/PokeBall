@@ -198,14 +198,14 @@ export function renderGame() {
       ${broadcastBar(g)}
       <button class="menubtn" data-act="menu" aria-expanded="${!!S.menuOpen}" aria-label="Game menu"><span aria-hidden="true">☰</span> Menu <kbd>M</kbd></button>
       ${S.menuOpen ? menuHtml(g, simBtns, coachBox) : ''}
+      ${S.detailsOpen && !S.menuOpen ? detailsDrawer(g) : ''}
       ${!L3.lp || L3.lp.phase === 'pre' ? tickerHtml(g) : ''}
       ${S.debug ? debugHtml() : ''}
       ${overlay}
     </div>
     <div class="below">
       ${decide ? `<div class="card scoutpanel">${presnapHtml(g)}${tendenciesHtml(g)}</div>` : ''}
-      <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
-      <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>
+      ${S.detailsOpen ? '' : detailTabs(g)}
       <p class="small muted">${spectating() ? `Watching ${esc(g.teams[1].name)} at ${esc(g.teams[0].name)}` : `You coach ${esc(g.teams[us].name)}`}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.</p>
     </div>
   </section>`;
@@ -215,10 +215,22 @@ export function renderGame() {
     <div class="fieldwrap">${renderField(g)}</div>
     ${lastPlayHtml(g)}
     ${controls}
-    <div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
-    <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>
+    ${detailTabs(g)}
     <p class="small muted">You coach ${esc(g.teams[us].name)}. ${WEATHER[g.weather].name}: ${WEATHER[g.weather].text}.${S.online ? ` Ping <b id="net-ping">${S.net?.ping != null ? `${S.net.ping} ms` : '…'}</b>.` : ''}</p>
   </section>`;
+}
+
+// The game's details: play-by-play, box score, drives, and the lineup with its subs, as tabs.
+function detailTabs(g) {
+  return `<div class="tabs" role="tablist">${[['log', 'Play-by-play'], ['box', 'Box score'], ['drives', 'Drives'], ['lineup', 'Lineup and subs']].map(([k, l]) => `<button role="tab" aria-selected="${S.gameTab === k}" class="tab ${S.gameTab === k ? 'on' : ''}" data-act="gtab" data-tab="${k}">${l}</button>`).join('')}</div>
+    <div class="card tabbody">${S.gameTab === 'log' ? logHtml(g) : S.gameTab === 'box' ? boxHtml(g) : S.gameTab === 'lineup' ? lineupHtml(g) : drivesHtml(g)}</div>`;
+}
+// The same tabs as a drawer over the side of the field (L, or the menu), so the last play is a
+// key away rather than a screen of scrolling below the stadium.
+function detailsDrawer(g) {
+  return `<div class="gdrawer card" role="dialog" aria-label="Game details">
+    <div class="gd-head"><h4>Game details</h4><button class="btn tiny" data-act="details" aria-label="Close game details">Close <kbd>L</kbd></button></div>
+    ${detailTabs(g)}</div>`;
 }
 
 // Watch mode's thin HUD: one chip in the corner, with the key that takes the next call.
@@ -286,14 +298,14 @@ function menuHtml(g, simBtns, coachBox) {
     <h4>Skip ahead</h4><div class="gm-row">${simOff ? simBtns.replaceAll('data-act="sim"', 'data-act="sim" disabled') : simBtns}</div>
     <h4>Camera <kbd>C</kbd></h4><div class="gm-row seg">${CAMERA_MODES.map(([k, l]) => `<button class="btn tiny ${S.cam === k ? 'on' : ''}" data-act="cam" data-cam="${k}" aria-pressed="${S.cam === k}">${l}</button>`).join('')}</div>
     <h4>Graphics</h4><div class="gm-row seg">${[['auto', 'Auto'], ['high', 'High'], ['low', 'Fast']].map(([k, l]) => `<button class="btn tiny ${S.quality === k ? 'on' : ''}" data-act="quality" data-q="${k}" aria-pressed="${S.quality === k}">${l}</button>`).join('')}</div>
-    <label class="check"><input type="checkbox" id="g-wx" ${S.weatherFx ? 'checked' : ''}> Weather effects (${WEATHER[g.weather].name})</label>
-    <label class="check"><input type="checkbox" id="g-names" ${S.names ? 'checked' : ''}> Name and position over your player</label>
-    <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}> Team markers under every player</label>
-    <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}> Debug view: position labels, formation check, camera calibration <kbd>\`</kbd></label>
+    <label class="check"><input type="checkbox" id="g-wx" ${S.weatherFx ? 'checked' : ''}><span>Weather effects <span class="muted">· ${WEATHER[g.weather].name}</span></span></label>
+    <label class="check"><input type="checkbox" id="g-names" ${S.names ? 'checked' : ''}><span>Name and position over your player</span></label>
+    <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}><span>Team markers under every player</span></label>
+    <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}><span>Debug view <kbd>\`</kbd><small class="muted">Position labels, formation check, camera calibration</small></span></label>
     <h4>Sound</h4>${S.soundOpen ? '<p class="small muted">Open in the speaker panel above.</p>' : soundPanelHtml()}
     <div class="gm-row"><button class="btn tiny" data-act="help">Controls <kbd>?</kbd></button><button class="btn tiny" data-act="replay" ${replayReady() ? '' : 'disabled'}>Replay last play <kbd>Y</kbd></button></div>
     <div class="gm-row"><button class="btn tiny" data-act="film" ${filmReady() ? '' : 'disabled'}>Film room <kbd>J</kbd></button><button class="btn tiny" data-act="challenge" ${challengeReady() ? '' : 'disabled'}>${challengeText(g)}</button></div>
-    <button class="btn tiny" data-act="details">Box score and play-by-play</button>
+    <button class="btn tiny" data-act="details">Box score and play-by-play <kbd>L</kbd></button>
   </div>`;
 }
 

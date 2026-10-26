@@ -51,7 +51,9 @@ export function scorebugHtml(g, { pclock = 40, scored = [0, 0], live = false } =
     <div class="bc-cell bc-down">${downText(g)}</div><div class="bc-cell bc-pc" id="pclock" title="Play clock">:${String(Math.ceil(pclock ?? 40)).padStart(2, '0')}</div>
     <div class="bc-cell bc-spot">${spotText(g)}</div>${tag}`;
   const strip = live || g.final ? '' : boothBefore(g);
-  return `<div class="bcast" id="bcast"><div class="bc-row">${team(A, 1)}${team(H, 0)}${info}</div>${strip ? `<div class="bc-strip">${esc(strip)}</div>` : ''}</div>`;
+  // Two halves that wrap onto two rows when the window is too narrow for one: the score, then
+  // the situation.
+  return `<div class="bcast" id="bcast"><div class="bc-row"><div class="bc-teams">${team(A, 1)}${team(H, 0)}</div><div class="bc-info">${info}</div></div>${strip ? `<div class="bc-strip">${esc(strip)}</div>` : ''}</div>`;
 }
 
 // ---------- the layers over the field ----------
