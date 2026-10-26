@@ -8,7 +8,7 @@ import { livePower } from './powers.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
 import { bestMatchup } from './types.js';
 import { weatherPhys } from './weather.js';
-import { OFF_PLAYS, aiTempo, whistleSeconds, chance, clamp, eff, nm, oobStops, rand, rep, setCall, sigmoid, snapStats } from './engine.js';
+import { OFF_PLAYS, aiTempo, whistleSeconds, chance, clamp, eff, fumbleCheck, nm, oobStops, rand, randn, rep, setCall, sigmoid, snapStats } from './engine.js';
 import { bodyOf } from './body.js';
 import { diffOf, diffUser } from './difficulty.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
@@ -17,11 +17,11 @@ import { DEF_SCHEMES, coverWant, pursueWant, rushWant, setupDefense } from './li
 import { PLAY_ROUTES, airJumps, ballFlight, buildRoute, contest, coverageRead, looseBall, qbBrain, releasePoint, routeWant, snapFlight, startJump, startThrow, throwAway, windup } from './live/passing.js';
 import { atSnap, shiftStep } from './live/presnap.js';
 import { aiSide, conceptOf, defaultSide, designedWant, meshPoint, runnerWant, setupRun } from './live/runs.js';
-import { XP_SPOT, kickStep, kickWant, liveKick, setupKick } from './live/kicks.js';
+import { XP_SPOT, kickStep, kickWant, liveKick, returnerCall, setupKick } from './live/kicks.js';
 import { preSnapFoul } from './penalties.js';
 export { dist, DT, event, finish, GRAVITY, isManual, kin, len, mustGain, note, passBlockWant, perceive, RECEIVERS, seek, separate, setCarrier, sgn, SIDE, slowDown, steer, sticks, traitNotes, unengage } from './live/core.js';
 export { DEF_SCHEMES } from './live/defense.js';
-export { liveKick } from './live/kicks.js';
+export { liveKick, returnPrompt } from './live/kicks.js';
 export { ROUTES, PLAY_ROUTES, OPENNESS, releasePoint, catchHeight, flightAt } from './live/passing.js';
 export { OFF_FORMATIONS as FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT, NEUTRAL, isGun };
 
@@ -429,9 +429,11 @@ export function step(lp, input = null) {
   if (lp.phase === 'live') tackleStep(lp);
   if (lp.phase === 'live') boundaries(lp);
   looseBall(lp);
+  if (lp.phase === 'live' && lp.fumble?.state === 'loose') recoverStep(lp);
   syncBall(lp);
   for (const p of lp.players) { classify(lp, p); remember(lp, p); }
-  if (lp.phase === 'live' && lp.t > MAX_TIME) whistle(lp, 'time');
+  // (A loose ball gets a few more seconds for someone to come up with it.)
+  if (lp.phase === 'live' && lp.t > MAX_TIME && !(lp.fumble?.state === 'loose' && lp.t - lp.fumble.t0 < 4)) whistle(lp, 'time');
   trackPossession(lp);
 }
 
@@ -552,6 +554,9 @@ function actionOf(lp, p, sp) {
 
 function applyInput(lp, inp) {
   const c = lp.control;
+  // Your returner under a kick: F (Y on a pad, Q on the keyboard while it is in the air) waves
+  // for a fair catch; with the ball caught in his own end zone it downs it for a touchback.
+  if (lp.kick && c && c === lp.kick.returner && (inp.fair || inp.switchTo)) { returnerCall(lp, c); inp = { ...inp, switchTo: null }; }
   if (inp.switchTo === 'ball' && lp.user === lp.d) {
     const target = lp.thrown ? { x: lp.thrown.tx, y: lp.thrown.ty } : lp.ball;
     let best = null;
@@ -589,6 +594,9 @@ function applyInput(lp, inp) {
     if (r && r.role === 'route') startThrow(lp, r, false, { type: inp.throwType ?? 'touch', place });
   }
   if (inp.throwAway && lp.kind === 'pass' && !lp.thrown && lp.ball.holder === lp.off.QB && lp.qbState !== 'run') throwAway(lp);
+  // The same key once the quarterback is running with it: he slides, feet first, and gives
+  // himself up where he is (the AI quarterback's slide, on a button).
+  else if (inp.throwAway && c.carrier && c === lp.off.QB && lp.carrierSet && !lp.tackle && !lp.kick && c.x < lp.goalX) slideDown(lp, c, null);
 }
 
 // Ball-carrier moves: a short active window, then a shared cooldown. How well each one works
@@ -613,7 +621,10 @@ function think(lp, p) {
   p.want = null;
   p.aim = null;
   if (p.stun > 0 || inTackle(lp, p)) return;
+  // On the turf after a fumble: he stays down.
+  if (p.downed) { slowDown(p, DT, 6); return; }
   if (isManual(lp, p)) { manualWant(lp, p); return; }
+  if (lp.fumble?.state === 'loose') { fumbleWant(lp, p); return; }
   const c = lp.carrierSet ? lp.carrier : null;
   // A tackle is under way: everyone else closes on the pile and pulls up around it instead of
   // running into it.
@@ -808,9 +819,23 @@ function carrierWant(lp, p) {
     const score = dx * fwd * (1.7 + north) - danger - Math.abs(a) * 0.002 - strung * Math.max(0, Math.abs(a) - 45) / 45 * 0.9 + out + aim;
     if (!best || score > best.score) best = { dx, dy, score };
   }
-  const sprint = 1;
   const l = len(best.dx, best.dy);
-  p.want = { vx: (best.dx / l) * p.top * sprint, vy: (best.dy / l) * p.top * sprint };
+  p.want = { vx: (best.dx / l) * p.top, vy: (best.dy / l) * p.top };
+  // The AI carrier has the same sprint button as you: in a footrace (past the line, nobody in
+  // front of him, a pursuer closing) he hits the burst, and it drains and recovers like yours.
+  p.aiSprint = false; p.aiOpen = false;
+  if (!isManual(lp, p) && (p.x - (p.runFrom ?? p.x)) * fwd > 2 && (p.side !== 'off' || p.x > 1)) {
+    p.aiOpen = true;
+    let ahead = false, race = false;
+    for (const q of lp.players) {
+      if (q.side === p.side || q.stun > 0.2 || q.eng) continue;
+      const along = (q.x - p.x) * fwd, d = dist(q, p);
+      // (Someone in front, or about to get a hand on him: he gathers himself for the contact.)
+      if ((along > -0.5 && d < 5) || d < 2.5) { ahead = true; break; }
+      if (d < 7) race = true;
+    }
+    p.aiSprint = race && !ahead && p.burst > 0.25;
+  }
   // When a tackler closes in, the AI carrier puts a move on him: power backs lower the
   // shoulder against smaller tacklers, shifty ones juke or spin.
   // (Not while he is still securing a catch.)
@@ -877,11 +902,13 @@ function move(lp, p, dt) {
   // A pulling lineman fires out of his stance flat down the line.
   let boost = p.juke > 0 ? 2.2 : p.truck > 0 ? 1.6 : p.pull && !p.pull.done ? 1.5 : 1;
   p.sprinting = false;
-  if (isManual(lp, p)) {
+  const manual = isManual(lp, p);
+  if (manual || p.carrier) {
     const i = p.input ?? {};
-    p.sprinting = !!i.sprint && p.burst > 0.02 && len(i.mx ?? 0, i.my ?? 0) > 0.1;
+    p.sprinting = manual ? !!i.sprint && p.burst > 0.02 && len(i.mx ?? 0, i.my ?? 0) > 0.1 : !!p.aiSprint && p.burst > 0.02;
     if (p.sprinting) { top *= 1.1; boost = Math.max(boost, 1.4); p.burst = Math.max(0, p.burst - (dt * (p.wx?.drain ?? 1)) / (2.4 + (p.a.sta ?? 70) / 100)); }
-    else { top *= 0.86; p.burst = Math.min(1, p.burst + dt / 5); }
+    // (Off the burst, an AI carrier in the open runs a step under flat out, as you jog at 86%.)
+    else { top *= manual ? 0.86 : p.aiOpen ? 0.96 : 1; p.burst = Math.min(1, p.burst + dt / 5); }
   }
   p.slow = Math.max(0, p.slow - dt);
   if (!isManual(lp, p) && !p.carrier) [vx, vy] = steer(lp, p, vx, vy);
@@ -1161,11 +1188,93 @@ function qbSlide(lp) {
   if (!hit || lp.slideRoll === hit) return;
   lp.slideRoll = hit; // one decision per tackler
   if (!chance(lp.g, clamp(0.55 + (c.a.awr - 60) * 0.01, 0.4, 0.95))) return;
-  // He goes down where he is: the ball is spotted where he started the slide.
+  slideDown(lp, c, hit);
+}
+// He goes down where he is: the ball is spotted where he started the slide.
+function slideDown(lp, c, hit) {
   lp.spotX = c.x;
   c.downed = true; c.vx *= 0.4; c.vy *= 0.4;
   event(lp, 'slide', `${nm(c.id)} slides`, c, hit);
   finish(lp, { how: 'slide' });
+}
+
+// ---------- live fumbles ----------
+// A strip is decided at contact with the simulator's odds (fumbleCheck for a runner, the strip
+// chance for a sack or a catch), but what happens next is played: the ball pops out of the
+// pile, takes a bounce, and both teams race for it. The first one to get a hand on it near
+// the ground has it: with nobody from the other side close he scoops it and runs, otherwise he
+// falls on it. One that bounces out of bounds stays with the team that fumbled it.
+function stripRoll(lp, c, q, sack) {
+  if (lp.kick || lp.intercepted || lp.noFumbles || c.side !== 'off') return false;
+  const g = lp.g;
+  if (sack) return chance(g, Math.max(0, 0.07 + traitMod('stripChance', { c, q }).v));
+  if (lp.caught && c !== lp.off.QB) return chance(g, Math.max(0, 0.006 + Math.min(0, traitMod('stripChance', { c, q }).v)));
+  return fumbleCheck(g, lp.o, lp.d, c.id, q.id);
+}
+
+const RECOVER_AFTER = 0.3;
+function popBall(lp, c, q) {
+  const g = lp.g, b = lp.ball;
+  // It squirts out the way the tackler hit it, with a random kick off the turf.
+  const hl = dist(c, q) || 1, ux = (c.x - q.x) / hl, uy = (c.y - q.y) / hl;
+  const sp = 3 + Math.abs(randn(g)) * 2.5, a = randn(g) * 0.9;
+  const vx = (ux * Math.cos(a) - uy * Math.sin(a)) * sp, vy = (uy * Math.cos(a) + ux * Math.sin(a)) * sp;
+  const at = holdPoint(lp, c);
+  for (const p of lp.players) p.carrier = false;
+  lp.carrierSet = false; lp.carrier = null;
+  lp.fumble = { state: 'loose', c, q, t0: lp.t, sack: !!lp.tackle?.sack, x: at.x };
+  lp.ball = { state: 'loose', holder: null, x: at.x, y: at.y, z: Math.max(0.5, at.z), vx, vy, vz: 2 + rand(g) * 1.5, looseT: lp.t };
+  // Everyone stops what he was doing and goes for the ball.
+  for (const p of lp.players) { if (p.eng) unengage(p); p.react = Math.min(p.react ?? 0, 0.15 + rand(g) * 0.15); }
+  // You go for it too: control moves to your player nearest the ball.
+  const nearest = (ti) => lp.players.filter((p) => p.ti === ti && p !== c && p !== q).sort((x, y) => dist(x, b) - dist(y, b))[0] ?? null;
+  if (lp.user != null && lp.control) { lp.control = nearest(lp.user); lp.manual = false; }
+  if (lp.p2?.control) { lp.p2.control = nearest(lp.p2.user); lp.p2.manual = false; }
+  event(lp, 'fumble', `${nm(c.id)} fumbles!`, c, q);
+  note(lp, 'fumble', `${nm(q.id)} knocks the ball loose from ${nm(c.id)}`, q);
+}
+
+function fumbleWant(lp, p) {
+  if (p.react > 0) { p.react -= DT; slowDown(p, DT, 2); return; }
+  // Run to where the ball will be a beat from now (it is still rolling).
+  const b = lp.ball, lead = clamp(dist(p, b) / p.top, 0, 0.5);
+  seek(p, { x: b.x + b.vx * lead, y: b.y + b.vy * lead }, 1, 0.3);
+}
+
+function recoverStep(lp) {
+  const F = lp.fumble, b = lp.ball;
+  if (Math.abs(b.y) > SIDE || b.x > lp.goalX + 10 || b.x < lp.ownGoalX - 10) {
+    // Out of bounds (or out of the end zone): the fumbling team keeps it where it went out.
+    F.state = 'out';
+    lp.spotX = clamp(b.x, lp.ownGoalX, lp.goalX);
+    event(lp, 'fumbleout', 'The ball rolls out of bounds', null);
+    finish(lp, { how: 'fumbleOut', tackler: F.q });
+    return;
+  }
+  if (lp.t - F.t0 < RECOVER_AFTER || b.z > 0.8) return;
+  let who = null, wd = 99;
+  for (const p of lp.players) {
+    if (p.downed || p.stun > 0) continue;
+    // (The longer it squirts around, the less clean the grab has to be.)
+    const d = Math.hypot(p.x - b.x, p.y - b.y), reach = p.r + (lp.t - F.t0 > 1.5 ? 1 : 0.6);
+    if (d < reach && d < wd) { wd = d; who = p; }
+  }
+  if (!who) return;
+  F.state = 'recovered'; F.by = who; F.at = { x: b.x, y: b.y };
+  const theirs = lp.players.some((q) => q.side !== who.side && !q.downed && dist(q, who) < 3);
+  event(lp, 'recover', `${nm(who.id)} recovers`, who, F.c);
+  if (!theirs && b.z < 0.5 && Math.abs(b.vx) + Math.abs(b.vy) < 8) {
+    // Scoop and run.
+    F.scoop = true;
+    if (who.side === 'def') lp.turnover = true;
+    setCarrier(lp, who);
+    return;
+  }
+  // He falls on it where it is.
+  lp.spotX = b.x;
+  who.downed = true; who.vx *= 0.3; who.vy *= 0.3;
+  lp.ball = { state: 'held', holder: who, x: b.x, y: b.y, z: 0.3 };
+  finish(lp, { how: 'recovered', tackler: F.q });
 }
 
 // ---------- contact: tackles ----------
@@ -1174,7 +1283,7 @@ function contacts(lp) {
   if (!c) return;
   const g = lp.g;
   for (const q of lp.players) {
-    if (q.side === c.side || q.eng || q.stun > 0 || q.cool > 0) continue;
+    if (q.side === c.side || q.eng || q.stun > 0 || q.cool > 0 || q.downed) continue;
     const dd = dist(q, c);
     // AI defenders lay out for a diving tackle when they are just out of reach.
     // Reach grows with body size so big Pokémon can still get their arms on a carrier they
@@ -1269,6 +1378,9 @@ function startTackle(lp, c, q, sack, dove) {
   if (lp.windup) lp.windup = null;
   c.slow = 0; q.dive = dove ? 0.3 : q.dive;
   event(lp, 'contact', `${nm(q.id)} wraps up ${nm(c.id)}`, q, c);
+  // The strip is rolled at contact, with the same odds the simulator uses; the ball comes out
+  // halfway through the tackle, before he is down (see popBall).
+  if (stripRoll(lp, c, q, sack)) lp.tackle.strip = lp.t + lp.tackle.T * 0.45;
   if (big) event(lp, 'bighit', '', q, c);
 }
 
@@ -1278,6 +1390,11 @@ function tackleStep(lp) {
   const { c, q } = T;
   const e = lp.t - T.t0;
   if (e <= 0) return; // both already moved this step
+  if (T.strip != null && lp.t >= T.strip && !lp.fumble) {
+    // Over the line before the ball came out: the touchdown stands.
+    if (c.side === 'off' && T.fp >= lp.goalX) { finish(lp, { how: 'td' }); return; }
+    popBall(lp, c, q);
+  }
   // Teammates arriving add their weight and the pile stops sooner.
   let help = 0;
   for (const o of lp.players) if (o !== q && o.side === q.side && !o.eng && dist(o, c) < o.r + c.r + 0.25) help++;
@@ -1296,6 +1413,7 @@ function tackleStep(lp) {
   c.fallU = clamp(e / T.T, 0, 1); q.fallU = clamp((e - 0.1) / T.T, 0, 1);
   // Forward progress: the farthest the carrier got before he was stopped or driven back.
   T.fp = T.fwd > 0 ? Math.max(T.fp, c.x) : Math.min(T.fp, c.x);
+  if (lp.fumble) { if (e >= T.T) tackled(lp, c, q, T.sack); return; }
   if (c.side === 'off' && T.fp >= lp.goalX) { finish(lp, { how: 'td' }); return; }
   if (c.side === 'def' && T.fp <= lp.ownGoalX) { finish(lp, { how: 'td' }); return; }
   if (e >= T.T) tackled(lp, c, q, T.sack);
@@ -1315,6 +1433,8 @@ function wrapHold(lp) {
 
 function tackled(lp, c, q, sack) {
   lp.stats.tackler = q;
+  // The ball came out before he went down: both stay on the turf and the play goes on.
+  if (lp.fumble) { c.downed = true; q.downed = true; lp.tackle = null; return; }
   lp.spotX = lp.tackle?.fp ?? c.x;
   c.downed = true; q.downed = true;
   event(lp, sack ? 'sack' : 'tackle', `${nm(q.id)} ${sack ? 'sacks' : 'tackles'} ${nm(c.id)}`, q, c);

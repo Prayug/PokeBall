@@ -1,7 +1,7 @@
 // The live 3D game: the stage, the play flow state machine, the frame loop, keyboard and touch
 // input, the result banner, pause, replay, the controls card and the debug HUD.
-import { DEF_PLAYS, OFF_PLAYS, clockText, downText, runLivePlay, spotText } from '../engine.js';
-import { DT, createLivePlay, hurry, playSeconds, playState, snap, step as stepLive, swapPads, worldSpots } from '../live.js';
+import { DEF_PLAYS, OFF_PLAYS, clockText, downText, nm, runLivePlay, spotText } from '../engine.js';
+import { DT, createLivePlay, hurry, playSeconds, playState, returnPrompt, snap, step as stepLive, swapPads, worldSpots } from '../live.js';
 import { measureVersion } from '../body.js';
 import { RATES } from '../penalties.js';
 import { Stage, webglAvailable } from '../field3d.js';
@@ -12,7 +12,7 @@ import { P, esc } from '../ui.js';
 import { sfx } from '../audio.js';
 import { POWER_OF, powerLine } from '../powers.js';
 import { autoAdvance, doCall, needsUser, playClockOut, setMode, spectating, toggleTakeOver, twoPlayer, userSide, userTimeout } from './game.js';
-import { KICK_KEYS, csMove, csTabs, cycleForm, psOptions, quickCalls } from './callsheet.js';
+import { KICK_KEYS, clockShortcuts, csMove, csTabs, cycleForm, psOptions, quickCalls } from './callsheet.js';
 import { SHADES, audibles, cycleShade, flipRun, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
 import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
@@ -138,6 +138,8 @@ export function ensureStage() {
   stageWrap.className = 'stagewrap';
   stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
     <div class="lower3" id="lower3" aria-live="polite"></div>${captionHtml()}
+    <div class="throwchart" id="throwchart" hidden></div>
+    <div class="kickprompt" id="kickprompt" hidden></div>
     ${layersHtml()}
     <div class="ov-badge" id="replay-badge" hidden>Replay</div>
     <div class="hud-acts"><button class="hud-replay" id="chal-btn" data-act="challenge" hidden>Challenge <kbd>G</kbd></button>
@@ -153,6 +155,8 @@ export function ensureStage() {
       <button data-key="Space" class="t-main">Snap / Juke / Dive</button></div></div>
     <div class="touch-top" id="touch-top" aria-hidden="true"><button data-touch="pause" class="t-live">Pause</button><button data-touch="camera">Camera</button></div>`;
   stageWrap.prepend(stage.el);
+  // Click (or tap) one of your defenders on the field to take him over, like Q does.
+  stage.el.addEventListener('pointerdown', (e) => { if (e.button === 0 && clickSwitch(e.clientX, e.clientY)) e.preventDefault(); });
   hudActs = stageWrap.querySelector('.hud-acts');
   bindTouch(stageWrap);
   if (!L3.raf) L3.raf = requestAnimationFrame(loop);
@@ -510,7 +514,7 @@ function readInput(lp, src = L3) {
     mx: m.mx, my: m.my, sprint: shift && !throwKey,
     juke: e.has('Space'), dive: e.has('Space'), truck: e.has('KeyE'), spin: e.has('KeyR'),
     throwTo: throwKey ? ['WR1', 'WR2', 'WR3', 'TE', 'RB'][Number(throwKey.slice(5)) - 1] : null, throwType,
-    throwAway: e.has('KeyT'), switchTo: e.has('KeyQ') || e.has('Tab') ? 'ball' : null,
+    throwAway: e.has('KeyT'), switchTo: e.has('KeyQ') || e.has('Tab') ? 'ball' : null, fair: e.has('KeyF'),
   };
   e.clear();
   return inp;
@@ -521,10 +525,10 @@ function readInput(lp, src = L3) {
 const KEY_NAMES = {
   p1: { Arrows: 'WASD', arrows: 'WASD', Shift: 'Left Shift' },
   p2: { Space: 'Enter', Shift: 'Right Shift', Q: '.', R: 'K', E: 'L' },
-  pad: { Space: 'A', Arrows: 'Stick', arrows: 'stick', Shift: 'RT', Q: 'Y', R: 'B', E: 'X', T: 'RS', '1-5': 'A B X Y RB', Esc: 'B' },
+  pad: { Space: 'A', Arrows: 'Stick', arrows: 'stick', Shift: 'RT', Q: 'Y', F: 'Y', R: 'B', E: 'X', T: 'RS', '1-5': 'A B X Y RB', Esc: 'B' },
 };
 // A lob is either Shift on the keyboard (LB on a pad); only the sprint has a side.
-const renameKeys = (t, names) => t.replace(/\b(Space|Esc|Shift|Arrows|arrows|Q|R|E|T|1-5)\b( lob)?/g, (m, k, lob) => (lob ? (names === KEY_NAMES.pad ? 'LB lob' : m) : names[k] ?? k));
+const renameKeys = (t, names) => t.replace(/\b(Space|Esc|Shift|Arrows|arrows|Q|F|R|E|T|1-5)\b( lob)?/g, (m, k, lob) => (lob ? (names === KEY_NAMES.pad ? 'LB lob' : m) : names[k] ?? k));
 function tipText(lp) {
   if (!twoPlayer() || !lp?.p2) {
     const t = hudTip(lp);
@@ -554,21 +558,77 @@ function hudTip(lp) {
     if (lp.phase === 'pre') return lp.user === lp.o ? `Space ${lp.kick.ko ? 'kick off' : 'snap'} · the kick goes on its own · Esc change call` : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
     if (lp.phase === 'dead') return '';
     const ring = lp.kick.F && !lp.kick.onside && (lp.kick.ko || lp.kick.punt) && lp.ball.state === 'air';
-    if (c && c === lp.kick.returner && !c.carrier) return `${ring ? 'The ring is where the ball comes down' : 'Get under it'} · arrows move · Shift sprint`;
+    if (c && c === lp.kick.returner && !c.carrier) return `${ring ? 'The ring is where the ball comes down' : 'Get under it'} · arrows move · Shift sprint${lp.kick.ko ? '' : ' · F fair catch'}`;
     if (c && !c.carrier && c.side === 'off') return `${ring ? 'The ring is where the ball comes down' : 'Cover the kick'} · arrows move · Shift sprint · Space dive`;
     if (!c) return lp.kick.kickedAt != null ? (ring ? 'The ring is where the ball comes down' : 'Kick away') : lp.kick.ko ? 'The kicker runs up…' : 'The long snap…';
   }
   if (lp.phase === 'pre') {
     if (!c) return 'Coach mode · Space to snap now · Esc to change the call';
-    return lp.user === lp.o ? `Space snap${lp.kind === 'pass' ? ' · then 1-5 throw' : ''} · V audible · B hot route · N motion · Esc change call` : 'Space start · Q pick a defender · V shade · B show blitz · N back out';
+    return lp.user === lp.o ? `Space snap${lp.kind === 'pass' ? ' · then 1-5 throw' : ''} · V audible · B hot route · N motion · Esc change call` : 'Space start · Q or click pick a defender · V shade · B show blitz · N back out';
   }
   if (lp.phase === 'dead') return '';
   if (!c) return 'Watching the AI run your call';
   if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'run') return '1-5 tap touch · hold bullet · Shift lob · arrows place the ball · T away';
   if (lp.thrown && lp.ball.state === 'air' && lp.thrown.target === c) return 'Ball in the air · arrows adjust · Space go up for it';
-  if (c.carrier) return 'Arrows run · Shift sprint · Space juke · R spin · E truck';
-  if (c.side === 'def') return 'Arrows move · Shift sprint · Space dive/tackle · Q switch to the ball';
+  if (c.carrier) return `Arrows run · Shift sprint · Space juke · R spin · E truck${c.side === 'off' && c.slot === 'QB' && !lp.kick ? ' · T slide' : ''}`;
+  if (c.side === 'def') return 'Arrows move · Shift sprint · Space dive/tackle · Q switch to the ball · click a defender to take him';
   return 'Arrows move · Shift sprint';
+}
+
+// The throw chart: on your pass play, every receiver's number, name and how open he is (open,
+// contested, covered, and by whom) for the whole dropback; once the ball is out, the target's
+// line, then what happened at the catch point and the defender who made it happen.
+const OPEN_WORD = { OPEN: 'Open', CONTESTED: 'Contested', COVERED: 'Covered' };
+const VERDICT = {
+  caught: (r, by) => `Caught by ${nm(r.id)}${by ? ` · ${nm(by.id)} a step late` : ''}`,
+  contested: (r, by) => `Caught in traffic by ${nm(r.id)}${by ? ` over ${nm(by.id)}` : ''}`,
+  int: (r, by) => `Intercepted by ${nm(by.id)}`,
+  broken: (r, by) => `Broken up by ${nm(by.id)}`,
+  dropped: (r, by) => `Dropped by ${nm(r.id)}${by ? ` with ${nm(by.id)} on him` : ''}`,
+  missed: (r, by) => `Out of ${nm(r.id)}'s reach${by ? ` · ${nm(by.id)} covering` : ''}`,
+  out: (r) => `Sailed out of bounds past ${nm(r.id)}`,
+};
+function throwChart(lp) {
+  if (!lp || lp.preview || lp.kind !== 'pass' || lp.kick || lp.phase === 'pre') return '';
+  const mine = lp.user === lp.o || lp.p2?.user === lp.o;
+  if (!mine || lp.end?.how === 'flag') return '';
+  const V = lp.throwVerdict;
+  if (V) {
+    const good = V.how === 'caught' || V.how === 'contested';
+    const read = V.read ? ` <span class="tc-read">thrown ${OPEN_WORD[V.read].toLowerCase()}</span>` : '';
+    return `<div class="tc-verdict ${good ? 'ok' : V.how === 'int' ? 'bad' : 'miss'}">${esc(VERDICT[V.how](V.r, V.by))}${read}</div>`;
+  }
+  if (lp.phase === 'dead' || lp.qbState === 'run' || lp.carrierSet) return '';
+  const T = lp.thrown;
+  const rows = ['WR1', 'WR2', 'WR3', 'TE', 'RB'].map((k, i) => {
+    const r = lp.off[k];
+    if (!r || r.role !== 'route') return '';
+    if (T && T.target !== r) return '';
+    const st = r.openState;
+    const who = st && st !== 'OPEN' && r.openBy ? ` · ${esc(nm(r.openBy.id))}` : '';
+    return `<li class="tc-${(st ?? 'none').toLowerCase()}${lp.qbLook === r && !T ? ' look' : ''}"><b>${i + 1}</b><span>${esc(nm(r.id))}</span><em>${T ? 'Ball in the air' : st ? OPEN_WORD[st] + who : '…'}</em></li>`;
+  }).join('');
+  if (T?.away) return '<div class="tc-verdict miss">Thrown away</div>';
+  return rows ? `<ol>${rows}</ol>` : '';
+}
+
+// The returner's prompt, up before the ball comes down: where it lands, how close the coverage
+// will be when it gets there, and the call (fair catch on a punt, let it go or take a knee in the
+// end zone on a kickoff).
+function kickPrompt(lp) {
+  const pad = lp?.user === lp?.d ? lp : lp?.p2?.user === lp?.d ? lp.p2 : null;
+  if (!lp?.kick || !pad?.control || pad.control !== lp.kick.returner) return '';
+  const P = returnPrompt(lp);
+  if (!P) return '';
+  const key = padRecent(0) ? 'Y' : 'F';
+  if (P.stage === 'endzone') return `<b>In the end zone</b><span><kbd>${key}</kbd> take a knee for a touchback, or bring it out</span>`;
+  const yd = (x) => { const s = 100 - (lp.spot + x); return s <= 0 ? 'the end zone' : s === 50 ? 'midfield' : s > 50 ? `your ${100 - s}` : `the ${s}`; };
+  const where = P.out ? 'out of bounds' : P.endZone ? 'in the end zone' : `at ${yd(Math.round(P.landX))}`;
+  const heat = P.cov < 4 ? 'hot' : P.cov < 9 ? 'warm' : 'cool';
+  const cov = `<em class="${heat}">Coverage ${P.cov < 1 ? 'on top of it' : `${Math.round(P.cov)} yds away`} when it lands</em>`;
+  if (P.fair) return `<b>Fair catch called</b>${cov}`;
+  if (P.ko) return `<b>Kickoff coming down ${where}</b>${cov}<span>${P.endZone ? 'Let it go for a touchback, or catch it and decide' : 'Get under it and bring it back'}</span>`;
+  return `<b>Punt coming down ${where}</b>${cov}<span>${P.endZone || P.out ? 'Let it go' : `<kbd>${key}</kbd> fair catch${heat === 'hot' ? ' (they will be on you)' : ''}`}</span>`;
 }
 
 function flowNow(now) {
@@ -885,6 +945,16 @@ function loop(now) {
     const txt = `:${String(Math.min(40, Math.ceil(L3.pclock))).padStart(2, "0")}`;
     if (pc.textContent !== txt) { pc.textContent = txt; pc.classList.toggle('low', L3.pclock <= 5); }
   }
+  const tc = document.getElementById('throwchart');
+  if (tc) {
+    const html = throwChart(L3.lp);
+    if (tc.dataset.html !== html) { tc.dataset.html = html; tc.innerHTML = html; tc.hidden = !html; }
+  }
+  const kp = document.getElementById('kickprompt');
+  if (kp) {
+    const html = kickPrompt(L3.lp);
+    if (kp.dataset.html !== html) { kp.dataset.html = html; kp.innerHTML = html; kp.hidden = !html; }
+  }
   const tip = document.getElementById('hud-tip');
   const t = tipText(L3.lp);
   if (tip && tip.textContent !== t) tip.textContent = t;
@@ -919,11 +989,19 @@ export function takeBack() {
   L3.autoSnap = null; L3.snapWant = false; S.psPick = null; S.coachDown = false;
 }
 function endKey(lp) { return `${lp.end?.how ?? lp.phase}@${(lp.spotX ?? lp.ball.x).toFixed(2)},${lp.ball.y.toFixed(2)}`; }
-function isPaused() { return !!L3.lp && L3.lp.phase !== 'dead' && (L3.paused || S.helpOpen || (S.menuOpen && L3.lp.phase === 'live')); }
+// A real pause: P, Esc or the menu stop everything on the field (a play lined up or live, the
+// walk to the line) and the play clock with it (L3.paused is read by the play clock too). Between
+// plays Esc pauses the call sheet; nothing can be called until it is resumed.
+function isPaused() {
+  if (L3.lp?.phase === 'dead') return false;
+  // (Online, the server runs the walk to the line: the menu holds only a live play there, as before.)
+  return L3.paused || S.helpOpen || (S.menuOpen && !!L3.lp && (L3.lp.phase === 'live' || !L3.net));
+}
 export function togglePause() {
-  if (!L3.lp || L3.lp.phase === 'dead') return;
+  if (L3.lp?.phase === 'dead' || !S.game || S.game.final || L3.replay || FILM.open) return;
   L3.paused = !L3.paused;
   clearInput(true);
+  syncOverlays();
 }
 export function replayReady(r = L3.rec) { return !!(stage && r?.done && !L3.lp && !L3.replay && !FILM.open && r.log.some((e) => e?.snap)); }
 // review ({ by, rec }): the replay is a review of the call (see startReview); it ends with the
@@ -1062,7 +1140,7 @@ export function syncOverlays() {
   const home = document.querySelector('.game.g3d .callsheet .cs-acts') ?? stageWrap;
   if (hudActs && home && hudActs.parentNode !== home) home.appendChild(hudActs);
   const set = (id, show) => { const el = document.getElementById(id); if (el && el.hidden === show) el.hidden = !show; };
-  set('pause-ov', !!L3.lp && L3.paused && L3.lp.phase !== 'dead');
+  set('pause-ov', L3.paused && L3.lp?.phase !== 'dead' && !!S.game && !S.game.final);
   set('replay-badge', !!L3.replay || FILM.open);
   const badge = document.getElementById('replay-badge'), bt = FILM.open ? 'Film room' : L3.replay?.review ? 'Under review' : 'Replay';
   if (badge && badge.textContent !== bt) badge.textContent = bt;
@@ -1133,6 +1211,16 @@ export function onKey(e, down) {
   if (S.screen !== 'game' || !stage || !S.game) return;
   if (e.target.closest?.('input, select, textarea')) return;
   const code = e.code;
+  // Space and Enter belong to the game while a play is lined up or live, or a result can be
+  // skipped, even when a button (the sound control, a menu link) still has focus: the button is
+  // let go of and the key snaps, jukes or skips instead of clicking it. The menu and the final
+  // score keep their buttons.
+  const btn = e.target.closest?.('button, a, summary');
+  const gameKey = code === 'Space' || code === 'Enter' || code === 'NumpadEnter';
+  const take = !!btn && gameKey && !S.menuOpen && !S.helpOpen && !S.game.final
+    && (!!L3.lp || (code === 'Space' && (L3.flow === 'PLAY_RESULT' || L3.flow === 'RESET_FORMATION')));
+  if (take) { btn.blur(); e.preventDefault(); }
+  const free = !btn || take;
   if (down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (S.helpOpen) {
       if (code === 'Escape' || code === 'Enter' || code === 'Space' || code === 'Slash') { e.preventDefault(); closeHelp(); }
@@ -1144,9 +1232,9 @@ export function onKey(e, down) {
     if (code === 'KeyI' && !L3.lp) { e.preventDefault(); S.csScout = !S.csScout; S.csFold = false; render(); return; }
     if (FILM.open) { filmKey(e); return; }
     if (L3.replay && (code === 'Escape' || code === 'KeyY' || code === 'Space')) { e.preventDefault(); stopReplay(); return; }
-    if ((code === 'Space' || code === 'Enter' || code === 'NumpadEnter') && !e.target.closest?.('button, a, summary') && skipBeat()) { e.preventDefault(); return; }
+    if (gameKey && free && !L3.paused && skipBeat()) { e.preventDefault(); return; }
     // The final whistle: Enter plays another quick game, or goes back to the season.
-    if ((code === 'Enter' || code === 'NumpadEnter') && S.game.final && !e.target.closest?.('button, a, summary')) {
+    if ((code === 'Enter' || code === 'NumpadEnter') && S.game.final && free) {
       const go = document.querySelector('.ov-final .btn.primary');
       if (go) { e.preventDefault(); go.click(); return; }
     }
@@ -1154,7 +1242,7 @@ export function onKey(e, down) {
     if (code === 'KeyG' && !L3.lp && !L3.replay) { e.preventDefault(); userChallenge(); return; }
     if (code === 'KeyY') { e.preventDefault(); startReplay(); return; }
     // P pauses a play on the field; between plays it falls through to the call sheet (Punt).
-    if (code === 'KeyP' && L3.lp && L3.lp.phase !== 'dead') { e.preventDefault(); togglePause(); return; }
+    if (code === 'KeyP' && (L3.paused || (L3.lp && L3.lp.phase !== 'dead'))) { e.preventDefault(); togglePause(); return; }
     if (code === 'KeyO' && spectating()) { e.preventDefault(); toggleTakeOver(); return; }
     if (code === 'KeyC') { e.preventDefault(); cycleCamera(); return; }
     if (code === 'KeyM') { e.preventDefault(); S.menuOpen = !S.menuOpen; if (S.menuOpen) S.detailsOpen = false; render(); return; }
@@ -1170,10 +1258,12 @@ export function onKey(e, down) {
       if (S.menuOpen || S.detailsOpen) { S.menuOpen = false; S.detailsOpen = false; render(); return; }
       if (L3.paused || L3.lp?.phase === 'live') { e.preventDefault(); togglePause(); return; }
       if (L3.lp?.phase === 'pre' && !S.coachDown) { recall(); return; }
+      // Between plays: pause the call sheet (and its play clock).
+      if (!L3.lp && !L3.replay && L3.flow === 'PLAY_SELECTION') { e.preventDefault(); togglePause(); return; }
     }
   }
   // Call keys on the play sheet, only while no play is lined up or live.
-  if (!L3.lp && !L3.replay && !FILM.open && down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (!L3.lp && !L3.replay && !FILM.open && !L3.paused && down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
     const g = S.game;
     if (!g.final && needsUser(g) && !S.busy) {
       const { tabs, cur } = csTabs(g);
@@ -1182,7 +1272,7 @@ export function onKey(e, down) {
       if (hit) { e.preventDefault(); doCall(hit.call); return; }
       // Enter calls the play that fits the down; R calls your last call again.
       // (One player only: in a two-player game these keys belong to the players' moves.)
-      if ((code === 'Enter' || code === 'NumpadEnter') && !twoPlayer() && !e.target.closest?.('button, a, summary')) {
+      if ((code === 'Enter' || code === 'NumpadEnter') && !twoPlayer() && free) {
         const q = quickCalls(g);
         if (q.fit) { e.preventDefault(); doCall(q.fit); return; }
       }
@@ -1190,16 +1280,18 @@ export function onKey(e, down) {
         const q = quickCalls(g);
         if (q.again) { e.preventDefault(); doCall(q.again); return; }
       }
+      // K takes a knee when the shortcut is up (backed up, or late in a half).
+      if (code === 'KeyK' && clockShortcuts(g).some((c) => c.call === 'kneel')) { e.preventDefault(); doCall('kneel'); return; }
       if (code === 'ArrowLeft' || code === 'ArrowRight') { e.preventDefault(); csMove(code === 'ArrowLeft' ? -1 : 1); return; }
       if (code === 'KeyZ') { e.preventDefault(); cycleForm(g.poss === userSide()); return; }
     }
   }
   const two = twoPlayer();
-  const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'Tab',
+  const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'KeyF', 'Tab',
     'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(code) || (two && !!P2_KEYS[code]);
   if (!game) return;
   if (isPaused()) { e.preventDefault(); return; }
-  if (!L3.lp) { if (code === 'Space' && down && e.target === document.body) e.preventDefault(); return; }
+  if (!L3.lp) { if (code === 'Space' && down && (e.target === document.body || take)) e.preventDefault(); return; }
   e.preventDefault();
   // Two players: player two's keys go to their own input as player one's codes; the throw keys
   // belong to whoever has the ball.
@@ -1219,6 +1311,19 @@ export function padKey(src, v, down) {
   if (!down) { src.keys.delete(v); return; }
   if (!L3.lp || isPaused()) return;
   src.edges.add(v); src.keys.add(v);
+}
+
+// Click-to-switch on defense: before the snap or during the play, the defender you click on is
+// the one you control (not on a kick, not in a two-player game, not while coaching).
+function clickSwitch(x, y) {
+  const lp = L3.lp;
+  if (!lp || !stage || lp.preview || lp.phase === 'dead' || lp.kick || lp.p2 || isPaused() || lp.user !== lp.d || !lp.control) return false;
+  if (lp.carrierSet && lp.carrierTeam === 'def') return false;
+  const p = stage.playerAt(x, y, (q) => q.ti === lp.user && q.side === 'def' && !q.downed);
+  if (!p || p === lp.control) return false;
+  lp.control = p; lp.manual = false;
+  clearInput();
+  return true;
 }
 
 function bindTouch(root) {

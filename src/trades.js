@@ -9,7 +9,7 @@ import { PLAYERS, SLOT, SLOT_KEYS, autoDepthChart } from './ratings.js';
 import { kickingUnit } from './engine.js';
 import { aiLikes, available, keepValue, leagueRng, teamStrength } from './league.js';
 import { powerRanking } from './weekly.js';
-import { salary } from './freeagency.js';
+import { leagueCap, salary } from './freeagency.js';
 
 export const MAX_PLAYERS = 3;
 export const PICK_ROUNDS = 2;
@@ -149,12 +149,13 @@ export function evaluateTrade(L, deal, order = ranking(L)) {
   };
   const you = side(me, meSide), them = side(ai, aiSide);
 
-  // Hard rules: the cap (once free agency has set one), the type cap and injuries.
-  if (L.cap != null) {
-    for (const [t, s, name] of [[me, meSide, 'you'], [ai, aiSide, ai.name]]) {
-      const pay = s.roster.reduce((a, id) => a + salary(L, id), 0), before = t.roster.reduce((a, id) => a + salary(L, id), 0);
-      if (pay > L.cap && pay > before) problems.push(`That puts ${name === 'you' ? 'you' : name} over the $${L.cap}M cap ($${pay}M).`);
-    }
+  // Hard rules: the cap, the type cap and injuries. The cap holds from week 1: the first trade
+  // looked at sets it (the biggest payroll plus some room), and free agency resets it each year.
+  const cap = leagueCap(L);
+  for (const [t, s, name] of [[me, you, 'you'], [ai, them, ai.name]]) {
+    const pay = s.roster.reduce((a, id) => a + salary(L, id), 0), before = t.roster.reduce((a, id) => a + salary(L, id), 0);
+    s.payroll = pay;
+    if (pay > cap && pay > before) problems.push(`That puts ${name === 'you' ? 'you' : name} over the $${cap}M cap ($${pay}M).`);
   }
   if (L.settings.typeCap) {
     for (const [t, s, name] of [[me, meSide, 'you'], [ai, aiSide, ai.name]]) {
