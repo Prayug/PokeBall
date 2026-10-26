@@ -378,7 +378,8 @@ function lineupHtml(g) {
 function logHtml(g) {
   const rows = g.log.slice(-80).reverse();
   return `<ol class="pbp">${rows.map((e) => {
-    const t = g.teams[e.poss];
+    // The down belongs to the team that snapped it, not the one with the ball after (a punt, a turnover).
+    const t = g.teams[e.team ?? e.poss];
     const sit = e.down ? `${['', '1st', '2nd', '3rd', '4th'][e.down]} & ${e.spotBefore + e.toGo >= 100 ? 'Goal' : e.toGo}` : '';
     return `<li class="k-${e.kind} ${e.highlight ? `h-${e.highlight}` : ''}"><span class="when">${quarterText(e.q)} ${clockText(e.clock)}</span>
       ${e.down ? `<span class="sit">${teamBadge(t)} ${sit}</span>` : ''}<span class="txt">${esc(e.text).replace('It&#39;s super effective!', '<mark>It&#39;s super effective!</mark>')}${(e.powers ?? []).map((c) => ` <span class="pw-log ${c.on ? 'on' : ''}" style="--pw:${powerColor(c.id)}">${esc(powerLine(c))}</span>`).join('')}</span></li>`;

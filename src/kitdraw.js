@@ -10,8 +10,9 @@ export function fitText(x, text, maxW) {
 
 // One end zone, 10 yards deep and H pixels across, from x0 (PX pixels to a yard): the team's
 // color, a band of its second color just inside the lines, and its wordmark in the kit's style,
-// reading from the field (`left` is the end zone at the left end).
-export function paintEndZone(x, x0, H, PX, team, left) {
+// reading from the field (`left` is the end zone at the left end). `up` is the way the tops of
+// the letters point along the field (-1 toward the left end): a viewer facing that way reads it.
+export function paintEndZone(x, x0, H, PX, team, left, up = left ? -1 : 1) {
   const kit = kitOf(team);
   x.save();
   x.beginPath(); x.rect(x0, 0, 10 * PX, H); x.clip();
@@ -26,7 +27,7 @@ export function paintEndZone(x, x0, H, PX, team, left) {
   x.globalAlpha = 0.95; x.strokeStyle = kit.color2; x.lineWidth = PX * 0.45;
   x.strokeRect(x0 + PX * 0.9, PX * 0.9, 10 * PX - PX * 1.8, H - PX * 1.8);
   x.globalAlpha = 1;
-  x.translate(x0 + 5 * PX, H / 2); x.rotate(left ? -Math.PI / 2 : Math.PI / 2);
+  x.translate(x0 + 5 * PX, H / 2); x.rotate((up < 0 ? -Math.PI : Math.PI) / 2);
   x.textAlign = 'center'; x.textBaseline = 'middle';
   const name = wordmarkOf(team);
   const ink = inkOn(team.color) === '#ffffff' ? 'rgba(255,255,255,0.96)' : 'rgba(16,22,28,0.92)';

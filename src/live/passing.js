@@ -507,19 +507,31 @@ function release(lp, r, away, kind = 'touch', place = null) {
 }
 
 // A ballistic flight from (sx, sy, z0) that comes down through (tx, ty, zc) after T seconds.
+// The air takes speed off the ball as it goes (DRAG, per second), so it leaves the passer's
+// hand quicker than it arrives: a deep ball comes out on a line, hangs at the top and drops in.
+// v is the average speed over the ground, so the flight time is what it was without drag.
+const DRAG = 0.16;
 function launch(lp, f) {
   const horiz = Math.hypot(f.tx - f.sx, f.ty - f.sy);
   const T = Math.max(0.18, horiz / f.v);
   const vz = (f.zc - f.z0 + 0.5 * GRAVITY * T * T) / T;
-  lp.thrown = { ...f, T, vz, t0: lp.t };
+  lp.thrown = { ...f, T, vz, t0: lp.t, drag: DRAG };
   lp.ball = { ...lp.ball, state: 'air', holder: null, x: f.sx, y: f.sy, z: f.z0 };
   lp.qbState = 'done';
 }
 
 // The ball's position e seconds into its flight (the renderer draws the arc from this too).
+// One clock drives the whole arc: the share of the ground covered by time e (slowing under
+// drag, when the flight has it) and the height under gravity.
+const covered = (F, e) => (F.drag ? (1 - Math.exp(-F.drag * e)) / (1 - Math.exp(-F.drag * F.T)) : e / F.T);
 export function flightAt(F, e) {
-  const u = e / F.T;
+  const u = covered(F, e);
   return { x: F.sx + (F.tx - F.sx) * u, y: F.sy + (F.ty - F.sy) * u, z: F.z0 + F.vz * e - 0.5 * GRAVITY * e * e };
+}
+// Its velocity then: { vx, vy } over the ground and vz.
+export function flightVel(F, e) {
+  const du = F.drag ? (F.drag * Math.exp(-F.drag * e)) / (1 - Math.exp(-F.drag * F.T)) : 1 / F.T;
+  return { vx: (F.tx - F.sx) * du, vy: (F.ty - F.sy) * du, vz: F.vz - GRAVITY * e };
 }
 
 function futureRoute(r, T, goalX = 999) {
@@ -603,10 +615,10 @@ function underneath(lp, T, e) {
 // The ball comes loose (incomplete, dropped, batted): it keeps some of its flight and falls.
 function dropBall(lp, keep, pop = 0) {
   const T = lp.thrown, b = lp.ball;
-  const horiz = T ? Math.hypot(T.tx - T.sx, T.ty - T.sy) : 1;
-  const ux = T ? (T.tx - T.sx) / (horiz || 1) : 1, uy = T ? (T.ty - T.sy) / (horiz || 1) : 0;
-  const v = T ? horiz / T.T : 4;
-  const vzArr = T ? T.vz - GRAVITY * T.T : -2;
+  const arr = T ? flightVel(T, T.T) : null;
+  const v = arr ? Math.hypot(arr.vx, arr.vy) : 4;
+  const ux = arr && v ? arr.vx / v : 1, uy = arr && v ? arr.vy / v : 0;
+  const vzArr = arr ? arr.vz : -2;
   b.state = 'loose'; b.holder = null; b.looseT = lp.t;
   b.vx = ux * v * keep + (pop ? (rand(lp.g) - 0.5) * 3 : 0);
   b.vy = uy * v * keep + (pop ? (rand(lp.g) - 0.5) * 3 : 0);

@@ -287,7 +287,7 @@ export function kickWant(lp, p) {
       if (K.stage === 'loose') return seek(p, lp.ball, 1, 0.1);
       const F = K.F, left = F.t0 + F.T - lp.t;
       // Coverage closing in as it comes down: wave for a fair catch.
-      if (!K.fair && !K.ko && left < 0.75 && !isManual(lp, p) && lp.players.some((q) => q.side === 'off' && dist(q, land) < 5)) { K.fair = true; event(lp, 'fairsignal', '', p); }
+      if (!K.fair && !K.ko && left < 0.75 && !isManual(lp, p) && lp.players.some((q) => q.side === 'off' && dist(q, land) < 5.5)) { K.fair = true; event(lp, 'fairsignal', '', p); }
       // Let one going into the end zone go.
       if (F.tx > lp.goalX + 1) return seek(p, { x: lp.goalX - 2, y: p.y }, 0.6, 0.5);
       const dx = land.x - p.x, dy = land.y - p.y, d = len(dx, dy);

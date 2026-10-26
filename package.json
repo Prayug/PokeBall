@@ -10,7 +10,7 @@
     "iq": "node test/iq.mjs",
     "collisions": "node test/collisions.mjs",
     "runs": "node test/runs.mjs",
-    "test": "node test/plays.mjs && node test/commentary.mjs 3 && node test/scenarios.mjs && node test/formations.mjs && node test/league.mjs && node test/kicks.mjs && node test/clock.mjs && node test/penalties.mjs && node test/review.mjs && node test/presnap.mjs && node test/controls.mjs && node test/abilities.mjs && node test/broadcast.mjs && node test/powers.mjs && node test/iq.mjs 300 --strict && node test/feel.mjs 300 --strict && node test/routes.mjs 400 --strict && node test/routes.mjs 300 --strict --powers && node test/runs.mjs 30 --strict && node test/collisions.mjs 300 --strict && node test/server.mjs",
+    "test": "node test/plays.mjs && node test/commentary.mjs 3 && node test/scenarios.mjs && node test/formations.mjs && node test/league.mjs && node test/kicks.mjs && node test/timecap.mjs && node test/clock.mjs && node test/penalties.mjs && node test/review.mjs && node test/presnap.mjs && node test/controls.mjs && node test/abilities.mjs && node test/broadcast.mjs && node test/powers.mjs && node test/iq.mjs 300 --strict && node test/feel.mjs 300 --strict && node test/routes.mjs 400 --strict && node test/routes.mjs 300 --strict --powers && node test/runs.mjs 60 --strict && node test/collisions.mjs 300 --strict && node test/server.mjs",
     "league": "node test/league.mjs",
     "clock": "node test/clock.mjs",
     "penalties": "node test/penalties.mjs",

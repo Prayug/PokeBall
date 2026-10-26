@@ -61,7 +61,8 @@ export function quickGame({ twoPlayer = false, spectate = false } = {}) {
     if (S.setup.color) a.color = S.setup.color;
     if (S.setup.kit) a.kit = cleanKit(S.setup.kit, a);
   }
-  const game = createGame({ home: LG.teamForGame(a), away: LG.teamForGame(b), seed });
+  // The opening kickoff waits to be played out on the field like every later one.
+  const game = createGame({ home: LG.teamForGame(a), away: LG.teamForGame(b), seed, liveKicks: true });
   const meta = { quick: true, userTeamId: a.id, twoPlayer };
   if (spectate) meta.spectate = true;
   startGame(game, meta);
@@ -234,7 +235,8 @@ function onClick(e) {
       if (!gm) { // eliminated: sim the round
         simPlayoffOthers(L, -1); LG.advancePlayoffs(L); save(); render(); break;
       }
-      const game = LG.startLeagueGame(L, gm.home, gm.away, playoff);
+      // A week you play kicks off on the field; a simmed week kicks off in the simulator.
+      const game = LG.startLeagueGame(L, gm.home, gm.away, playoff, act !== 'simweek');
       const meta = { playoff, userTeamId: me.id };
       if (act === 'simweek') { applyDifficulty(game, S.difficulty, me.id); S.game = game; S.gameMeta = meta; simUntil(game, 'game'); finishLeagueGame(); }
       else startGame(game, meta);
