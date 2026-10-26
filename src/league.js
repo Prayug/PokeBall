@@ -230,7 +230,8 @@ function slotValue(id, slot) { return SLOT[slot].value * (PLAYERS[id].ovr[slot] 
 export { slotValue };
 
 // With every slot filled: the slot where this Pokémon comes closest to (or beats) the starter,
-// weighted by the slot's value. A backup is worth 90% of that gap.
+// weighted by the slot's value. A backup is worth 90% of that gap. (The draft board's Fit; the
+// AI's own bench picks still use their older formula.)
 export function benchValue(team, id) {
   let best = null;
   for (const k of SLOT_KEYS) {
@@ -274,7 +275,7 @@ export function aiChoosePick(L, teamId = currentPick(L).team) {
       if (picksLeft <= open.length) score += 5;
     } else {
       slot = 'BENCH';
-      score = benchValue(team, id).score;
+      score = Math.max(...SLOT_KEYS.map((k) => PLAYERS[id].ovr[k] - PLAYERS[team.slots[k]].ovr[k] * 0.9));
     }
     const S = slot === 'BENCH' ? null : SLOT[slot];
     if (team.coach === 'speed' && S && ['WR', 'CB', 'RB', 'S'].includes(S.group)) score += (p.attrs.spd - 70) * 0.25;
