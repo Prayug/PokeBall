@@ -73,7 +73,7 @@ export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', round
     for (const id of row) picks.push({ round: r + 1, team: id, player: null, slot: null });
   }
   return {
-    version: 2, seed, rngState: rng.state(), settings: { rounds, legendaries, typeCap, numTeams },
+    version: 2, seed, rngState: rng.state(), settings: { rounds, legendaries, typeCap, numTeams, userPick },
     teams, divisions: makeDivisions(numTeams), picks, pickIndex: 0, phase: 'draft', week: 0, schedule: [], results: [], playoffs: null, champion: null,
     seasonStats: {}, season: 1, history: [], growth: {}, condition: {}, rookies: [], trade: null, offseason: null,
     injuries: {}, weekly: [],
@@ -213,7 +213,7 @@ export function blockReason(L, team, id) {
   const p = PLAYERS[id];
   if (L.settings.typeCap) {
     const same = team.roster.filter((x) => PLAYERS[x].types[0] === p.types[0]).length;
-    if (same >= 4) return `Already 4 ${p.types[0]} types`;
+    if (same >= 4) return `Already 4 ${p.types[0]} primary types`;
   }
   return null;
 }
@@ -227,6 +227,20 @@ export function bestOpenSlot(team, id) {
   return open.reduce((a, b) => (slotValue(id, b) > slotValue(id, a) ? b : a));
 }
 function slotValue(id, slot) { return SLOT[slot].value * (PLAYERS[id].ovr[slot] - BASELINE[slot]); }
+export { slotValue };
+
+// With every slot filled: the slot where this Pokémon comes closest to (or beats) the starter,
+// weighted by the slot's value. A backup is worth 90% of that gap.
+export function benchValue(team, id) {
+  let best = null;
+  for (const k of SLOT_KEYS) {
+    const cur = team.slots[k] ?? team.lineup?.[k];
+    const gap = PLAYERS[id].ovr[k] - (cur != null ? PLAYERS[cur].ovr[k] : BASELINE[k]);
+    const score = 0.9 * SLOT[k].value * gap;
+    if (!best || score > best.score) best = { slot: k, score, incumbent: cur ?? null };
+  }
+  return best;
+}
 
 export function currentPick(L) { return L.picks[L.pickIndex] ?? null; }
 
@@ -260,7 +274,7 @@ export function aiChoosePick(L, teamId = currentPick(L).team) {
       if (picksLeft <= open.length) score += 5;
     } else {
       slot = 'BENCH';
-      score = Math.max(...SLOT_KEYS.map((k) => PLAYERS[id].ovr[k] - PLAYERS[team.slots[k]].ovr[k] * 0.9));
+      score = benchValue(team, id).score;
     }
     const S = slot === 'BENCH' ? null : SLOT[slot];
     if (team.coach === 'speed' && S && ['WR', 'CB', 'RB', 'S'].includes(S.group)) score += (p.attrs.spd - 70) * 0.25;
@@ -723,7 +737,8 @@ export function finishOffseason(L, userCuts) {
     t.slots = { ...t.lineup };
   }
   if ((L.season ?? 1) === 1 && !L.firstDraft) {
-    L.firstDraft = { picks: L.picks.slice(0, L.pickIndex).map((p) => [p.player, p.slot]), rng: L.draftRng ?? null };
+    L.firstDraft = { picks: L.picks.slice(0, L.pickIndex).map((p) => [p.player, p.slot]), rng: L.draftRng ?? null,
+      userPick: L.settings.userPick ?? null, swaps: L.draftSwaps ?? [] };
   }
   L.season++;
   L.picks = []; L.pickIndex = 0; L.week = 0; L.schedule = []; L.results = []; L.seasonStats = {};
