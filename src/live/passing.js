@@ -1,7 +1,6 @@
 // The passing game in a live play: routes, the quarterback's reads, the throw and the ball's
 // flight, and the catch, the contested ball, the interception and the incompletion.
 import { traitMod } from '../traits.js';
-import { RATES, liveFoul, sloppy } from '../penalties.js';
 import { PLAYERS } from '../ratings.js';
 import { chance, clamp, nm, rand, randn, rep, st } from '../engine.js';
 import { DT, GRAVITY, SIDE, dist, event, finish, isManual, kin, len, mustGain, note, passBlockWant, seek, setCarrier, sgn, sticks, traitNotes, unengage } from './core.js';
@@ -95,9 +94,10 @@ export function coverageRead(lp) {
     if (r.role !== 'route' || (r.route?.[0]?.block && r.wp === 0)) { r.open = null; r.openState = null; continue; }
     const T = dist(qb, r) / throwSpeed(qb) + WINDUP_T;
     const px = r.x + r.vx * T, py = r.y + r.vy * T;
-    let open = 99;
-    for (const q of lp.players) if (q.side === 'def') open = Math.min(open, Math.hypot(q.x + q.vx * T * 0.6 - px, q.y + q.vy * T * 0.6 - py) - q.r * 0.5);
-    r.open = open; r.lead = { x: px, y: py };
+    let open = 99, by = null;
+    for (const q of lp.players) if (q.side === 'def') { const o = Math.hypot(q.x + q.vx * T * 0.6 - px, q.y + q.vy * T * 0.6 - py) - q.r * 0.5; if (o < open) { open = o; by = q; } }
+    // (by: the defender on him, which the throw chart names.)
+    r.open = open; r.lead = { x: px, y: py }; r.openBy = by;
     r.openState = open >= 2.6 ? 'OPEN' : open >= 1.2 ? 'CONTESTED' : 'COVERED';
   }
 }
@@ -497,12 +497,8 @@ function release(lp, r, away, kind = 'touch', place = null) {
   for (const pad of [lp, lp.p2]) if (pad && pad.user === lp.o && pad.control === qb && !lp.autoQB) { pad.control = r; pad.manual = false; pad.handoverLock = true; }
   lp.stats.target = r;
   lp.stats.cov = nearestDef(lp, r);
-  // A defender hanging on a receiver downfield the ball is not going to: defensive holding.
-  if (lp.flags) for (const q of lp.players) {
-    const m = q.man;
-    if (q.side !== 'def' || !m || m === r || m.x < 5 || dist(q, m) > 1.3) continue;
-    if (chance(g, RATES.holdCoverLive * sloppy(q.a.awr)) && liveFoul(lp, 'hold_def', q, m)) { event(lp, 'flag', '', q, m); break; }
-  }
+  // The throw chart's read on him as the ball left (see verdict()).
+  lp.thrownRead = r.openState ?? null;
   event(lp, 'throw', `${nm(qb.id)} throws for ${nm(r.id)}`, qb, r);
 }
 
@@ -604,6 +600,7 @@ function underneath(lp, T, e) {
     const pick = q.role === 'cover' && b.z > 0.6 && chance(lp.g, clamp(0.12 + (q.a.hnd - 60) * 0.005, 0.05, 0.3));
     if (pick) { interception(lp, q, { x: b.x, y: b.y }); return true; }
     st(lp.g, lp.d, q.id).pd++;
+    if (T.target) verdict(lp, 'broken', T.target, q);
     dropBall(lp, 0.1, 2.6);
     event(lp, 'deflect', '', q, T.target);
     incomplete(lp, `${nm(q.id)} gets a hand on ${nm(lp.off.QB.id)}'s pass${q.role === 'rush' ? ' at the line' : ''}.`, q);
@@ -705,11 +702,11 @@ function arrival(lp) {
     const R = rep(dfd.id, dfd.a.cov, r.id, r.a.hndC);
     const pI = (diff) => clamp(0.11 + hawk + diff * 0.006 + (T.pressured ? 0.04 : 0) + (dr > rReach ? 0.12 : 0) - dd * 0.05, 0.03, 0.42)
       * (lp.offCall === 'screen' ? 0.4 : 1) + (userPlay && dfd === userDef ? 0.18 : 0);
-    if (inBounds && contest(lp, pI(R.diff), pI(R.base), R, dfd, r, 'for the interception')) { interception(lp, dfd, spot); return; }
+    if (inBounds && contest(lp, pI(R.diff), pI(R.base), R, dfd, r, 'for the interception')) { verdict(lp, 'int', r, dfd); interception(lp, dfd, spot); return; }
     const pB = (diff) => clamp(0.3 + diff * 0.01 - dd * 0.15 + (userPlay ? 0.25 : 0) + (dUp ? 0.1 : 0) - (rUp ? 0.08 : 0), 0.15, 0.9);
     if (dr > rReach || contest(lp, pB(R.diff), pB(R.base), R, dfd, r, 'at the catch point')) {
-      interference(lp, dfd, r, dd, dr, spot);
       st(g, lp.d, dfd.id).pd++;
+      verdict(lp, 'broken', r, dfd);
       dropBall(lp, 0.12, 3.2);
       event(lp, 'deflect', '', dfd, r);
       incomplete(lp, `${nm(lp.off.QB.id)}'s pass for ${nm(r.id)} is broken up by ${nm(dfd.id)}.`, dfd);
@@ -722,6 +719,7 @@ function arrival(lp) {
     // the receiver can't bring it in there however close he got.
     const why = !inBounds ? (Math.abs(spot.y) >= SIDE ? ' sails out of bounds' : ' sails out the back of the end zone') : dr > rReach ? ' falls incomplete, just out of reach' : ' falls incomplete';
     if (!inBounds) event(lp, 'oob', '', r, null);
+    verdict(lp, !inBounds ? 'out' : 'missed', r, dfd && dd < 3 ? dfd : null);
     incomplete(lp, `${nm(lp.off.QB.id)}'s pass for ${nm(r.id)}${why}.`);
     return;
   }
@@ -748,9 +746,8 @@ function arrival(lp) {
     const k = rac ? 0.6 : deepCatch || aggro ? 0.3 : 0.45;
     r.vx *= k; r.vy *= k; r.slow = rac ? 0.08 : deepCatch ? 0.5 : 0.3;
     lp.catchKind = rac ? 'rac' : aggro || contested ? 'aggressive' : 'possession';
-    // Shoving off to make a contested catch: offensive pass interference.
-    if (contested && lp.flags && chance(g, RATES.opi * 4 * sloppy(r.a.awr)) && liveFoul(lp, 'opi', r)) event(lp, 'flag', '', r, dfd);
     r.caughtAt = lp.t;
+    verdict(lp, contested ? 'contested' : 'caught', r, dfd && dd < 3 ? dfd : null);
     lp.caught = true;
     lp.catchX = r.x;
     lp.catchAt = { x: lp.ball.x, y: lp.ball.y };
@@ -758,16 +755,17 @@ function arrival(lp) {
     event(lp, 'catch', `${nm(r.id)} makes the catch`, r, lp.off.QB);
     return;
   }
-  if (contested) { st(g, lp.d, dfd.id).pd++; interference(lp, dfd, r, dd, dr, spot); }
+  if (contested) st(g, lp.d, dfd.id).pd++;
+  verdict(lp, 'dropped', r, contested ? dfd : null);
   dropBall(lp, 0.2, 1.5);
   incomplete(lp, `${nm(lp.off.QB.id)}'s pass for ${nm(r.id)} is dropped${contested ? ` with ${nm(dfd.id)} draped on him` : ''}.`);
 }
 
-// A defender who gets there late and through the receiver, not to the ball: pass interference,
-// spotted where the ball came down. Likelier for a careless defender and the later he is.
-function interference(lp, d, r, dd, dr, spot) {
-  if (!lp.flags || !d || dd > 1.6 || dd < dr - 0.2) return;
-  if (chance(lp.g, RATES.dpiLive * sloppy(d.a.awr) * (1 + Math.max(0, dd - dr))) && liveFoul(lp, 'dpi', d, spot)) event(lp, 'flag', '', d, r);
+// The throw chart's last line: what happened at the catch point and who was there.
+//   caught / contested (a catch, with or without a defender on him), int, broken (the defender
+//   got a hand on it), dropped, missed (out of reach), out (sailed out of bounds).
+function verdict(lp, how, r, by) {
+  lp.throwVerdict = { how, r, by: by ?? null, read: lp.thrownRead ?? null, t: lp.t };
 }
 
 function interception(lp, d, spot) {

@@ -77,12 +77,25 @@ export function quickCalls(g) {
   const again = g.phase === 'play' ? S.lastCall?.[`${userSide()}:${onOff ? 'off' : 'def'}`] : null;
   return { fit: on.has(fit) ? fit : null, again: again && on.has(again) ? again : null };
 }
+// Clock and field-position shortcuts for your offense: backed up inside your own 5, a safe call
+// (the sneak, straight ahead behind the center) and the kneel, which never loses more than a
+// yard and so can't take a safety; with the clock running late in a half, the spike.
+export function clockShortcuts(g) {
+  if (g.phase !== 'play' || g.poss !== userSide() || twoPlayer()) return [];
+  const out = [];
+  if (g.spot <= 5) out.push({ call: 'qb_sneak', label: 'Safe call: QB Sneak', title: 'Backed up: a sneak behind the center rarely loses ground' });
+  const late = (g.quarter === 2 || g.quarter >= 4) && g.clock <= 120;
+  if (g.spot <= 5 || late) out.push({ call: 'kneel', label: 'Kneel', key: 'K', title: 'Take a knee: a yard at most, never a safety, and the clock runs' });
+  if (late && g.clockRunning && g.down < 4) out.push({ call: 'spike', label: 'Spike', title: 'Stop the clock (it costs the down)' });
+  return out;
+}
 function quickHtml(g, onOff) {
   const { fit, again } = quickCalls(g);
   const name = (c) => esc((onOff ? OFF_PLAYS : DEF_PLAYS)[c]?.name ?? '');
   const kbd = (k) => (twoPlayer() ? '' : ` <kbd>${k}</kbd>`);
-  if (!fit && !again) return '';
-  return `<span class="cs-quicks">${fit ? `<button class="btn tiny cs-quick fit" data-act="call" data-call="${fit}" title="Call the play that fits this down">Fits: ${name(fit)}${kbd('Enter')}</button>` : ''}${again && again !== fit ? `<button class="btn tiny cs-quick" data-act="call" data-call="${again}" title="Call your last call again">Again: ${name(again)}${kbd('R')}</button>` : ''}</span>`;
+  const clock = onOff ? clockShortcuts(g).filter((c) => c.call !== fit) : [];
+  if (!fit && !again && !clock.length) return '';
+  return `<span class="cs-quicks">${fit ? `<button class="btn tiny cs-quick fit" data-act="call" data-call="${fit}" title="Call the play that fits this down">Fits: ${name(fit)}${kbd('Enter')}</button>` : ''}${again && again !== fit ? `<button class="btn tiny cs-quick" data-act="call" data-call="${again}" title="Call your last call again">Again: ${name(again)}${kbd('R')}</button>` : ''}${clock.map((c) => `<button class="btn tiny cs-quick clock" data-act="call" data-call="${c.call}" title="${esc(c.title)}">${esc(c.label)}${c.key ? kbd(c.key) : ''}</button>`).join('')}</span>`;
 }
 
 // Formations: the offense picks one for its call (or leaves it to the play's own), the defense
@@ -185,10 +198,11 @@ export function callSheetHtml(g) {
     ${S.csScout && !S.csFold ? scoutPanel(g) : ''}`;
   // The strip: the plays of one category in a row, each a real play diagram with its name.
   // The expanded playbook (X): every category at once.
+  // (Challenge, Film room and Replay are moved into .cs-acts while the sheet is up: see syncOverlays.)
   const body = S.csAll
     ? `<div class="cs-book">${tabs.map(([k, label, cs]) => `<section><h4>${label}</h4><div class="cs-cards">${cs.map(card).join('')}</div></section>`).join('')}</div>`
     : `<div class="cs-cards">${tabs.find(([k]) => k === cur)[2].map(card).join('')}</div>`;
-  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff, quickHtml(g, onOff))}${powersRow(g, us)}${body}</div>`;
+  return `<div class="callsheet${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff, `<span class="cs-acts"></span>${quickHtml(g, onOff)}`)}${powersRow(g, us)}${body}</div>`;
 }
 
 // The clock between plays: running or stopped, your timeouts with the button to call one, and

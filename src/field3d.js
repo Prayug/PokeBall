@@ -272,6 +272,28 @@ export class Stage {
 
   world(x, y, h = 0, out = new THREE.Vector3()) { return out.set(this.los + this.dir * x, h, y * this.dir); }
   actorOf(p) { return p ? this.actors.get(`${p.ti}:${p.id}`) : null; }
+  // The player drawn under a point on the screen (client pixels), among those `ok` accepts: the
+  // nearest by his body's middle, within his drawn size (and a little slack for small ones).
+  playerAt(cx, cy, ok = () => true) {
+    const lp = this.lp, el = this.renderer.domElement;
+    if (!lp) return null;
+    const R = el.getBoundingClientRect();
+    let best = null, bd = Infinity;
+    for (const p of lp.players) {
+      const a = this.actorOf(p);
+      if (!a?.root.visible || !ok(p)) continue;
+      const h = a.fig?.template.height ?? a.body.height ?? 2;
+      _v.set(a.pos.x, h * 0.5, a.pos.z).project(this.camera);
+      if (_v.z > 1) continue;
+      const sx = R.left + (_v.x + 1) / 2 * R.width, sy = R.top + (1 - _v.y) / 2 * R.height;
+      // His drawn half-height in pixels: the distance to the top of his head.
+      _v2.set(a.pos.x, h, a.pos.z).project(this.camera);
+      const half = Math.abs((1 - _v2.y) / 2 * R.height + R.top - sy);
+      const d = Math.hypot(cx - sx, cy - sy);
+      if (d < Math.max(half * 1.15, 22) && d < bd) { bd = d; best = p; }
+    }
+    return best;
+  }
 
   actorFor(p, team) {
     const key = `${p.ti}:${p.id}`;
@@ -1330,6 +1352,8 @@ export class Stage {
   // RESULT and the players stay down until NEXT_DOWN.
   setState(st) { this.gameState = st; }
   setInset(px) { this.insetWant = Math.max(0, px || 0); }
+  // A panel over the right of the view (the menu): the picture slides left by half its width.
+  setSideInset(px) { this.sideWant = Math.max(0, px || 0); }
   setCameraMode(m) { this.rig.setMode(m); }
   setWeatherFx(on) { this.weatherFx = on; if (this.lp) this.stadium.setWeather(this.lp.g.weather, on); }
   setQuality(q) { this.quality = q; this.applyRatio(q === 'high' ? this.maxRatio : q === 'low' ? Math.min(1, this.maxRatio) * 0.75 : this.ratio); this.renderer.shadowMap.enabled = q !== 'low'; this.scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); }
@@ -1339,7 +1363,11 @@ export class Stage {
   // comes and goes.
   applyInset(k) {
     this.inset += (this.insetWant - this.inset) * k;
-    if (this.camera.view?.enabled) this.camera.clearViewOffset();
+    this.side = (this.side ?? 0) + ((this.sideWant ?? 0) - (this.side ?? 0)) * k;
+    if (this.side < 0.5 && !this.sideWant) this.side = 0;
+    const w = this.el.clientWidth, h = this.el.clientHeight;
+    if (this.side && w && h) this.camera.setViewOffset(w, h, this.side / 2, 0, w, h);
+    else if (this.camera.view?.enabled) this.camera.clearViewOffset();
   }
 
   // Resolution scaling: drop the pixel ratio when frames run long, raise it when there is room.

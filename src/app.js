@@ -10,7 +10,7 @@ import * as LG from './league.js';
 import { S, clearTimers, deleteSlot, loadPrefs, loadSaved, migrateStorage, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
 import { download, esc, teamBadge, user } from './ui.js';
 import { importSave, loadSnapshot, renderHome } from './screens/home.js';
-import { boardRowsHtml, detailHtml, draftSkip, draftTick, renderDraft, renderGrades, userDraft } from './screens/draft.js';
+import { boardRowsHtml, detailHtml, draftSkip, draftSwap, draftTick, moveQueue, queueTop, renderDraft, renderGrades, toggleQueue, userDraft } from './screens/draft.js';
 import { depthClick, renderDepth } from './screens/depth.js';
 import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthers } from './screens/season.js';
 import { renderOffseason } from './screens/offseason.js';
@@ -25,7 +25,7 @@ import * as TR from './trades.js';
 import * as FA from './freeagency.js';
 import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, toggleTakeOver, userSide, userTimeout } from './screens/game.js';
 import { applyDifficulty } from './difficulty.js';
-import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, resetBetweenGames, setCamera, setDebug, stage, startReplay, syncOverlays, userChallenge } from './screens/live3d.js';
+import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, resetBetweenGames, setCamera, setDebug, stage, startReplay, syncOverlays, toggleDetails, userChallenge } from './screens/live3d.js';
 import { renderLobby } from './screens/lobby.js';
 import { bindUI, create as netCreate, join as netJoin, joinFromHash, leave as netLeave, roomLink, send as netSend, setName as netSetName } from './net.js';
 import { openFilm } from './screens/film.js';
@@ -179,7 +179,7 @@ function onClick(e) {
       else FA.runFaRound(L, act === 'fabid' ? { id: S.faSel, release: S.faRelease, amount: S.faAmount } : null);
       S.faSel = null; S.faRelease = null; S.faAmount = null;
       if (L.phase === 'freeagency') { save(); render(); break; }
-      S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false };
+      S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false, queueAuto: false };
       setScreen(L.phase === 'draft' ? 'draft' : 'grades');
       break;
     }
@@ -202,15 +202,24 @@ function onClick(e) {
     case 'select': {
       if (e.target.closest('[data-act="draftbtn"]')) return;
       S.draft.sel = Number(el.dataset.id);
-      document.getElementById('detail').innerHTML = detailHtml();
+      const card = document.getElementById('detail');
+      card.innerHTML = detailHtml();
       document.querySelectorAll('#board-body tr.sel').forEach((r) => r.classList.remove('sel'));
-      el.classList.add('sel');
+      document.querySelector(`#board-body tr[data-id="${S.draft.sel}"]`)?.classList.add('sel');
+      // Bring the card out from under the sticky top bar (scroll-margin-top keeps it clear).
+      const bar = document.querySelector('.top')?.getBoundingClientRect().bottom ?? 0;
+      if (card.getBoundingClientRect().top < bar) card.scrollIntoView({ block: 'start', behavior: 'smooth' });
       break;
     }
     case 'draftbtn': { const id = Number(el.dataset.id); const n = L?.pickIndex; userDraft(id, null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
     case 'draftsel': { const id = S.draft.sel, n = L?.pickIndex; userDraft(id, document.getElementById('d-slot')?.value ?? null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
     case 'sort': S.draft.sort = el.dataset.key; render(); break;
     case 'draftskip': draftSkip(); break;
+    case 'queue': toggleQueue(Number(el.dataset.id)); render(); if (S.draft.queueAuto) draftTick(); break;
+    case 'queueup': case 'queuedown': moveQueue(Number(el.dataset.id), act === 'queueup' ? -1 : 1); render(); break;
+    case 'draftqueue': { const id = queueTop(), n = L?.pickIndex; if (id == null) break; userDraft(id, null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
+    case 'draftswap': draftSwap(Number(el.dataset.team)); break;
+    case 'needslot': S.draft.needs = S.draft.needs === el.dataset.slot ? false : el.dataset.slot; render(); break;
     case 'autodraft': S.draft.autoAll = !S.draft.autoAll; render(); draftTick(); break;
     case 'startseason': if (S.online) { netSend({ t: 'startseason' }); break; } L.phase = 'season'; setScreen('season'); break;
     case 'dslot': case 'dbench': depthClick(el); break;
@@ -277,12 +286,12 @@ function onClick(e) {
     case 'difficulty': setDifficulty(el.dataset.level); break;
     case 'csscout': S.csScout = !S.csScout; render(); break;
     case 'ps': presnapAct(el.dataset.ps, el.dataset.arg); break;
-    case 'csfold': S.csFold = !S.csFold; render(); break;
+    case 'csfold': S.csFold = !S.csFold; savePrefs(); render(); break;
     case 'csall': S.csAll = !S.csAll; S.csFold = false; render(); break;
     case 'csflip': S.runFlip = !S.runFlip; render(); break;
     case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
     case 'quality': S.quality = el.dataset.q; stage?.setQuality(S.quality); savePrefs(); render(); break;
-    case 'details': S.menuOpen = false; render(); document.querySelector('.game.g3d .below')?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' }); break;
+    case 'details': toggleDetails(); break;
     case 'sim': {
       const g = S.game;
       if (!g || S.busy || (L3.lp && L3.lp.phase !== 'pre')) return;
@@ -327,7 +336,14 @@ function onChange(e) {
   if (t.id === 'rec-team') { S.recTeam = t.value === 'league' ? 'league' : Number(t.value); render(); }
   if (t.id === 'd-type') { S.draft.type = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
   if (t.id === 'd-gen') { S.draft.gen = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
-  if (t.id === 'd-rate') { S.draft.rate = t.value; S.draft.sort = 'fit'; render(); }
+  if (t.id === 'd-rate') { S.draft.rate = t.value; render(); }
+  if (t.id === 'd-needs') { S.draft.needs = t.checked; render(); }
+  if (t.id === 'd-qauto') { S.draft.queueAuto = t.checked; render(); if (t.checked) draftTick(); }
+  if (t.name === 'teams' && t.form?.id === 'setup-form') {
+    const n = Number(t.value), sel = document.getElementById('f-pick');
+    for (const o of sel?.options ?? []) o.hidden = o.value !== '' && Number(o.value) >= n;
+    if (sel && sel.value !== '' && Number(sel.value) >= n) sel.value = String(n - 1);
+  }
   if (t.id === 'g-coach') { S.coach = t.checked; save(); render(); autoAdvance(); }
   if (t.id === 'cs-tempo') { S.tempo = t.value; t.blur(); render(); }
   if (t.id === 'cs-form') { const v = t.value || null; if (S.game?.poss === userSide()) S.formPick = v; else S.frontPick = v; t.blur(); render(); }
@@ -359,13 +375,15 @@ function onSubmit(e) {
     legendaries: f.querySelector('#f-legend').checked,
     clock: f.querySelector('#f-clock').checked,
     scheme: f.querySelector('input[name="scheme"]:checked')?.value ?? 'balanced',
+    pick: f.querySelector('#f-pick')?.value ? Number(f.querySelector('#f-pick').value) : null,
   };
+  if (S.setup.pick != null) S.setup.pick = Math.max(0, Math.min(S.setup.teams - 1, S.setup.pick));
   S.slot = Number(f.querySelector('#f-slot')?.value ?? S.slot); S.confirmDelete = null;
   S.league = LG.createLeague({ teamName: S.setup.name, abbr: S.setup.abbr, rounds: S.setup.rounds, legendaries: S.setup.legendaries,
-    typeCap: S.setup.typeCap, scheme: S.setup.scheme, numTeams: S.setup.teams, seed: Math.floor(Math.random() * 2 ** 31), ...(S.setup.color ? { userColor: S.setup.color } : {}) });
+    typeCap: S.setup.typeCap, scheme: S.setup.scheme, numTeams: S.setup.teams, userPick: S.setup.pick ?? null, seed: Math.floor(Math.random() * 2 ** 31), ...(S.setup.color ? { userColor: S.setup.color } : {}) });
   if (S.setup.kit) S.league.teams[0].kit = cleanKit(S.setup.kit, S.league.teams[0]);
   S.game = null; S.gameMeta = null; S.desk = null;
-  S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false };
+  S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false, queueAuto: false };
   setScreen('draft');
 }
 
@@ -408,6 +426,7 @@ export function render() {
   syncMusic();
   if (S.screen === 'game') mountStage();
   if (S.screen === 'kit') drawKitPreview();
+  if (S.screen === 'draft') document.documentElement.style.setProperty('--top-h', `${document.querySelector('.top')?.offsetHeight ?? 0}px`);
   if (S.screen === 'draft' && boardScroll != null) { const b = document.querySelector('.board .tablewrap'); if (b) b.scrollTop = boardScroll; }
   if (focusId) {
     const el = document.getElementById(focusId);
@@ -471,7 +490,9 @@ function setupFromForm() {
     typeCap: !!f.querySelector('#f-typecap')?.checked,
     clock: !!f.querySelector('#f-clock')?.checked,
     scheme: f.querySelector('input[name="scheme"]:checked')?.value ?? 'balanced',
+    pick: f.querySelector('#f-pick')?.value ? Number(f.querySelector('#f-pick').value) : null,
   };
+  if (S.setup.pick != null) S.setup.pick = Math.max(0, Math.min(S.setup.teams - 1, S.setup.pick));
 }
 bindUI({
   render, setScreen,

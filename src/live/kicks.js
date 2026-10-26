@@ -5,6 +5,7 @@
 // return, a fair catch, a bounce downed by the coverage, a touchback, out of bounds) is decided
 // on the field, and engine.js turns the outcome into the next possession.
 import { chance, clamp, eff, fgOdds, onsideLean, onsideOdds, randn, specialist, xpOdds } from '../engine.js';
+import { PLAYERS } from '../ratings.js';
 import { GRAVITY, SIDE, dist, event, finish, isManual, len, seek, setCarrier, setKickResult, sgn, unengage } from './core.js';
 import { buildRoute, flightAt } from './passing.js';
 
@@ -308,6 +309,39 @@ export function kickWant(lp, p) {
   }
 }
 
+// What your returner can call: the fair catch while a punt is in the air (not once it has hit
+// the turf), and the knee in his own end zone with the ball in his hands (a kickoff or a punt
+// caught there), which is a touchback.
+export function returnerCall(lp, r) {
+  const K = lp.kick;
+  if (!K || lp.phase !== 'live') return false;
+  if (K.stage === 'air' && !K.ko && !K.fair) { K.fair = true; event(lp, 'fairsignal', '', r); return true; }
+  if (K.stage === 'return' && r.carrier && r.x >= lp.goalX && !lp.tackle) {
+    K.stage = 'done'; lp.ball = { state: 'held', holder: r, x: r.x, y: r.y, z: 0.4 }; r.downed = true;
+    event(lp, 'kneel', '', r);
+    finish(lp, { how: 'touchback' });
+    return true;
+  }
+  return false;
+}
+
+// The returner's choice, for the prompt over the field: where the kick comes down, how close the
+// coverage is to that spot when it gets there, and what the key does now.
+export function returnPrompt(lp) {
+  const K = lp.kick;
+  if (!K || lp.phase !== 'live' || K.onside) return null;
+  const r = K.returner;
+  if (K.stage === 'air' && K.F) {
+    const F = K.F, left = Math.max(0, F.t0 + F.T - lp.t);
+    let cov = 99;
+    for (const q of lp.players) if (q.side === 'off' && q !== lp.kicker) cov = Math.min(cov, Math.hypot(q.x + q.vx * left - F.tx, q.y + q.vy * left - F.ty));
+    const endZone = F.tx >= lp.goalX, out = Math.abs(F.ty) > SIDE;
+    return { stage: 'air', ko: !!K.ko, left, landX: F.tx, cov: Math.max(0, cov), endZone, out, fair: !!K.fair, canFair: !K.ko && !K.fair };
+  }
+  if (K.stage === 'return' && r?.carrier && r.x >= lp.goalX && !lp.tackle) return { stage: 'endzone', ko: !!K.ko };
+  return null;
+}
+
 // ---------- fakes ----------
 // The snap is caught and the kick never comes: the punter takes off, or the holder pops up and
 // throws to the tight end leaking into the flat. From here it is an ordinary run or pass, and a
@@ -376,6 +410,14 @@ function setupKickoff(lp, make) {
   }
   kp ??= O.QB ?? O.RB;
   lp.kicker = kp;
+  // The kickoff units are not the scrimmage lineups: the cover team is the ten fastest tacklers
+  // on the roster (backs, receivers, linebackers, the secondary, bench included), the return
+  // team its fastest sure-handed returner and the best blockers who can run.
+  const score = (ti, id, w) => Object.entries(w).reduce((a, [k, v]) => a + eff(g, ti, id, k) * v, 0);
+  koUnit(lp, make, lp.o, 'off', [kp], (id) => score(lp.o, id, { spd: 0.6, tkl: 0.4 }));
+  const recv = rosterPool(g, lp.d, []);
+  const retId = recv.sort((a, b) => score(lp.d, b, { spd: 0.6, hnd: 0.4 }) - score(lp.d, a, { spd: 0.6, hnd: 0.4 }))[0];
+  koUnit(lp, make, lp.d, 'def', [], (id) => (id === retId ? 1e6 : score(lp.d, id, { blk: 0.5, spd: 0.3, str: 0.2 })));
   const put = (p, x, y, role, fx) => { p.x = x; p.y = y; p.role = role; p.fx = fx; p.fy = 0; };
   put(kp, -7, 0.6, 'kicker', 1);
   const cover = lp.players.filter((p) => p.side === 'off' && p !== kp);
@@ -384,8 +426,7 @@ function setupKickoff(lp, make) {
   K.side = chance(g, 0.5) ? -1 : 1;
   cover.forEach((p, i) => put(p, -1, onside ? lanes[i] * 0.75 + K.side * 3 : lanes[i] ?? 0, 'kline', 1));
   const defs = lp.players.filter((p) => p.side === 'def');
-  const backs = ['FS', 'SS', 'CB1', 'CB2', 'CB3'].map((k) => D[k]).filter(Boolean);
-  const ret = [...backs].sort((a, b) => (b.a.spd + b.a.hnd) - (a.a.spd + a.a.hnd))[0] ?? defs[defs.length - 1];
+  const ret = defs.find((p) => p.id === retId) ?? [...defs].sort((a, b) => (b.a.spd + b.a.hnd) - (a.a.spd + a.a.hnd))[0];
   K.returner = ret;
   const hands = onsideLean(g, lp.o);
   K.hands = hands;
@@ -399,6 +440,31 @@ function setupKickoff(lp, make) {
   for (const p of lp.players) p.home = { x: p.x, y: p.y };
   lp.ball = { state: 'tee', holder: null, x: 0, y: 0, z: 0.25 };
   lp.snapTo = kp;
+}
+
+// Everyone a side can put on the field for a kick: its lineup and bench, once each, without the
+// quarterback, the kicker and the punter (and anyone in `skip`).
+function rosterPool(g, ti, skip) {
+  const T = g.teams[ti], L = T.lineup, out = new Set([L.QB, L.K, L.P, ...skip].filter((x) => x != null));
+  return [...new Set([...Object.values(L), ...(T.bench ?? [])])].filter((id) => id != null && !out.has(id) && PLAYERS[id]);
+}
+// Put a side's kickoff unit on the field: its best eleven (less the players kept) by `rank`,
+// each taking over a spot of someone not picked. They keep that spot's key, so the rest of the
+// play finds them like anyone else.
+function koUnit(lp, make, ti, side, keep, rank) {
+  const g = lp.g, map = lp[side];
+  const on = lp.players.filter((p) => p.side === side && !keep.includes(p));
+  const want = rosterPool(g, ti, keep.map((p) => p.id)).sort((a, b) => rank(b) - rank(a)).slice(0, on.length);
+  const chosen = new Set(want);
+  const free = on.filter((p) => !chosen.has(p.id));
+  const add = want.filter((id) => !on.some((p) => p.id === id));
+  free.forEach((p, i) => {
+    const id = add[i];
+    if (id == null) return;
+    const np = make(g, ti, side, p.slot, id, lp);
+    lp.players[lp.players.indexOf(p)] = np;
+    map[p.slot] = np;
+  });
 }
 
 function kickoffStep(lp) {

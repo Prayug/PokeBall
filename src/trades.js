@@ -9,7 +9,7 @@ import { PLAYERS, SLOT, SLOT_KEYS, autoDepthChart } from './ratings.js';
 import { kickingUnit } from './engine.js';
 import { aiLikes, available, keepValue, leagueRng, teamStrength } from './league.js';
 import { powerRanking } from './weekly.js';
-import { salary } from './freeagency.js';
+import { leagueCap, salary } from './freeagency.js';
 
 export const MAX_PLAYERS = 3;
 export const PICK_ROUNDS = 2;
@@ -149,12 +149,13 @@ export function evaluateTrade(L, deal, order = ranking(L)) {
   };
   const you = side(me, meSide), them = side(ai, aiSide);
 
-  // Hard rules: the cap (once free agency has set one), the type cap and injuries.
-  if (L.cap != null) {
-    for (const [t, s, name] of [[me, meSide, 'you'], [ai, aiSide, ai.name]]) {
-      const pay = s.roster.reduce((a, id) => a + salary(L, id), 0), before = t.roster.reduce((a, id) => a + salary(L, id), 0);
-      if (pay > L.cap && pay > before) problems.push(`That puts ${name === 'you' ? 'you' : name} over the $${L.cap}M cap ($${pay}M).`);
-    }
+  // Hard rules: the cap, the type cap and injuries. The cap holds from week 1: the first trade
+  // looked at sets it (the biggest payroll plus some room), and free agency resets it each year.
+  const cap = leagueCap(L);
+  for (const [t, s, name] of [[me, you, 'you'], [ai, them, ai.name]]) {
+    const pay = s.roster.reduce((a, id) => a + salary(L, id), 0), before = t.roster.reduce((a, id) => a + salary(L, id), 0);
+    s.payroll = pay;
+    if (pay > cap && pay > before) problems.push(`That puts ${name === 'you' ? 'you' : name} over the $${cap}M cap ($${pay}M).`);
   }
   if (L.settings.typeCap) {
     for (const [t, s, name] of [[me, meSide, 'you'], [ai, aiSide, ai.name]]) {
@@ -431,6 +432,81 @@ export function weeklyTradeOffer(L) {
   if (roll >= WEEKLY_OFFER) return null;
   L.trade = makeTradeOffer(L, pick);
   return L.trade;
+}
+
+// ---------- draft-day swaps ----------
+// While the user is on the clock, an AI team that picks a little later can trade down with
+// them: the user's pick now and a later pick of theirs for the AI's next pick and one of its
+// picks a round or more on. Two picks each way, so every roster still drafts to full size.
+
+// A pick's draft-day worth: steepest at the top of the draft, flatter later on, so a few spots
+// in round 1 buy more spots a round or two later.
+const slotWorth = (L, i) => 1 / (1 + i / (3 * L.teams.length));
+// What the AI wants out of a swap: its side worth at least this much more.
+const SWAP_EDGE = 0.004;
+
+// "Round 2, pick 5 (13th overall)": the pick's place in its round and in the whole draft.
+export function draftPickLabel(L, i, short = false) {
+  const pk = L.picks[i];
+  const inRound = L.picks.slice(0, i + 1).filter((p) => p.round === pk.round).length;
+  return short ? `${pk.round}.${inRound}` : `Round ${pk.round}, pick ${inRound} (${ordinal(i + 1)} overall)`;
+}
+const ordinal = (n) => `${n}${(n % 100 >= 11 && n % 100 <= 13) ? 'th' : [, 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+
+// The best swap each AI team would take for the pick on the clock, at most `max` of them,
+// the closest to even first. Empty unless the user is on the clock in a local draft.
+export function draftSwapOffers(L, max = 3) {
+  if (L.phase !== 'draft') return [];
+  const i = L.pickIndex, me = userTeam(L);
+  if (L.picks[i]?.team !== me.id) return [];
+  const T = L.teams.length;
+  const mine = L.picks.map((p, x) => x).filter((x) => x > i && L.picks[x].team === me.id);
+  const offers = [];
+  for (const t of L.teams) {
+    if (t.user) continue;
+    const theirs = L.picks.map((p, x) => x).filter((x) => x > i && L.picks[x].team === t.id);
+    const j = theirs[0];
+    // Trading down a full round or more is not a trade down.
+    if (j == null || j - i >= T) continue;
+    // The user's earliest later pick that buys a move up: the swap settles soon after.
+    let best = null;
+    for (const m of mine) {
+      if (m <= j) continue;
+      for (const k of theirs) {
+        if (k <= j || k >= m) continue;
+        const give = slotWorth(L, i) + slotWorth(L, m), get = slotWorth(L, j) + slotWorth(L, k);
+        if (give - get < SWAP_EDGE) continue;
+        if (!best || get > best.worth) best = { team: t.id, give: [i, m], get: [j, k], worth: get, edge: give - get };
+      }
+      if (best) break;
+    }
+    if (best) offers.push(best);
+  }
+  return offers.sort((a, b) => a.edge - b.edge || a.get[0] - b.get[0]).slice(0, max);
+}
+
+// Swaps who owns two picks (a[0] with b[0], a[1] with b[1]). A pick keeps the team it started
+// with in `from` while someone else holds it.
+export function swapDraftPicks(picks, a, b) {
+  const pa = picks[a], pb = picks[b];
+  const fa = pa.from ?? pa.team, fb = pb.from ?? pb.team;
+  [pa.team, pb.team] = [pb.team, pa.team];
+  pa.from = fa; pb.from = fb;
+  if (pa.from === pa.team) delete pa.from;
+  if (pb.from === pb.team) delete pb.from;
+}
+
+// Makes the swap if it is still on offer. In the first season it is kept in L.draftSwaps, so a
+// shared league rebuilds the same draft order.
+export function acceptDraftSwap(L, teamId) {
+  const offer = draftSwapOffers(L, L.teams.length).find((o) => o.team === teamId);
+  if (!offer) return null;
+  for (let n = 0; n < 2; n++) {
+    swapDraftPicks(L.picks, offer.give[n], offer.get[n]);
+    if ((L.season ?? 1) === 1) (L.draftSwaps ??= []).push([offer.give[n], offer.get[n]]);
+  }
+  (L.draftDeals ??= []).push({ season: L.season ?? 1, team: teamId, give: offer.give, get: offer.get });
+  return offer;
 }
 
 // ---------- saves ----------

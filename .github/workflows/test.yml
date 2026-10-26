@@ -54,6 +54,6 @@ jobs:
       - name: Replay review and the film room's tape
         run: node test/review.mjs
       - name: Football IQ
-        run: node test/iq.mjs 300 --strict
+        run: node test/iq.mjs 600 --strict
       - name: Gameplay feel (movement, spacing, blocks, coverage reactions, tackles, possession)
         run: node test/feel.mjs 300 --strict

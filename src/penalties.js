@@ -1,7 +1,7 @@
 // Penalties: false start, offside, holding and pass interference. Who commits one comes from
-// awareness (a sloppy Pokémon draws more flags) and, on live plays, from the contact itself: a
-// beaten blocker grabs, a trailing defender interferes. The fast simulator rolls the same fouls
-// from awareness and the matchup. No DOM access.
+// awareness (a sloppy Pokémon draws more flags) and the matchup. One model for both games: the
+// live field rolls the same fouls as the fast simulator, at the snap (preSnapFoul) and at the
+// whistle from what happened (simFouls). No DOM access.
 import { chance, clamp, eff, nm } from './engine.js';
 
 // side: the side that commits it. pre: a dead-ball foul before the snap (no play). yards: the
@@ -21,16 +21,13 @@ export const PENALTIES = {
 // about twice as often at 40, a third as often at 100.
 export const sloppy = (awr) => clamp(1 + (70 - awr) * 0.033, 0.35, 2.2);
 
-// Base rates, per player per play (the fast simulator's, and the live field's hazards).
+// Base rates, per player per play, for the fast simulator and the live field alike.
 export const RATES = {
   falseStart: 0.0011,  // each lineman and the tight end; more on the road (crowd noise)
   offside: 0.0009,     // each down lineman and the outside linebacker
-  holdBlock: 0.0021,   // each lineman (sim), more when he is outmatched
-  holdShed: 0.01,      // live: a beaten blocker grabbing as the rusher gets off
-  holdCover: 0.0026,   // each defensive back (sim)
-  holdCoverLive: 0.02,  // live: a defender hanging on a receiver he is not covering the throw to
-  dpi: 0.032,          // on an incompletion with a defender on the receiver (sim)
-  dpiLive: 0.09,       // live: a trailing defender in contact at the catch point
+  holdBlock: 0.0021,   // each lineman, more when he is outmatched
+  holdCover: 0.0026,   // each defensive back
+  dpi: 0.032,          // on an incompletion with a defender on the receiver
   opi: 0.004,          // on a completion
 };
 
@@ -123,12 +120,4 @@ export function announce(g, f, acc, before, accepted = true) {
   const what = !accepted ? 'The penalty is declined.' : P.side === 'off' ? `${yd}-yard penalty, repeat ${ord[before.down]} down.`
     : `${P.spot ? (yd ? `Spot foul, ${yd} yard${yd === 1 ? '' : 's'}` : 'Spot foul, the ball stays at the 1') : `${yd}-yard penalty`}${acc.first ? ', automatic first down' : `, repeat ${ord[before.down]} down`}.`;
   return `Flag: ${P.name}, ${side}, ${who}. ${what}`;
-}
-
-
-// A foul on the live field: recorded once per kind, at the spot (yards from the line, across).
-export function liveFoul(lp, type, p, at = p) {
-  if (!lp.flags || lp.fouls.some((f) => f.type === type)) return false;
-  lp.fouls.push(foul(type, p.ti, p.id, at.x, at.y, lp.t));
-  return true;
 }

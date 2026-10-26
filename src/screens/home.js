@@ -56,10 +56,14 @@ export function renderHome() {
           ${LEAGUE_SIZES.map((n) => `<label class="pill"><input type="radio" name="teams" value="${n}" ${(st.teams ?? 8) === n ? 'checked' : ''}> ${n} teams${n === 8 ? ', 7 weeks, top 4 in the playoffs' : n === 12 ? ', 3 divisions, 14 weeks, 6 in the playoffs' : ', 4 divisions, 18 weeks, 8 in the playoffs'}</label>`).join('')}
         </fieldset>
         <fieldset><legend>Draft length</legend>
-          <label class="pill"><input type="radio" name="rounds" value="24" ${st.rounds === 24 ? 'checked' : ''}> 24 rounds, starters, kicker and punter</label>
+          <label class="pill"><input type="radio" name="rounds" value="24" ${st.rounds === 24 ? 'checked' : ''}> 24 rounds, starters, kicker and punter. No bench: an injury puts a starter on both sides of the ball</label>
           <label class="pill"><input type="radio" name="rounds" value="28" ${st.rounds === 28 ? 'checked' : ''}> 28 rounds, with 4 bench</label>
           <span class="small muted">A 16-team league without legendaries drafts 24 rounds: the pool runs short at 28.</span>
         </fieldset>
+        <label>Your draft slot<select id="f-pick">
+          <option value="" ${st.pick == null ? 'selected' : ''}>Random</option>
+          ${Array.from({ length: LG.MAX_TEAMS }, (_, i) => `<option value="${i}" ${st.pick === i ? 'selected' : ''} ${i >= (st.teams ?? 8) ? 'hidden' : ''}>Pick ${i + 1} in round 1</option>`).join('')}
+        </select><span class="small muted">A snake draft: pick 1 also picks last in round 2.</span></label>
         <fieldset class="schemes"><legend>Your scheme</legend>
           ${SCHEME_KEYS.map((k) => `<label class="schemepick"><input type="radio" name="scheme" value="${k}" ${(st.scheme ?? 'balanced') === k ? 'checked' : ''}><b>${esc(SCHEMES[k].name)}</b><span class="small muted">${esc(SCHEMES[k].blurb)}</span></label>`).join('')}
         </fieldset>
