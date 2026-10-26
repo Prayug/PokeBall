@@ -153,9 +153,11 @@ export class Stadium {
   }
 
   // Paint the field for this matchup: grass with mowing stripes, lines, numbers, hashes,
-  // the midfield logo and each team's end zone (the one it defends).
-  paint(teams) {
-    const key = teams.map((t) => t.abbr + t.color + t.name + JSON.stringify(kitOf(t))).join('|');
+  // the midfield logo and each team's end zone (the one it defends). view: the way your camera
+  // faces along the field (+1 toward the right end, 0 when nobody is yours); both wordmarks
+  // read upright from it, so your own end zone is not upside down from behind your goal line.
+  paint(teams, view = 0) {
+    const key = teams.map((t) => t.abbr + t.color + t.name + JSON.stringify(kitOf(t))).join('|') + view;
     if (key === this.teamsKey) return;
     this.teamsKey = key;
     const c = this.fieldCanvas, x = c.getContext('2d');
@@ -183,7 +185,7 @@ export class Stadium {
     }
     grain(x, W, H, 4, false);
     // End zones, in each team's kit (kitdraw.js).
-    const ez = (left, team) => paintEndZone(x, left ? 0 : X(100), H, PX, team, left);
+    const ez = (left, team) => paintEndZone(x, left ? 0 : X(100), H, PX, team, left, view || (left ? -1 : 1));
     ez(true, teams[0]); ez(false, teams[1]);
     // Lines
     x.fillStyle = 'rgba(252,253,250,0.97)';
@@ -445,12 +447,17 @@ export class Stadium {
 
   // ---------- goalposts and light towers ----------
   buildPosts() {
-    const mat = new THREE.MeshStandardMaterial({ color: '#ffd23f', roughness: 0.45, metalness: 0.1 });
+    this.posts = [];
     for (const [x, s] of [[-10, -1], [110, 1]]) {
+      // Each post has its own materials, so the one between the lens and the play can fade
+      // (see fadePosts) without the far one fading with it.
+      const mat = new THREE.MeshStandardMaterial({ color: '#ffd23f', roughness: 0.45, metalness: 0.1, transparent: true });
+      const padMat = new THREE.MeshStandardMaterial({ color: '#3b4a5a', roughness: 0.8, transparent: true });
+      this.posts.push({ x, mats: [mat, padMat], fade: 1 });
       const g = new THREE.Group();
       const base = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.2, 3.33, 12), mat);
       base.position.set(x + s * 0.7, 1.66, 0);
-      const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 1.9, 12), new THREE.MeshStandardMaterial({ color: '#3b4a5a', roughness: 0.8 }));
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 1.9, 12), padMat);
       pad.position.set(x + s * 0.7, 0.95, 0);
       const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.72, 10), mat);
       neck.rotation.z = Math.PI / 2; neck.position.set(x + s * 0.35, 3.33, 0);
@@ -464,6 +471,19 @@ export class Stadium {
       }
       g.traverse((o) => { o.castShadow = true; });
       this.root.add(g);
+    }
+  }
+
+  // A goalpost standing between the lens and what it looks at (a snap inside your own 10, the
+  // camera back over the end zone) would cut through the backfield: it fades to a ghost while it
+  // is in the way, and comes back once the camera is past it.
+  fadePosts(cam, look, dt) {
+    for (const P of this.posts ?? []) {
+      const between = (cam.x - P.x) * (look.x - P.x) < 0;
+      const want = between ? 0.15 : 1;
+      P.fade += (want - P.fade) * (1 - Math.exp(-dt * 8));
+      const op = P.fade > 0.99 ? 1 : P.fade;
+      for (const m of P.mats) if (m.opacity !== op) { m.opacity = op; m.depthWrite = op === 1; }
     }
   }
 

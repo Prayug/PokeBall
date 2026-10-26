@@ -264,8 +264,11 @@ export function separate(lp, passes = 2) {
         let dx = b.x - a.x, dy = b.y - a.y, d = len(dx, dy);
         if (d >= need) continue;
         if (d < 1e-6) { dx = a.side === 'off' ? 1 : -1; dy = 0; d = 1; }
-        // Deep overlaps (a block coming apart, a pile) resolve over a few frames, not in one jump.
-        const ux = dx / d, uy = dy / d, over = Math.min(need - Math.min(d, need), SEP_MAX);
+        // Shallow overlaps (a block coming apart) resolve over a few frames, not in one jump; a deep
+        // one (a pile in the trenches) gives up half its depth each pass, so bodies never linger
+        // inside each other.
+        const pen = need - Math.min(d, need);
+        const ux = dx / d, uy = dy / d, over = Math.min(pen, Math.max(SEP_MAX, pen * 0.5));
         // A ball carrier squeezing past his own blockers moves them, not himself.
         const ha = holds(a) && !(b.carrier && a.side === b.side), hb = holds(b) && !(a.carrier && a.side === b.side);
         let ka = ha && !hb ? 0 : !ha && hb ? 1 : 0.5;
@@ -486,6 +489,12 @@ export function buildResult(lp, end) {
   const yardsWord = (y) => (y === 0 ? 'no gain' : y > 0 ? `${y} yard${y === 1 ? '' : 's'}` : `a loss of ${-y}`);
   const stop = end.how === 'out' || end.how === 'incomplete';
   if (end.how === 'flag') return { kind: 'none', noPlay: true, yards: 0, text: '' };
+  // The play ran past its time cap: the officials rule it over as it stands. A ball in the air
+  // or on the turf is an incompletion; whoever holds it is down where he is.
+  if (end.how === 'time') {
+    const b = lp.ball;
+    end = b.state === 'held' && b.holder ? { ...end, how: 'down' } : { ...end, how: 'incomplete', text: `${nm(qb.id)}'s pass falls incomplete.` };
+  }
 
   if (end.how === 'incomplete') {
     st(g, o, qb.id).pa++;
@@ -513,7 +522,7 @@ export function buildResult(lp, end) {
   if (end.how === 'td') yards = lp.goalX;
   yards = Math.max(yards, -lp.spot);
   const tackler = end.tackler ?? null;
-  const tk = tackler ? ` Tackled by ${nm(tackler.id)}.` : end.how === 'out' ? ' Pushed out of bounds.' : end.how === 'slide' ? ' He slides to give himself up.' : '';
+  const tk = tackler ? ` Tackled by ${nm(tackler.id)}.` : end.how === 'out' ? ' Pushed out of bounds.' : end.how === 'slide' ? ' He slides to give himself up.' : end.how === 'down' ? ' He is ruled down.' : '';
   const se = stats.se;
   const highlight = yards >= 20 ? 'big' : null;
 

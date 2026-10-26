@@ -22,7 +22,7 @@ import { Animator } from './anim3d.js';
 import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
 import { positionName } from './formations.js';
-import { flightAt, SIDE as SIDE_W, isGun } from './live.js';
+import { flightAt, flightVel, SIDE as SIDE_W, isGun } from './live.js';
 import { keepTrack } from './live/runs.js';
 
 const reduceMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -229,7 +229,9 @@ export class Stage {
     this.lp = lp;
     if (!lp) return;
     const g = lp.g;
-    this.stadium.paint(g.teams);
+    // Your camera always faces the way your team attacks (behind the offense, or behind your
+    // defense looking back at it), so the end-zone wordmarks are turned to read from there.
+    this.stadium.paint(g.teams, lp.user == null ? 0 : lp.user === 0 ? 1 : -1);
     this.stadium.setVenue(venueOf(g));
     this.stadium.setWeather(g.weather, this.weatherFx);
     for (const t of g.teams) for (const id of t.roster ?? []) { const e = SPRITE_INDEX[id]; if (e) loadChunk(e[0]); template(id); }
@@ -685,7 +687,14 @@ export class Stage {
       }
       // Team rings on the turf: before the snap, in the tactical view, or always if chosen.
       a.base.visible = !!a.fig && (pre || tactical || this.showPips) && !(lp.phase === 'dead' && a.fallWant) && lp.control !== p && lp.p2?.control !== p;
-      if (a.base.visible) { a.base.position.set(a.pos.x, 0.035, a.pos.z); a.base.scale.setScalar(a.body.r * 1.55); a.base.material.opacity = pre ? 0.6 : 0.4; }
+      if (a.base.visible) {
+        // Its size on screen is capped: a disc on the turf right under the lens (the safety
+        // nearest a camera behind the defense) would otherwise fill the bottom of the frame.
+        a.base.position.set(a.pos.x, 0.035, a.pos.z);
+        const cd = this.camera.position.distanceTo(a.base.position);
+        a.base.scale.setScalar(Math.min(a.body.r * 1.55, cd * 0.05));
+        a.base.material.opacity = (pre ? 0.6 : 0.4) * clampN((cd - 3) / 5, 0, 1);
+      }
       a.blob.position.set(a.pos.x, 0.02, a.pos.z);
       const sh = 1 / (1 + lift * 0.9);
       a.blob.scale.setScalar(a.body.r * 1.6 * (0.7 + sh * 0.3));
@@ -706,6 +715,7 @@ export class Stage {
     this.snapNext = false;
     this.applyInset(reduceMotion ? 1 : 1 - Math.exp(-dt * 6));
     if (this.blimp) this.blimpShot(now);
+    this.stadium.fadePosts(this.camera.position, this.rig.look, dt);
     this.stadium.follow(this.rig.look.x, this.rig.look.z * 0.5);
     this.stadium.update(t, dt, this.rig.look);
     this.prevPhase = lp.phase;
@@ -898,8 +908,8 @@ export class Stage {
         }
         this.ballSpin += dt * 26;
         const yaw = Math.atan2(-(F.ty - F.sy) * this.dir, (F.tx - F.sx) * this.dir);
-        const e = lp.t - F.t0, vz = F.vz - 10.7 * e, vh = Math.hypot(F.tx - F.sx, F.ty - F.sy) / F.T;
-        orient(yaw, Math.atan2(vz, vh) * 0.9, this.ballSpin);
+        const v = flightVel(F, Math.min(lp.t - F.t0, F.T));
+        orient(yaw, Math.atan2(v.vz, Math.hypot(v.vx, v.vy)) * 0.9, this.ballSpin);
       } else if (b.state === 'snap') {
         this.ballSpin += dt * 10;
         orient(Math.PI / 2 * this.dir, 0, this.ballSpin);

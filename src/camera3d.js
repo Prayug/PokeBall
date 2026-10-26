@@ -168,7 +168,8 @@ export class CameraRig {
       const slide = off * d * 0.45;
       aim.x += hx * slide; aim.z += hz * slide;
     }
-    return { aim, dist: d, pos: place(d).clone() };
+    const ok = fits(d);
+    return { aim, dist: d, pos: place(d).clone(), ok };
   }
 
   // f: framing for this frame (see Stage.framing): fwd (+1 or -1, the way the offense attacks),
@@ -229,7 +230,17 @@ export class CameraRig {
           lift(safe), tac ? 24 : SHOT_MIN[f.state] ?? 9, tac ? 95 : 64);
         this.pitch = f.snap || this.pitch == null ? pw : this.pitch + (pw - this.pitch) * (1 - Math.exp(-this.dt * 2.5));
         let R = fitAt(0);
-        while (!tac && steep < 24 && (R.pos.x < END_X0 || R.pos.x > END_X1)) { steep += 6; R = fitAt(steep); }
+        // Steeper too when the shot cannot fit at all: deep in your own end with the call sheet
+        // up, the safe area above the sheet is short, and a shot that does not fit backs off to
+        // its farthest and clamps into the stands, looking at empty grass.
+        while (!tac && steep < 30 && (!R.ok || R.pos.x < END_X0 || R.pos.x > END_X1)) { steep += 6; R = fitAt(steep); }
+        if (!tac && !R.ok && f.inset > 0.01) {
+          // Still no fit: frame the line of scrimmage itself (the ball and the bodies over it)
+          // above the sheet, and let the rest of the box run off the edges.
+          const core = [{ x: f.focus.x - s * 6, y: 0, z: f.focus.z }, { x: f.focus.x + s * 4, y: 2, z: f.focus.z }, { x: f.focus.x, y: 0, z: f.focus.z - 5 }, { x: f.focus.x, y: 0, z: f.focus.z + 5 }];
+          const C2 = this.fit(core, s, 0, this.pitch + steep, fov, aspect, { x: f.focus.x, z: f.focus.z * 0.75 }, lift(safe), SHOT_MIN[f.state] ?? 9, 64);
+          if (C2.ok) R = C2;
+        }
         this.steep = f.snap || this.steep == null ? steep : this.steep + (steep - this.steep) * (1 - Math.exp(-this.dt * 3));
         if (Math.abs(this.steep - steep) > 0.5) R = fitAt(this.steep);
         this.place(R, f, C.zoom);

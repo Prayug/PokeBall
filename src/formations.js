@@ -18,7 +18,7 @@ export const SIDE = 26.65;
 // ball's length, but real linemen are not drawn from a camera above and behind them).
 export const NEUTRAL = 0.45;    // the offense's front edge behind the ball
 export const STANDOFF = 0.55;   // the defense's front edge beyond the far end of the ball
-const SPLIT = 0.5;              // air between linemen's bodies (about a two-foot split)
+const SPLIT = 0.6;              // air between linemen's bodies (a wide split, so the line reads as five bodies)
 const AIR = 0.3;                // the least air between any two bodies before the snap
 
 // Line spots have a set width: a lineman whose drawn body is wider than his spot (wings,

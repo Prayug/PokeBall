@@ -22,7 +22,7 @@ import { preSnapFoul } from './penalties.js';
 export { dist, DT, event, finish, GRAVITY, isManual, kin, len, mustGain, note, passBlockWant, perceive, RECEIVERS, seek, separate, setCarrier, sgn, SIDE, slowDown, steer, sticks, traitNotes, unengage } from './live/core.js';
 export { DEF_SCHEMES } from './live/defense.js';
 export { liveKick, returnPrompt } from './live/kicks.js';
-export { ROUTES, PLAY_ROUTES, OPENNESS, releasePoint, catchHeight, flightAt } from './live/passing.js';
+export { ROUTES, PLAY_ROUTES, OPENNESS, releasePoint, catchHeight, flightAt, flightVel } from './live/passing.js';
 export { OFF_FORMATIONS as FORMATIONS, DEF_FORMATIONS, PLAY_FORMATION, CALL_FRONT, NEUTRAL, isGun };
 
 const MAX_TIME = 14;
@@ -1278,6 +1278,7 @@ function recoverStep(lp) {
 }
 
 // ---------- contact: tackles ----------
+export const diveReach = (p) => clamp(p.r * 1.7, 0.55, 1.2);
 function contacts(lp) {
   const c = lp.carrierSet ? lp.carrier : lp.kind === 'pass' && lp.ball.holder === lp.off.QB ? lp.off.QB : null;
   if (!c) return;
@@ -1288,9 +1289,11 @@ function contacts(lp) {
     // AI defenders lay out for a diving tackle when they are just out of reach.
     // Reach grows with body size so big Pokémon can still get their arms on a carrier they
     // are touching, but the base reach is the same for everyone.
-    const near = Math.max(CONTACT, q.r + c.r + 0.3);
-    const aiDive = !isControlled(lp, q) && dd > near && dd < near + 1 && chance(g, 0.05);
-    const reach = near + (q.dive != null && q.dive > 0 ? 0.8 : 0);
+    // A dive adds a body length's worth of reach: a medium Pokémon lays out about 0.8 yd, a
+    // small one less, an extra-large one more (everyone, a person steering him or the AI).
+    const near = Math.max(CONTACT, q.r + c.r + 0.3), lay = diveReach(q);
+    const aiDive = !isControlled(lp, q) && dd > near && dd < near + lay * 1.25 && chance(g, 0.05);
+    const reach = near + (q.dive != null && q.dive > 0 ? lay : 0);
     if (dd > reach && !aiDive) continue;
     q.cool = 0.5;
     if (aiDive) q.dive = 0.3;
