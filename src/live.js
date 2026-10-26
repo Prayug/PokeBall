@@ -824,13 +824,14 @@ function carrierWant(lp, p) {
   // The AI carrier has the same sprint button as you: in a footrace (past the line, nobody in
   // front of him, a pursuer closing) he hits the burst, and it drains and recovers like yours.
   p.aiSprint = false; p.aiOpen = false;
-  if (!isManual(lp, p) && (p.x - (p.runFrom ?? p.x)) * fwd > 2) {
+  if (!isManual(lp, p) && (p.x - (p.runFrom ?? p.x)) * fwd > 2 && (p.side !== 'off' || p.x > 1)) {
     p.aiOpen = true;
     let ahead = false, race = false;
     for (const q of lp.players) {
       if (q.side === p.side || q.stun > 0.2 || q.eng) continue;
       const along = (q.x - p.x) * fwd, d = dist(q, p);
-      if (along > -0.5 && d < 5) { ahead = true; break; }
+      // (Someone in front, or about to get a hand on him: he gathers himself for the contact.)
+      if ((along > -0.5 && d < 5) || d < 2.5) { ahead = true; break; }
       if (d < 7) race = true;
     }
     p.aiSprint = race && !ahead && p.burst > 0.25;

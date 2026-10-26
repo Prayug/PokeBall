@@ -944,7 +944,8 @@ function endKey(lp) { return `${lp.end?.how ?? lp.phase}@${(lp.spotX ?? lp.ball.
 // plays Esc pauses the call sheet; nothing can be called until it is resumed.
 function isPaused() {
   if (L3.lp?.phase === 'dead') return false;
-  return L3.paused || S.helpOpen || (S.menuOpen && !!L3.lp);
+  // (Online, the server runs the walk to the line: the menu holds only a live play there, as before.)
+  return L3.paused || S.helpOpen || (S.menuOpen && !!L3.lp && (L3.lp.phase === 'live' || !L3.net));
 }
 export function togglePause() {
   if (L3.lp?.phase === 'dead' || !S.game || S.game.final || L3.replay || FILM.open) return;
