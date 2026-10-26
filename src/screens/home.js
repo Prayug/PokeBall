@@ -60,6 +60,10 @@ export function renderHome() {
           <label class="pill"><input type="radio" name="rounds" value="28" ${st.rounds === 28 ? 'checked' : ''}> 28 rounds, with 4 bench</label>
           <span class="small muted">A 16-team league without legendaries drafts 24 rounds: the pool runs short at 28.</span>
         </fieldset>
+        <label>Your draft slot<select id="f-pick">
+          <option value="" ${st.pick == null ? 'selected' : ''}>Random</option>
+          ${Array.from({ length: LG.MAX_TEAMS }, (_, i) => `<option value="${i}" ${st.pick === i ? 'selected' : ''} ${i >= (st.teams ?? 8) ? 'hidden' : ''}>Pick ${i + 1} in round 1</option>`).join('')}
+        </select><span class="small muted">A snake draft: pick 1 also picks last in round 2.</span></label>
         <fieldset class="schemes"><legend>Your scheme</legend>
           ${SCHEME_KEYS.map((k) => `<label class="schemepick"><input type="radio" name="scheme" value="${k}" ${(st.scheme ?? 'balanced') === k ? 'checked' : ''}><b>${esc(SCHEMES[k].name)}</b><span class="small muted">${esc(SCHEMES[k].blurb)}</span></label>`).join('')}
         </fieldset>

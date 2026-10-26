@@ -782,6 +782,64 @@ check(injuryOdds(479, 143) > 3 * injuryOdds(143, 479), 'injuries: the small body
   check(L2.teams[0].lineup[slot] === sub, 'retired: migrating twice changes nothing');
 }
 
+// ---------- draft board (draft slot, draft-day swaps, bench value) ----------
+// Your chosen slot holds in every round; a draft-day swap trades two picks each way, so every
+// team still drafts a full roster; a shared code rebuilds both.
+{
+  for (const numTeams of [8, 12]) {
+    for (const userPick of [0, 3, numTeams - 1]) {
+      const L = LG.createLeague({ seed: SEED * 31 + userPick, numTeams, userPick });
+      const rnd = (r) => L.picks.filter((p) => p.round === r).map((p) => p.team);
+      check(rnd(1).indexOf(0) === userPick && rnd(2).indexOf(0) === numTeams - 1 - userPick && L.settings.userPick === userPick,
+        `draft slot: ${numTeams} teams, the user picks ${userPick + 1} in round 1 and ${numTeams - userPick} in round 2`);
+    }
+  }
+  const L = LG.createLeague({ seed: SEED * 37 + 5, teamName: 'Swap Testers', abbr: 'SWP', userPick: 2, rounds: 28 });
+  const counts = () => L.teams.map((t) => L.picks.filter((p) => p.team === t.id).length);
+  const before = counts();
+  let swaps = 0, offered = 0;
+  while (L.phase === 'draft') {
+    const pk = LG.currentPick(L);
+    if (L.teams[pk.team].user) {
+      const offers = TR.draftSwapOffers(L);
+      offered += offers.length;
+      for (const o of offers) {
+        check(o.give[0] === L.pickIndex && o.get[0] > o.give[0] && o.get[1] < o.give[1] && o.get[0] - o.give[0] < L.teams.length, 'draft swap: down now, up later, within a round');
+        check(o.edge >= 0, 'draft swap: the AI team never takes the worse side');
+      }
+      if (offers.length && swaps < 3 && L.pickIndex % 2 === 0) {
+        const o = TR.acceptDraftSwap(L, offers[0].team);
+        swaps++;
+        check(o && L.picks[o.give[0]].team === o.team && L.picks[o.get[0]].team === 0 && L.picks[o.get[1]].team === 0 && L.picks[o.give[1]].team === o.team, 'draft swap: the picks change hands');
+        check(same(counts(), before), 'draft swap: every team keeps as many picks');
+        continue;
+      }
+      const ids = LG.available(L).filter((id) => !LG.blockReason(L, L.teams[0], id));
+      LG.makePick(L, ids[L.pickIndex % ids.length], null);
+    } else { const c = LG.aiChoosePick(L); LG.makePick(L, c.id, c.slot); }
+  }
+  check(offered > 0 && swaps === 3 && L.draftSwaps.length === 6, `draft swap: offers came (${offered}) and three were taken`);
+  check(L.teams.every((t) => t.roster.length === L.settings.rounds), 'draft swap: every roster drafted to full size');
+  const D = decodeLeague(encodeLeague(L));
+  check(D?.userPick === 2 && D.swaps.length === 6, 'draft swap: the share code carries the draft slot and the swaps');
+  const R = leagueFromShare(D);
+  check(same(R.teams.map((t) => t.roster), L.teams.map((t) => t.roster)) && same(R.picks, L.picks) && same(R.schedule, L.schedule), 'draft swap: a shared league rebuilds the same draft');
+  const own = leagueFromShare(D, { replay: false, teamName: 'Mine', abbr: 'MIN' });
+  check(own.picks.filter((p) => p.round === 1).map((p) => p.team).indexOf(0) === 2 && !own.draftSwaps, 'draft slot: drafting a shared league yourself keeps the slot, not the swaps');
+  // A code without the new section still decodes the way it always did.
+  const plain = LG.createLeague({ seed: 77 });
+  check(decodeLeague(encodeLeague(plain))?.userPick === null, 'share: a league without a chosen slot codes as before');
+  // Bench value: with every slot filled, a Pokémon is rated against the starter it would back up.
+  const team = L.teams[0];
+  for (const id of LG.available(L).slice(0, 40)) {
+    const b = LG.benchValue(team, id);
+    const gap = PLAYERS[id].ovr[b.slot] - PLAYERS[team.slots[b.slot]].ovr[b.slot];
+    check(b.incumbent === team.slots[b.slot] && Math.abs(b.score - 0.9 * SLOT[b.slot].value * gap) < 1e-9, 'bench value: 90% of the weighted gap to the starter');
+  }
+  // Labels.
+  check(TR.draftPickLabel(L, 0) === 'Round 1, pick 1 (1st overall)' && TR.draftPickLabel(L, 12, true) === '2.5' && TR.draftPickLabel(L, 12).endsWith('(13th overall)'), 'draft swap: pick labels');
+}
+
 applyGrowth({});
 console.log(`${checks - failures} of ${checks} checks passed in ${Date.now() - t0} ms`);
 if (failures) { console.log(`${failures} failed`); process.exit(1); }
