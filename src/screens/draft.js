@@ -271,6 +271,14 @@ function rosterSlotsHtml(team) {
     ${team.bench.length ? `<p class="muted small">Bench: ${team.bench.map((id) => esc(P(id).name)).join(', ')}</p>` : ''}`;
 }
 
+// The type matchups against everyone rivals have drafted, as net verdicts with the names.
+function rivalEdgeHtml({ good, bad, total }) {
+  if (!total) return '<p class="small muted">Type matchups show here once rivals have drafted.</p>';
+  const names = (ids) => ids.slice(0, 3).map((x) => esc(P(x).name)).join(', ') + (ids.length > 3 ? ` and ${ids.length - 3} more` : '');
+  return `<p class="small">Against the ${total} Pokémon on rival rosters: <span class="good">you have the edge on <b>${good.length}</b></span>${good.length ? ` (${names(good)})` : ''},
+    <span class="bad">they have the edge on <b>${bad.length}</b></span>${bad.length ? ` (${names(bad)})` : ''}.</p>`;
+}
+
 export function detailHtml() {
   const id = S.draft.sel;
   if (id == null || !PLAYERS[id]) return `<p class="muted">Select a Pokémon on the board to see its positions, ability, power and type matchups.</p>`;
@@ -289,7 +297,7 @@ export function detailHtml() {
     <p class="small"><b>${esc(p.ability)}.</b> ${esc(abilityText(id))}</p>
     ${p.types.map((t) => `<p class="small"><b>${t} trait.</b> ${TYPE_TRAITS[t].text}</p>`).join('')}
     ${powerHtml(id)}
-    <p class="small">Super effective against <b>${edge.n}</b> of ${edge.total} Pokémon on rival rosters.</p>
+    ${rivalEdgeHtml(edge)}
     <h4>Best positions</h4>
     <ul class="best">${p.best.slice(0, 3).map((k) => `<li><span class="slot">${k}</span>${bar(p.ovr[k])}${ovr(p.ovr[k])}</li>`).join('')}</ul>
     <p class="small muted mono">HP ${s.hp} · Atk ${s.atk} · Def ${s.def} · SpA ${s.spa} · SpD ${s.spd} · Spe ${s.spe}</p>

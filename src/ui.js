@@ -1,7 +1,7 @@
 // Small view helpers shared by every screen: escaping, sprites, type chips, overall badges.
 import { PLAYERS, roleLabel } from './ratings.js';
 import { SPRITES } from './sprites.js';
-import { ABILITIES, TYPE_COLORS, effectLabel } from './types.js';
+import { ABILITIES, TYPE_COLORS, bestMatchup, effectLabel } from './types.js';
 import { S } from './state.js';
 import { POWER_OF, powerColor, powerText, sidePowers, worksAt } from './powers.js';
 
@@ -28,14 +28,22 @@ export function user() { return S.league?.teams.find((t) => t.user); }
 export function abilityText(id) { const a = ABILITIES[P(id).ability]; return a ? a.text : 'No football effect'; }
 export function bar(v) { return `<span class="bar"><span style="width:${Math.max(4, v)}%"></span></span>`; }
 
+// One matchup as one verdict (who has the edge), with the type effects behind it underneath,
+// rather than two effect labels to weigh against each other.
 export function edgeRow(e) {
   const [mySlot, myId, thSlot, thId] = e.mine === 'off' ? [e.oSlot, e.oId, e.dSlot, e.dId] : [e.dSlot, e.dId, e.oSlot, e.oId];
   const [myMult, thMult] = e.mine === 'off' ? [e.oMult, e.dMult] : [e.dMult, e.oMult];
-  const tag = (m) => (effectLabel(m) ? `<span class="eff ${m > 1 ? 'se' : m === 0 ? 'ne' : 'nve'}">${effectLabel(m)}</span>` : '<span class="eff">neutral</span>');
   return `<li class="edge ${e.edge > 0 ? 'good' : e.edge < 0 ? 'bad' : ''}">
-    <span class="eside"><span class="slot">${mySlot}</span>${sprite(myId, 'xs')}<span class="en">${esc(P(myId).name)}</span>${tag(myMult)}</span>
-    <span class="vsx">vs</span>
-    <span class="eside"><span class="slot">${thSlot}</span>${sprite(thId, 'xs')}<span class="en">${esc(P(thId).name)}</span>${tag(thMult)}</span></li>`;
+    <span class="eside"><span class="slot">${mySlot}</span>${sprite(myId, 'xs')}<span class="en">${esc(P(myId).name)}</span></span>
+    <span class="enet">${e.edge > 0 ? 'You have the edge' : e.edge < 0 ? 'They have the edge' : 'Even'}</span>
+    <span class="eside"><span class="slot">${thSlot}</span>${sprite(thId, 'xs')}<span class="en">${esc(P(thId).name)}</span></span>
+    <span class="ewhy small muted">${edgeWhy(myId, thId, myMult, thMult)}</span></li>`;
+}
+// The type effects behind a matchup, in words: "Ghost is super effective on Alakazam".
+export function edgeWhy(myId, thId, myMult, thMult) {
+  const line = (a, d, m) => `${bestMatchup(P(a), P(d)).type} is ${effectLabel(m)} on ${esc(P(d).name)}`;
+  const parts = [myMult !== 1 && line(myId, thId, myMult), thMult !== 1 && line(thId, myId, thMult)].filter(Boolean);
+  return parts.length ? parts.join(' · ') : 'Neutral both ways';
 }
 
 // A kicker or punter from kickingUnit(): sprite, name, rating and range.

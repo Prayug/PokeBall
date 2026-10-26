@@ -1,5 +1,6 @@
 // Season hub: matchup and scouting report, standings, leaders, playoffs, awards, history,
 // the stored box score of a finished game, and finishing a league game.
+import { DIFFICULTY } from '../difficulty.js';
 import { DEF_SLOTS, OFF_SLOTS, ST_SLOTS } from '../ratings.js';
 import { WEATHER } from '../types.js';
 import { clockText, quarterText, simUntil } from '../engine.js';
@@ -87,7 +88,10 @@ function weekActions(L, label, wrap = true) {
   const btns = live
     ? `<button class="btn primary" data-act="playweek">Resume the game</button><button class="btn" data-act="simweek">Simulate the rest</button><span class="small muted">${esc(g.teams[1].abbr)} ${g.score[1]}, ${esc(g.teams[0].abbr)} ${g.score[0]} · ${quarterText(g.quarter)} ${clockText(g.clock)}</span>`
     : `<button class="btn primary" data-act="playweek">${label}</button><button class="btn" data-act="simweek">Simulate it</button>${rest}`;
-  return wrap ? `<div class="actions">${btns}</div>` : btns;
+  // Difficulty is the user's own games only (see difficulty.js): said here so Legend is not read
+  // as a harder league.
+  const diff = `<span class="small muted diffnote" title="The AI-against-AI games play the same at every level">${esc(DIFFICULTY[S.difficulty]?.name ?? 'Pro')}: your games only</span>`;
+  return wrap ? `<div class="actions">${btns}${diff}</div>` : btns + diff;
 }
 
 // An online league: the server plays the week. Ready up for your game; the commissioner can sim a

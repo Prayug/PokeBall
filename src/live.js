@@ -8,7 +8,7 @@ import { livePower } from './powers.js';
 import { PLAYERS, SLOT, SLOTS } from './ratings.js';
 import { bestMatchup } from './types.js';
 import { weatherPhys } from './weather.js';
-import { OFF_PLAYS, aiTempo, chance, clamp, eff, nm, oobStops, rand, rep, setCall, sigmoid, snapStats } from './engine.js';
+import { OFF_PLAYS, aiTempo, whistleSeconds, chance, clamp, eff, nm, oobStops, rand, rep, setCall, sigmoid, snapStats } from './engine.js';
 import { bodyOf } from './body.js';
 import { diffOf, diffUser } from './difficulty.js';
 import { CALL_FRONT, DEF_FORMATIONS, NEUTRAL, OFF_FORMATIONS, PLAY_FORMATION, alignFormation, foot, formationsFor, frontX, isGun, lineX, overlapIssues, resolveSpacing } from './formations.js';
@@ -18,7 +18,7 @@ import { PLAY_ROUTES, airJumps, ballFlight, buildRoute, contest, coverageRead, l
 import { atSnap, shiftStep } from './live/presnap.js';
 import { aiSide, conceptOf, defaultSide, designedWant, meshPoint, runnerWant, setupRun } from './live/runs.js';
 import { XP_SPOT, kickStep, kickWant, liveKick, setupKick } from './live/kicks.js';
-import { RATES, liveFoul, preSnapFoul, sloppy } from './penalties.js';
+import { preSnapFoul } from './penalties.js';
 export { dist, DT, event, finish, GRAVITY, isManual, kin, len, mustGain, note, passBlockWant, perceive, RECEIVERS, seek, separate, setCarrier, sgn, SIDE, slowDown, steer, sticks, traitNotes, unengage } from './live/core.js';
 export { DEF_SCHEMES } from './live/defense.js';
 export { liveKick } from './live/kicks.js';
@@ -1027,11 +1027,6 @@ function blocks(lp) {
       if (dist(d, c) > 9 || (dist(d, c) > 4 && ahead < -1.5)) rate = Math.max(rate, 2.5);
     }
     if (chance(g, rate * DT)) {
-      // Beaten, the blocker may grab him: the rusher stays held up, and the flag comes out.
-      if (lp.flags && b.side === 'off' && (passPro ? !lp.thrown : lp.carrierSet && dist(d, lp.carrier) < 4) && chance(g, RATES.holdShed * sloppy(b.a.awr) * (1 + Math.max(0, R.diff) / 20)) && liveFoul(lp, 'hold_off', b)) {
-        event(lp, 'flag', '', b, d);
-        continue;
-      }
       // The move fits the body: big and strong bull rushes, light and quick swims, the rest rip.
       const move = mass > 0.25 && d.a.str >= d.a.acc ? 'bull' : d.a.acc > 70 || mass < -0.3 ? 'swim' : 'rip';
       const target = lp.carrierSet ? lp.carrier : lp.snapTo ?? lp.off.QB;
@@ -1402,4 +1397,4 @@ export function autoPlay(lp, maxSteps = 60 * 20) {
 }
 
 // Seconds of game clock the play used.
-export function playSeconds(lp) { return Math.max(4, Math.round((lp.deadAt ?? lp.t) + 2.5)); }
+export function playSeconds(lp) { return whistleSeconds(lp.deadAt ?? lp.t); }
