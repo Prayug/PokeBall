@@ -5,6 +5,7 @@
 // record, points and playoff finish, and the friend's league keeps score against it.
 import { PLAYERS, RETIRED, SLOT_KEYS } from './ratings.js';
 import * as LG from './league.js';
+import { swapDraftPicks } from './trades.js';
 
 const VERSION = 1;
 // The deployed game: share links point here when the game is opened from a file.
@@ -14,9 +15,19 @@ export const SHARE_URL = 'https://prayug.github.io/PokeBall/';
 // point (the schedule and the trade offer are drawn from it once the draft ends).
 export function draftRecord(L) {
   if (!L) return null;
-  if ((L.season ?? 1) > 1) return L.firstDraft ? { picks: L.firstDraft.picks, rng: L.firstDraft.rng ?? null } : null;
+  if ((L.season ?? 1) > 1) {
+    const F = L.firstDraft;
+    return F ? { picks: F.picks, rng: F.rng ?? null, userPick: F.userPick ?? null, swaps: F.swaps ?? [] } : null;
+  }
   const picks = L.picks.slice(0, L.pickIndex).map((p) => [p.player, p.slot]);
-  return { picks, rng: L.phase === 'draft' ? L.rngState : L.draftRng ?? null };
+  return { picks, rng: L.phase === 'draft' ? L.rngState : L.draftRng ?? null, userPick: L.settings.userPick ?? null, swaps: L.draftSwaps ?? [] };
+}
+
+// The first draft's order: the seed's, with the user's chosen slot and any draft-day swaps.
+function draftOrder({ seed, rounds, numTeams, userPick = null, swaps = [] }) {
+  const picks = LG.createLeague({ seed, rounds, numTeams, userPick }).picks;
+  for (const [a, b] of swaps) if (picks[a] && picks[b]) swapDraftPicks(picks, a, b);
+  return picks;
 }
 
 const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -53,13 +64,15 @@ export function encodeLeague(L, { challenge = true } = {}) {
   const str = (s) => { const b = new TextEncoder().encode(String(s ?? '').slice(0, 24)); out.push(b.length, ...b); };
   const S = L.settings;
   u32(L.seed >>> 0);
-  out.push((S.legendaries ? 1 : 0) | (S.typeCap ? 2 : 0) | (rec.rng != null ? 4 : 0) | (ch ? 8 : 0), S.rounds, S.numTeams ?? L.teams.length);
+  // 16: the draft order section at the end (the user's chosen slot, draft-day swaps).
+  const extra = rec.userPick != null || rec.swaps.length > 0;
+  out.push((S.legendaries ? 1 : 0) | (S.typeCap ? 2 : 0) | (rec.rng != null ? 4 : 0) | (ch ? 8 : 0) | (extra ? 16 : 0), S.rounds, S.numTeams ?? L.teams.length);
   if (rec.rng != null) u32(rec.rng >>> 0);
   str(me.name); str(me.abbr);
   out.push((rec.picks.length >> 8) & 255, rec.picks.length & 255);
   // Each pick is 12 bits: the Pokémon, and whether it went somewhere other than the slot the
   // draft would put it in on its own (then 5 more bits name the slot).
-  const order = LG.createLeague({ seed: L.seed, rounds: S.rounds, numTeams: S.numTeams ?? L.teams.length }).picks;
+  const order = draftOrder({ seed: L.seed, rounds: S.rounds, numTeams: S.numTeams ?? L.teams.length, userPick: rec.userPick, swaps: rec.swaps });
   const slots = L.teams.map(() => ({ slots: {} }));
   const bits = [];
   const put = (v, n) => { for (let k = n - 1; k >= 0; k--) bits.push((v >> k) & 1); };
@@ -78,6 +91,11 @@ export function encodeLeague(L, { challenge = true } = {}) {
     out.push(Math.min(255, ch.gp), Math.min(255, ch.w), Math.min(255, ch.l), Math.min(255, ch.t));
     u16(Math.min(65535, ch.pf)); u16(Math.min(65535, ch.pa)); out.push(ch.finish ?? 0);
     u16(check16(out));
+  }
+  // Last, so a build from before it reads the rest of the code as it always did.
+  if (extra) {
+    out.push(rec.userPick ?? 255, (rec.swaps.length >> 8) & 255, rec.swaps.length & 255);
+    for (const [a, b] of rec.swaps) out.push((a >> 8) & 255, a & 255, (b >> 8) & 255, b & 255);
   }
   return b64url(out);
 }
@@ -116,15 +134,28 @@ export function decodeLeague(text) {
     }
     if (!rounds || numTeams < 2 || numTeams > LG.MAX_TEAMS || n > rounds * numTeams) return null;
     let challenge = null;
+    i = Math.ceil(bit / 8);
     if (flags & 8) {
-      i = Math.ceil(bit / 8);
       const u16 = () => (u8() << 8) | u8();
       const c = { gp: u8(), w: u8(), l: u8(), t: u8(), pf: u16(), pa: u16(), finish: u8() };
       const end = i, sum = u16();
       if (sum !== check16(b.slice(0, end)) || c.w + c.l + c.t !== c.gp || c.finish > 5) return null;
       challenge = { ...c, id: sum.toString(16).toUpperCase().padStart(4, '0') };
     }
-    return { code: m[1], seed, rounds, numTeams, legendaries: !!(flags & 1), typeCap: !!(flags & 2), rng, name, abbr, picks, challenge };
+    let userPick = null;
+    const swaps = [];
+    if (flags & 16) {
+      const u16 = () => (u8() << 8) | u8();
+      const up = u8();
+      userPick = up === 255 ? null : up;
+      if (userPick != null && userPick >= numTeams) return null;
+      for (let k = u16(); k > 0; k--) {
+        const a = u16(), c = u16();
+        if (a >= rounds * numTeams || c >= rounds * numTeams) return null;
+        swaps.push([a, c]);
+      }
+    }
+    return { code: m[1], seed, rounds, numTeams, legendaries: !!(flags & 1), typeCap: !!(flags & 2), rng, name, abbr, picks, challenge, userPick, swaps };
   } catch { return null; }
 }
 
@@ -132,8 +163,13 @@ export function decodeLeague(text) {
 // went (the sharer's team becomes yours); without them, you draft against the same AI teams.
 export function leagueFromShare(D, { replay = true, teamName, abbr } = {}) {
   const L = LG.createLeague({ teamName: replay ? D.name : teamName ?? D.name, abbr: replay ? D.abbr : abbr ?? D.abbr, rounds: D.rounds,
-    legendaries: D.legendaries, typeCap: D.typeCap, numTeams: D.numTeams, seed: D.seed });
+    legendaries: D.legendaries, typeCap: D.typeCap, numTeams: D.numTeams, seed: D.seed, userPick: D.userPick ?? null });
   if (!replay) return L;
+  // The sharer's draft-day swaps, all at once: each only moved picks not yet made.
+  if (D.swaps?.length) {
+    L.picks = draftOrder({ seed: D.seed, rounds: D.rounds, numTeams: D.numTeams, userPick: D.userPick ?? null, swaps: D.swaps });
+    L.draftSwaps = D.swaps.map((s) => [...s]);
+  }
   // Picks don't draw from the league's random state, so it can be set to the shared one first:
   // the schedule and the trade offer at the end of the draft come out the same.
   if (D.rng != null) L.rngState = D.rng;

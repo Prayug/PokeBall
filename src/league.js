@@ -73,7 +73,7 @@ export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', round
     for (const id of row) picks.push({ round: r + 1, team: id, player: null, slot: null });
   }
   return {
-    version: 2, seed, rngState: rng.state(), settings: { rounds, legendaries, typeCap, numTeams },
+    version: 2, seed, rngState: rng.state(), settings: { rounds, legendaries, typeCap, numTeams, userPick },
     teams, divisions: makeDivisions(numTeams), picks, pickIndex: 0, phase: 'draft', week: 0, schedule: [], results: [], playoffs: null, champion: null,
     seasonStats: {}, season: 1, history: [], growth: {}, condition: {}, rookies: [], trade: null, offseason: null,
     injuries: {}, weekly: [],
@@ -213,7 +213,7 @@ export function blockReason(L, team, id) {
   const p = PLAYERS[id];
   if (L.settings.typeCap) {
     const same = team.roster.filter((x) => PLAYERS[x].types[0] === p.types[0]).length;
-    if (same >= 4) return `Already 4 ${p.types[0]} types`;
+    if (same >= 4) return `Already 4 ${p.types[0]} primary types`;
   }
   return null;
 }
@@ -230,6 +230,21 @@ export function bestOpenSlot(team, id) {
 // but not so much that an 89 passer goes ahead of a 99 anywhere else.
 const DRAFT_WEIGHT_CAP = 1.15;
 function slotValue(id, slot) { return Math.min(SLOT[slot].value, DRAFT_WEIGHT_CAP) * (PLAYERS[id].ovr[slot] - BASELINE[slot]); }
+export { slotValue };
+
+// With every slot filled: the slot where this Pokémon comes closest to (or beats) the starter,
+// weighted by the slot's value. A backup is worth 90% of that gap. (The draft board's Fit; the
+// AI's own bench picks still use their older formula.)
+export function benchValue(team, id) {
+  let best = null;
+  for (const k of SLOT_KEYS) {
+    const cur = team.slots[k] ?? team.lineup?.[k];
+    const gap = PLAYERS[id].ovr[k] - (cur != null ? PLAYERS[cur].ovr[k] : BASELINE[k]);
+    const score = 0.9 * SLOT[k].value * gap;
+    if (!best || score > best.score) best = { slot: k, score, incumbent: cur ?? null };
+  }
+  return best;
+}
 
 export function currentPick(L) { return L.picks[L.pickIndex] ?? null; }
 
@@ -735,7 +750,8 @@ export function finishOffseason(L, userCuts) {
     t.slots = { ...t.lineup };
   }
   if ((L.season ?? 1) === 1 && !L.firstDraft) {
-    L.firstDraft = { picks: L.picks.slice(0, L.pickIndex).map((p) => [p.player, p.slot]), rng: L.draftRng ?? null };
+    L.firstDraft = { picks: L.picks.slice(0, L.pickIndex).map((p) => [p.player, p.slot]), rng: L.draftRng ?? null,
+      userPick: L.settings.userPick ?? null, swaps: L.draftSwaps ?? [] };
   }
   L.season++;
   L.picks = []; L.pickIndex = 0; L.week = 0; L.schedule = []; L.results = []; L.seasonStats = {};
