@@ -73,7 +73,7 @@ export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', round
     for (const id of row) picks.push({ round: r + 1, team: id, player: null, slot: null });
   }
   return {
-    version: 2, seed, rngState: rng.state(), settings: { rounds, legendaries, typeCap, numTeams },
+    version: 2, seed, rngState: rng.state(), settings: { rounds, legendaries, typeCap, numTeams, userPick },
     teams, divisions: makeDivisions(numTeams), picks, pickIndex: 0, phase: 'draft', week: 0, schedule: [], results: [], playoffs: null, champion: null,
     seasonStats: {}, season: 1, history: [], growth: {}, condition: {}, rookies: [], trade: null, offseason: null,
     injuries: {}, weekly: [],
@@ -213,7 +213,7 @@ export function blockReason(L, team, id) {
   const p = PLAYERS[id];
   if (L.settings.typeCap) {
     const same = team.roster.filter((x) => PLAYERS[x].types[0] === p.types[0]).length;
-    if (same >= 4) return `Already 4 ${p.types[0]} types`;
+    if (same >= 4) return `Already 4 ${p.types[0]} primary types`;
   }
   return null;
 }
@@ -226,7 +226,25 @@ export function bestOpenSlot(team, id) {
   if (!open.length) return 'BENCH';
   return open.reduce((a, b) => (slotValue(id, b) > slotValue(id, a) ? b : a));
 }
-function slotValue(id, slot) { return SLOT[slot].value * (PLAYERS[id].ovr[slot] - BASELINE[slot]); }
+// A slot's weight in the draft is capped: the quarterback counts most on the field (SLOT.value),
+// but not so much that an 89 passer goes ahead of a 99 anywhere else.
+const DRAFT_WEIGHT_CAP = 1.15;
+function slotValue(id, slot) { return Math.min(SLOT[slot].value, DRAFT_WEIGHT_CAP) * (PLAYERS[id].ovr[slot] - BASELINE[slot]); }
+export { slotValue };
+
+// With every slot filled: the slot where this Pokémon comes closest to (or beats) the starter,
+// weighted by the slot's value. A backup is worth 90% of that gap. (The draft board's Fit; the
+// AI's own bench picks still use their older formula.)
+export function benchValue(team, id) {
+  let best = null;
+  for (const k of SLOT_KEYS) {
+    const cur = team.slots[k] ?? team.lineup?.[k];
+    const gap = PLAYERS[id].ovr[k] - (cur != null ? PLAYERS[cur].ovr[k] : BASELINE[k]);
+    const score = 0.9 * SLOT[k].value * gap;
+    if (!best || score > best.score) best = { slot: k, score, incumbent: cur ?? null };
+  }
+  return best;
+}
 
 export function currentPick(L) { return L.picks[L.pickIndex] ?? null; }
 
@@ -248,6 +266,8 @@ export function aiChoosePick(L, teamId = currentPick(L).team) {
   const { r, save } = leagueRng(L);
   const open = openSlots(team);
   const picksLeft = L.picks.slice(L.pickIndex).filter((p) => p.team === teamId).length;
+  // No coin flips at the top of the draft: round 1 takes the best value on the board.
+  const firstRound = (L.picks[L.pickIndex]?.round ?? 0) === 1;
   let best = null;
   for (const id of available(L)) {
     if (blockReason(L, team, id)) continue;
@@ -267,7 +287,8 @@ export function aiChoosePick(L, teamId = currentPick(L).team) {
     if (team.coach === 'trench' && S && ['OL', 'DL'].includes(S.group)) score += 4;
     if (team.coach === 'types' && team.favTypes.some((t) => p.types.includes(t))) score += 5;
     if (S) score += schemeDraft(team.coach, S.group);
-    score += (r() - 0.5) * 6;
+    const jitter = (r() - 0.5) * 6;
+    if (!firstRound) score += jitter;
     if (!best || score > best.score) best = { id, slot, score };
   }
   save();
@@ -496,15 +517,21 @@ export function leaders(L) {
   };
 }
 
-// How many Pokémon on rival rosters this one is super effective against.
+// This Pokémon against every Pokémon already on a rival roster, one net verdict each (the same
+// sum the field uses, see matchups): `good` it has the edge on, `bad` that have the edge on it.
 export function rivalEdge(L, id) {
   const p = PLAYERS[id];
-  let n = 0, total = 0;
+  const good = [], bad = [];
+  let total = 0;
   for (const t of L.teams) {
     if (t.user) continue;
-    for (const x of t.roster) { total++; if (bestMultiplier(p, PLAYERS[x]) > 1) n++; }
+    for (const x of t.roster) {
+      total++;
+      const net = matchupModifier(bestMultiplier(p, PLAYERS[x])) - matchupModifier(bestMultiplier(PLAYERS[x], p));
+      if (net > 0) good.push(x); else if (net < 0) bad.push(x);
+    }
   }
-  return { n, total };
+  return { good, bad, total };
 }
 
 // ---------- matchups and scouting ----------
@@ -723,7 +750,8 @@ export function finishOffseason(L, userCuts) {
     t.slots = { ...t.lineup };
   }
   if ((L.season ?? 1) === 1 && !L.firstDraft) {
-    L.firstDraft = { picks: L.picks.slice(0, L.pickIndex).map((p) => [p.player, p.slot]), rng: L.draftRng ?? null };
+    L.firstDraft = { picks: L.picks.slice(0, L.pickIndex).map((p) => [p.player, p.slot]), rng: L.draftRng ?? null,
+      userPick: L.settings.userPick ?? null, swaps: L.draftSwaps ?? [] };
   }
   L.season++;
   L.picks = []; L.pickIndex = 0; L.week = 0; L.schedule = []; L.results = []; L.seasonStats = {};

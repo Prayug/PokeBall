@@ -93,7 +93,8 @@ for (let n = 0; n < games; n++) {
     segsTotal += segs.length;
     ok(d.plays === 0 || segs.length > 0, `a drive with plays has a chart (${d.result}, ${d.plays} plays)`);
     ok(segs.every((s) => s.from >= -1 && s.from <= 101 && s.to >= -1 && s.to <= 101 && ['run', 'pass', 'flag', 'sack', 'to', 'kick'].includes(s.kind)), 'every snap is on the field');
-    ok(segs.filter((s) => s.kind !== 'kick').length <= d.plays + 2, `a chart has no more snaps than the drive (${segs.length} for ${d.plays})`);
+    // (A flag is drawn on the chart but is no play: a drive can carry several.)
+    ok(segs.filter((s) => s.kind !== 'kick' && s.kind !== 'flag').length <= d.plays + 2, `a chart has no more snaps than the drive (${segs.length} for ${d.plays})`);
     const t = driveTime(g, d);
     ok(t >= 0 && t <= 3600, `drive time is sane (${t})`);
     if (d.result === 'Touchdown') ok(segs.some((s) => s.td), 'a touchdown drive ends in the end zone');

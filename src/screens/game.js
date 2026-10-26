@@ -14,7 +14,7 @@ import { adjustHtml, aiFormation, aiFront, callSheet, callSheetHtml, clockRow, f
 import { DIFFICULTY, DIFFICULTY_LEVELS, applyDifficulty } from '../difficulty.js';
 import { tendencyLines, typeEdges } from '../scout.js';
 import { powerColor, powerLine } from '../powers.js';
-import { L3, afterLivePlay, challengeReady, fieldBusy, markBefore, replayReady, resetBetweenGames, stage, startLive } from './live3d.js';
+import { L3, afterLivePlay, challengeReady, fieldBusy, markBefore, replayReady, resetBetweenGames, stage, startLive, takeBack } from './live3d.js';
 import { filmReady } from './film.js';
 import { driveChartSvg, scorebugHtml } from './broadcast.js';
 import { report as netReport, send as netSend } from '../net.js';
@@ -268,7 +268,7 @@ function modeHtml() {
 export function difficultyHtml() {
   const cur = S.difficulty ?? 'pro';
   return `<div class="gm-row seg diffs" role="radiogroup" aria-label="Difficulty">${DIFFICULTY_LEVELS.map((k) => `<button class="btn tiny ${cur === k ? 'on' : ''}" data-act="difficulty" data-level="${k}" role="radio" aria-checked="${cur === k}" title="${esc(DIFFICULTY[k].blurb)}">${DIFFICULTY[k].name}</button>`).join('')}</div>
-    <p class="small muted mode-note">${esc(DIFFICULTY[cur].blurb)}.</p>`;
+    <p class="small muted mode-note">${esc(DIFFICULTY[cur].blurb)}. Only in your own games: the rest of the league plays the same at every level.</p>`;
 }
 export function setDifficulty(k) {
   if (!DIFFICULTY[k]) return;
@@ -488,6 +488,7 @@ export function doCall(call) {
   if (!g || g.final || S.busy || L3.lp) return;
   if (stage && ((L3.flow !== 'PLAY_SELECTION' && L3.flow != null) || fieldBusy())) return;
   const us = userSide();
+  L3.pcHold = false;
   // R on the next call sheet calls it again (see quickCalls).
   const remember = () => { if (g.phase === 'play') (S.lastCall ??= {})[`${us}:${g.poss === us ? 'off' : 'def'}`] = call; };
   if (twoPlayer()) {
@@ -568,21 +569,28 @@ function twoPlayerCall(g, call) {
   animatePlay(entry, () => { S.busy = false; save(); render(); });
 }
 
-// The play clock ran out on the call sheet. On offense that is a delay of game (the full play
-// clock comes off a running game clock, then 5 yards); otherwise, and on Rookie always, the call
-// that fits is made for you, as a coach's default.
+// The play clock ran out on the call sheet, or with the play lined up and not snapped. On offense
+// that is a delay of game (the full play clock comes off a running game clock, then 5 yards, or
+// half the distance near your own goal): a lined-up play is taken back, never snapped with nobody
+// on the stick, and the play clock holds until you make the next call, so a run of expiries
+// cannot walk you into a safety. Otherwise, and on Rookie always, the call that fits is made for
+// you, as a coach's default (on Rookie a play you already lined up just waits for your snap).
 export function playClockOut() {
   const g = S.game;
-  if (!g || g.final || S.busy || L3.lp) return;
+  const lined = L3.lp?.phase === 'pre';
+  if (!g || g.final || S.busy || (L3.lp && !lined)) return;
   if (g.phase === 'play' && g.poss === userSide() && (twoPlayer() || S.difficulty !== 'rookie')) {
-    markBefore();
+    if (lined) takeBack();
+    else markBefore();
     if (stage && L3.preview) { L3.spots = worldSpots(L3.preview.lp); L3.preview = null; }
     const e = delayOfGame(g) ?? g.log[g.log.length - 1];
     S.csTab = null;
+    L3.pcHold = true;
     if (stage) { afterLivePlay(e); return; }
     save(); render();
     return;
   }
+  if (lined) { L3.pcHold = true; return; }
   const { fit } = callSheet(g);
   if (fit) doCall(fit);
 }

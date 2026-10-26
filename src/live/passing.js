@@ -1,7 +1,6 @@
 // The passing game in a live play: routes, the quarterback's reads, the throw and the ball's
 // flight, and the catch, the contested ball, the interception and the incompletion.
 import { traitMod } from '../traits.js';
-import { RATES, liveFoul, sloppy } from '../penalties.js';
 import { PLAYERS } from '../ratings.js';
 import { chance, clamp, nm, rand, randn, rep, st } from '../engine.js';
 import { DT, GRAVITY, SIDE, dist, event, finish, isManual, kin, len, mustGain, note, passBlockWant, seek, setCarrier, sgn, sticks, traitNotes, unengage } from './core.js';
@@ -497,12 +496,6 @@ function release(lp, r, away, kind = 'touch', place = null) {
   for (const pad of [lp, lp.p2]) if (pad && pad.user === lp.o && pad.control === qb && !lp.autoQB) { pad.control = r; pad.manual = false; pad.handoverLock = true; }
   lp.stats.target = r;
   lp.stats.cov = nearestDef(lp, r);
-  // A defender hanging on a receiver downfield the ball is not going to: defensive holding.
-  if (lp.flags) for (const q of lp.players) {
-    const m = q.man;
-    if (q.side !== 'def' || !m || m === r || m.x < 5 || dist(q, m) > 1.3) continue;
-    if (chance(g, RATES.holdCoverLive * sloppy(q.a.awr)) && liveFoul(lp, 'hold_def', q, m)) { event(lp, 'flag', '', q, m); break; }
-  }
   event(lp, 'throw', `${nm(qb.id)} throws for ${nm(r.id)}`, qb, r);
 }
 
@@ -696,7 +689,6 @@ function arrival(lp) {
     if (inBounds && contest(lp, pI(R.diff), pI(R.base), R, dfd, r, 'for the interception')) { interception(lp, dfd, spot); return; }
     const pB = (diff) => clamp(0.3 + diff * 0.01 - dd * 0.15 + (userPlay ? 0.25 : 0) + (dUp ? 0.1 : 0) - (rUp ? 0.08 : 0), 0.15, 0.9);
     if (dr > rReach || contest(lp, pB(R.diff), pB(R.base), R, dfd, r, 'at the catch point')) {
-      interference(lp, dfd, r, dd, dr, spot);
       st(g, lp.d, dfd.id).pd++;
       dropBall(lp, 0.12, 3.2);
       event(lp, 'deflect', '', dfd, r);
@@ -736,8 +728,6 @@ function arrival(lp) {
     const k = rac ? 0.6 : deepCatch || aggro ? 0.3 : 0.45;
     r.vx *= k; r.vy *= k; r.slow = rac ? 0.08 : deepCatch ? 0.5 : 0.3;
     lp.catchKind = rac ? 'rac' : aggro || contested ? 'aggressive' : 'possession';
-    // Shoving off to make a contested catch: offensive pass interference.
-    if (contested && lp.flags && chance(g, RATES.opi * 4 * sloppy(r.a.awr)) && liveFoul(lp, 'opi', r)) event(lp, 'flag', '', r, dfd);
     r.caughtAt = lp.t;
     lp.caught = true;
     lp.catchX = r.x;
@@ -746,16 +736,9 @@ function arrival(lp) {
     event(lp, 'catch', `${nm(r.id)} makes the catch`, r, lp.off.QB);
     return;
   }
-  if (contested) { st(g, lp.d, dfd.id).pd++; interference(lp, dfd, r, dd, dr, spot); }
+  if (contested) st(g, lp.d, dfd.id).pd++;
   dropBall(lp, 0.2, 1.5);
   incomplete(lp, `${nm(lp.off.QB.id)}'s pass for ${nm(r.id)} is dropped${contested ? ` with ${nm(dfd.id)} draped on him` : ''}.`);
-}
-
-// A defender who gets there late and through the receiver, not to the ball: pass interference,
-// spotted where the ball came down. Likelier for a careless defender and the later he is.
-function interference(lp, d, r, dd, dr, spot) {
-  if (!lp.flags || !d || dd > 1.6 || dd < dr - 0.2) return;
-  if (chance(lp.g, RATES.dpiLive * sloppy(d.a.awr) * (1 + Math.max(0, dd - dr))) && liveFoul(lp, 'dpi', d, spot)) event(lp, 'flag', '', d, r);
 }
 
 function interception(lp, d, spot) {
