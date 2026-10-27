@@ -16,7 +16,7 @@ import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthe
 import { renderOffseason } from './screens/offseason.js';
 import { initPads } from './screens/pad.js';
 import { copyShare, loadShared, openSharedText, readShareFromUrl } from './screens/share.js';
-import { renderFreeAgency } from './screens/freeagency.js';
+import { faBoardHtml, renderFreeAgency } from './screens/freeagency.js';
 import { renderRecords } from './screens/records.js';
 import { drawKitPreview, kitAct, kitInput, renderKit } from './screens/kit.js';
 import { cleanKit, inkOn, kitOf } from './kits.js';
@@ -373,6 +373,7 @@ function onInput(e) {
   const t = e.target;
   if (t.type === 'range' && t.id?.startsWith('snd-')) { soundInput(t); return; }
   if (t.id === 'k-word') { kitInput(t); return; }
+  if (t.id === 'fa-q') { S.faQ = t.value; const board = document.getElementById('fa-board'); if (board) board.innerHTML = faBoardHtml(); }
   if (t.id === 'fa-amount') {
     S.faAmount = Math.round(Number(t.value));
     const pos = t.selectionStart;

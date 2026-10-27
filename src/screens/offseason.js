@@ -20,28 +20,31 @@ export function renderOffseason() {
     return (sa ? SLOT_KEYS.indexOf(sa) : 99) - (sb ? SLOT_KEYS.indexOf(sb) : 99);
   });
   const others = L.teams.filter((t) => !t.user);
+  const campCard = (c, big) => `<article class="dev-card">${sprite(c.id, big ? 'sm' : 'xs')}<span><b>${esc(P(c.id).name)}</b> ${c.team != null && c.team !== me.id ? teamBadge(L.teams[c.team]) : ''}<span class="slot">${c.slot ?? ''}</span>${c.slot ? ovr(P(c.id).ovr[c.slot]) : ''}</span><span class="small good">${gainText(c.gains)}</span></article>`;
   return `<section class="offseason">
     <p class="eyebrow">Season ${L.season} offseason</p>
     <h1>Training camp and cuts</h1>
-    <p class="lede">Pokémon who played the most snaps last season developed. Now cut exactly ${need}. Cut Pokémon join the free agent pool, where every team bids for them and for the undrafted, and the rookie draft fills whatever spots are left.</p>
+    <p class="lede">Cut exactly ${need}.</p>
     <div class="season-grid">
       <div class="col">
-        <div class="card"><h3>Your camp report</h3>${mineCamp.length ? `<ul class="camp">${mineCamp.map((c) => `<li>${sprite(c.id, 'sm')}<span><b>${esc(P(c.id).name)}</b> <span class="slot">${c.slot}</span>${ovr(P(c.id).ovr[c.slot])}</span><span class="small good">${gainText(c.gains)}</span></li>`).join('')}</ul>` : '<p class="muted">Nobody played enough snaps to develop.</p>'}
+        <div class="card"><h3>Your camp report</h3>${mineCamp.length ? `<div class="dev-cards">${mineCamp.map((c) => campCard(c, true)).join('')}</div>` : '<p class="muted">Nobody played enough snaps to develop.</p>'}
           <p class="small muted">Each ${LG.SNAPS_PER_POINT} snaps is worth +2 to a rating the Pokémon's position uses, up to +8 a season and +${LG.GROWTH_CAP} in a career.</p></div>
         <div class="card"><h3>Your roster <span class="muted">${cuts.size} of ${need} cut</span></h3>
-          <ul class="cutlist">${rows.map((id) => {
+          <div class="cut-cards">${rows.map((id) => {
             const k = slotOf(id) ?? P(id).best[0];
-            return `<li><label class="check ${cuts.has(id) ? 'cut' : ''}"><input type="checkbox" data-cut="${id}" ${cuts.has(id) ? 'checked' : ''}>
-              <span class="slot">${slotOf(id) ?? 'BN'}</span>${sprite(id, 'xs')}<span class="cn">${esc(P(id).name)}</span>${ovr(P(id).ovr[k])}</label></li>`;
-          }).join('')}</ul>
+            return `<article class="cut-card ${cuts.has(id) ? 'cut' : ''}"><label class="check">
+              <input type="checkbox" data-cut="${id}" ${cuts.has(id) ? 'checked' : ''}>
+              ${sprite(id, 'sm')}<span class="cn"><b>${esc(P(id).name)}</b><span class="slot">${slotOf(id) ?? 'BN'}</span>${ovr(P(id).ovr[k])}</span>
+              <span class="cutmark">${cuts.has(id) ? 'Cut' : 'Keep'}</span></label></article>`;
+          }).join('')}</div>
           <div class="actions"><button class="btn primary" data-act="finishoffseason" ${cuts.size === need ? '' : 'disabled'}>Confirm cuts and open free agency</button>
           <button class="btn" data-act="suggestcuts">Use suggested cuts</button></div></div>
       </div>
       <div class="col">
         ${hofClassHtml(L)}
-        <div class="card"><h3>Around the league</h3><ul class="leaguecuts">${others.map((t) => `<li>${teamBadge(t)}<span>Cutting ${O.cuts[t.id].map((id) => esc(P(id).name)).join(', ')}</span></li>`).join('')}</ul></div>
-        <div class="card"><h3>Top developers</h3><ul class="camp">${O.camp.slice().sort((a, b) => Object.values(b.gains).reduce((x, y) => x + y, 0) - Object.values(a.gains).reduce((x, y) => x + y, 0)).slice(0, 8)
-          .map((c) => `<li>${sprite(c.id, 'xs')}<span>${esc(P(c.id).name)} ${teamBadge(L.teams[c.team])}</span><span class="small good">${gainText(c.gains)}</span></li>`).join('')}</ul></div>
+        <div class="card"><h3>Around the league</h3><div class="dev-cards">${others.map((t) => `<article class="dev-card">${teamBadge(t)}<span><b>${esc(t.name)}</b><span class="small muted">Cutting ${O.cuts[t.id].map((id) => esc(P(id).name)).join(', ')}</span></span></article>`).join('')}</div></div>
+        <div class="card"><h3>Top developers</h3><div class="dev-cards">${O.camp.slice().sort((a, b) => Object.values(b.gains).reduce((x, y) => x + y, 0) - Object.values(a.gains).reduce((x, y) => x + y, 0)).slice(0, 8)
+          .map((c) => campCard(c, false)).join('')}</div></div>
       </div>
     </div>
   </section>`;

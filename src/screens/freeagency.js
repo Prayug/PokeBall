@@ -8,29 +8,53 @@ import { P, esc, ovr, sprite, teamBadge, typeChips, user } from '../ui.js';
 const money = (v) => `$${v}M`;
 const topOvr = (id) => P(id).ovr[P(id).best[0]];
 
+// The same target list the board always used: the pool ranked by lineup gain, type cap applied.
+function capTargets(L, me) {
+  return FA.faTargets(L, me, 60).filter((t) => FA.typeCapOk(L, me, t.id, t.release));
+}
+function shownTargets(L, me) {
+  const q = (S.faQ ?? '').trim().toLowerCase();
+  const rows = capTargets(L, me);
+  return q ? rows.filter((t) => P(t.id).name.toLowerCase().includes(q)) : rows;
+}
+
+export function faBoardHtml() {
+  const L = S.league, me = user();
+  const all = capTargets(L, me);
+  const rows = shownTargets(L, me);
+  if (!all.length) return '<p class="empty">Nobody in the pool would start for you.</p>';
+  if (!rows.length) return '<p class="empty">No Pokémon match that search.</p>';
+  return rows.map((t) => {
+    const p = P(t.id);
+    const from = t.cutBy != null ? `Cut by ${L.teams[t.cutBy].abbr}` : 'Undrafted';
+    return `<article class="fa-card ${t.id === S.faSel ? 'sel' : ''}" data-act="fasel" data-id="${t.id}">
+      ${sprite(t.id, 'sm')}
+      <span class="pk-name"><b>${esc(p.name)}</b>${typeChips(p.types)}</span>
+      <span class="fit"><span class="slot">${p.best[0]}</span>${ovr(topOvr(t.id))}<span class="plays">${playsHtml(me, t.id)}</span></span>
+      <span class="ask ${t.ask > FA.maxBid(L, me, t.release) ? 'bad' : ''}">${money(t.ask)}</span>
+      <span class="from">${t.cutBy != null ? teamBadge(L.teams[t.cutBy]) : ''}<span class="muted small">${esc(from)}</span></span>
+    </article>`;
+  }).join('');
+}
+
 export function renderFreeAgency() {
   const L = S.league, me = user(), F = L.fa;
   if (!F) return '<section><p>Free agency is closed.</p></section>';
-  const targets = FA.faTargets(L, me, 60).filter((t) => FA.typeCapOk(L, me, t.id, t.release));
+  const targets = capTargets(L, me);
   if (S.faSel != null && !targets.some((t) => t.id === S.faSel) && !FA.faPool(L).some((p) => p.id === S.faSel)) S.faSel = null;
   S.faSel ??= targets[0]?.id ?? null;
   const space = FA.capSpace(L, me);
   return `<section class="fa">
     <p class="eyebrow">Season ${L.season} · Free agency · Round ${F.round + 1} of ${F.rounds}</p>
     <h1>Free agency</h1>
-    <p class="lede">Every Pokémon cut around the league, plus everyone never drafted, is up for bids. Each round every team makes one sealed bid; the highest bid signs, and a tie goes to the team with the worse record. Salaries come from overall rating, and every payroll has to fit under the ${money(L.cap)} cap. The rookie draft fills whatever spots are left.</p>
     ${lastRoundHtml(L, me)}
     <div class="draft-grid">
       <div class="card board">
         <h3>Your targets <span class="muted small">Ranked by how much they add to your lineup</span></h3>
-        <div class="tablewrap"><table class="board-table fa-table">
-          <thead><tr><th>Pokémon</th><th class="best">Best</th><th class="num">OVR</th><th>Plays</th><th class="num">Asking</th><th class="from">From</th></tr></thead>
-          <tbody>${targets.length ? targets.map((t) => `<tr class="${t.id === S.faSel ? 'sel' : ''}" data-act="fasel" data-id="${t.id}">
-            <td><span class="pk">${sprite(t.id, 'sm')}<span><b>${esc(P(t.id).name)}</b>${typeChips(P(t.id).types)}</span></span></td>
-            <td class="best"><span class="slot">${P(t.id).best[0]}</span></td><td class="num">${ovr(topOvr(t.id))}</td>
-            <td>${playsHtml(me, t.id)}</td><td class="num ${t.ask > FA.maxBid(L, me, t.release) ? 'bad' : ''}">${money(t.ask)}</td>
-            <td class="from">${t.cutBy != null ? `<span class="small">Cut by</span> ${teamBadge(L.teams[t.cutBy])}` : '<span class="muted small">Undrafted</span>'}</td></tr>`).join('')
-            : '<tr><td colspan="6" class="empty">Nobody in the pool would start for you.</td></tr>'}</tbody></table></div>
+        <div class="filters">
+          <input id="fa-q" type="search" placeholder="Search Pokémon" value="${esc(S.faQ ?? '')}" aria-label="Search free agents">
+        </div>
+        <div class="fa-cards" id="fa-board">${faBoardHtml()}</div>
       </div>
       <div class="draft-side">
         <div class="card">

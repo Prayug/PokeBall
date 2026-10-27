@@ -331,6 +331,26 @@ function onlineClockHtml(myTurn, onClock) {
   return `<span class="clocknum" id="pick-clock">${secs}</span><span>${myTurn ? 'seconds, then auto-pick' : 'seconds left on the clock'}</span>`;
 }
 
+// The pick the clock or the AI timer was armed for. A Draft click takes that pick first and
+// clears the timer; if the timer wakes up afterwards, the ticket no longer matches and it does not pick.
+function armTicket(L) {
+  const pk = LG.currentPick(L);
+  return pk ? { index: L.pickIndex, team: pk.team } : null;
+}
+function ticketOpen(ticket) {
+  const L = S.league;
+  if (!ticket || !L || L.phase !== 'draft') return false;
+  const pk = LG.currentPick(L);
+  return !!pk && L.pickIndex === ticket.index && pk.team === ticket.team;
+}
+function takeByTimer(L, ticket) {
+  if (!ticketOpen(ticket)) return;
+  const c = autoChoice(L, ticket.team);
+  S.draft.lastTake = { by: 'timer', id: c.id, index: ticket.index };
+  LG.makePick(L, c.id, c.slot);
+  afterPick();
+}
+
 export function draftTick() {
   if (S.online) {
     clearInterval(timers.clock);
@@ -346,26 +366,22 @@ export function draftTick() {
   if (!L || L.phase !== 'draft' || S.screen !== 'draft') return;
   const pk = LG.currentPick(L);
   const mine = L.teams[pk.team].user;
+  const ticket = armTicket(L);
   if (!mine || S.draft.autoAll || (S.draft.queueAuto && queueTop(L) != null)) {
     // AI picks come quicker in a bigger league, so the wait between your picks stays about the same.
-    timers.draft = setTimeout(() => {
-      const c = autoChoice(L, pk.team);
-      LG.makePick(L, c.id, c.slot);
-      afterPick();
-    }, mine ? (S.draft.autoAll ? 120 : 700) : Math.max(90, Math.round(260 * 8 / L.teams.length)));
+    timers.draft = setTimeout(() => takeByTimer(S.league, ticket), mine ? (S.draft.autoAll ? 120 : 700) : Math.max(90, Math.round(260 * 8 / L.teams.length)));
     return;
   }
   S.draft.clock = 60;
   if (S.setup.clock) {
     timers.clock = setInterval(() => {
+      if (!ticketOpen(ticket)) { clearInterval(timers.clock); return; }
       S.draft.clock--;
       const el = document.getElementById('pick-clock');
       if (el) el.textContent = S.draft.clock;
       if (S.draft.clock <= 0) {
         clearInterval(timers.clock);
-        const c = autoChoice(L, pk.team);
-        LG.makePick(L, c.id, c.slot);
-        afterPick();
+        takeByTimer(S.league, ticket);
       }
     }, 1000);
   }
@@ -510,7 +526,11 @@ export function userDraft(id, slot) {
   const pk = LG.currentPick(L);
   const me = user();
   if (pk.team !== me.id || LG.blockReason(L, me, id) || !LG.available(L).includes(id)) return;
+  // The button owns this pick. The clock and the AI timer are cleared before the pick is written,
+  // and a timer that was already armed for this index does not write a second one.
   clearTimers();
+  const index = L.pickIndex;
+  S.draft.lastTake = { by: 'button', id, index, team: me.id };
   LG.makePick(L, id, slot && slot !== 'BENCH' && me.slots[slot] == null ? slot : null);
   afterPick();
 }

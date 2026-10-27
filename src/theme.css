@@ -211,6 +211,27 @@ details:not([open]) > :not(summary), [hidden] { display: none !important; }
 .prospect .fitwhy { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
 .prospect .acts { grid-area: acts; display: flex; gap: 6px; justify-content: flex-end; }
 .prospect.sel { border-color: var(--me); box-shadow: inset 3px 0 0 var(--me); }
+.fa-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; align-content: start; max-height: 70vh; overflow: auto; }
+.fa-card { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; grid-template-areas: "spr name ask" "spr fit from"; gap: 2px 8px; align-items: center; padding: 8px; border-radius: 14px; border: 1px solid var(--line); background: var(--turf-2); color: inherit; text-align: left; cursor: pointer; }
+.fa-card .spr { grid-area: spr; width: 56px; height: 56px; }
+.fa-card .pk-name { grid-area: name; min-width: 0; }
+.fa-card .pk-name b { display: block; }
+.fa-card .fit { grid-area: fit; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+.fa-card .ask { grid-area: ask; font: 700 16px/1 var(--f-data); }
+.fa-card .from { grid-area: from; display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.fa-card.sel { border-color: var(--me); box-shadow: inset 3px 0 0 var(--me); }
+.cut-cards, .dev-cards, .who-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.cut-card, .dev-card, .who-card { display: flex; gap: 8px; align-items: center; padding: 8px; border-radius: 14px; border: 1px solid var(--line); background: var(--turf-2); }
+.cut-card .check { display: flex; gap: 8px; align-items: center; width: 100%; cursor: pointer; }
+.cut-card .cn { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; flex: 1; min-width: 0; }
+.cut-card .cn b { display: block; flex-basis: 100%; }
+.cut-card.cut { box-shadow: inset 3px 0 0 var(--bad); }
+.cut-card .cutmark { font: 700 11px/1 var(--f-data); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.cut-card.cut .cutmark { color: var(--bad); }
+.dev-card > span, .who-card > span { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.who-card em { font: 700 11px/1 var(--f-data); font-style: normal; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.who-card.ready { box-shadow: inset 3px 0 0 var(--good); }
+.who-card.away { opacity: 0.72; }
 .board-sort { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .board-sort details { font-size: 13px; }
 .attrgrid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; list-style: none; margin: 0; padding: 0; }
