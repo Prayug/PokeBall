@@ -250,8 +250,8 @@ function onClick(e) {
       S.draft.sel = Number(el.dataset.id);
       const card = document.getElementById('detail');
       card.innerHTML = detailHtml();
-      document.querySelectorAll('#board-body tr.sel').forEach((r) => r.classList.remove('sel'));
-      document.querySelector(`#board-body tr[data-id="${S.draft.sel}"]`)?.classList.add('sel');
+      document.querySelectorAll('#board-body .prospect.sel').forEach((r) => r.classList.remove('sel'));
+      document.querySelector(`#board-body .prospect[data-id="${S.draft.sel}"]`)?.classList.add('sel');
       // Bring the card out from under the sticky top bar (scroll-margin-top keeps it clear).
       const bar = document.querySelector('.top')?.getBoundingClientRect().bottom ?? 0;
       if (card.getBoundingClientRect().top < bar) card.scrollIntoView({ block: 'start', behavior: 'smooth' });

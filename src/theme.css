@@ -198,6 +198,23 @@ details:not([open]) > :not(summary), [hidden] { display: none !important; }
 .pcard .pblurb { display: block; }
 .game.g3d .hud-tip kbd, .callsheet kbd { font: 700 12px/1 var(--f-data); }
 .callsheet .cs-cards { gap: 8px; }
+.pcard.glancing { outline: 2px solid #ffd23f; outline-offset: 2px; }
+.glance-line { position: absolute; left: 50%; bottom: calc(var(--dock, 150px) + 16px); transform: translateX(-50%); z-index: 5; pointer-events: none; max-width: min(640px, calc(100% - 24px)); padding: 7px 14px; border-radius: 8px; background: rgba(9, 22, 17, 0.9); border: 1px solid rgba(255, 210, 63, 0.55); color: var(--chalk); font: 600 15px/1.35 var(--f-data); text-align: center; }
+.kickprompt { display: flex; flex-wrap: wrap; gap: 8px 14px; justify-content: center; align-items: center; max-width: min(520px, calc(100% - 24px)); }
+.kickprompt .kp-act { display: inline-flex; align-items: center; gap: 6px; }
+.prospects { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; align-content: start; }
+.prospect { display: grid; grid-template-columns: 56px minmax(0, 1fr); grid-template-areas: "spr name" "spr fit" "acts acts"; gap: 2px 8px; align-items: center; padding: 8px; border-radius: 14px; border: 1px solid var(--line); background: var(--turf-2); color: inherit; text-align: left; cursor: pointer; }
+.prospect .spr { grid-area: spr; width: 56px; height: 56px; }
+.prospect .pk-name { grid-area: name; min-width: 0; }
+.prospect .pk-name b { display: block; }
+.prospect .fit { grid-area: fit; display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.prospect .fitwhy { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.prospect .acts { grid-area: acts; display: flex; gap: 6px; justify-content: flex-end; }
+.prospect.sel { border-color: var(--me); box-shadow: inset 3px 0 0 var(--me); }
+.board-sort { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.board-sort details { font-size: 13px; }
+.attrgrid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; list-style: none; margin: 0; padding: 0; }
+.attrgrid li { background: var(--turf-2); border-radius: 8px; padding: 4px 6px; display: flex; justify-content: space-between; gap: 4px; font: 700 12px/1.2 var(--f-data); }
 .modal-back { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.62); display: grid; place-items: center; padding: 18px; }
 .modal { width: min(640px, 100%); max-height: min(86vh, 820px); overflow: auto; background: #171b26; border: 1px solid var(--line); border-radius: 20px; padding: 16px; display: grid; gap: 10px; position: relative; }
 .modal-x { justify-self: end; }

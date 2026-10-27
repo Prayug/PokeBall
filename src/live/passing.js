@@ -233,8 +233,12 @@ export function routeWant(lp, p) {
     // step or two into the open. Anything with an arrow keeps going the way the arrow points
     // (a slant keeps slanting, a drag keeps crossing, a go keeps going), turning upfield along
     // the sideline when it gets there, and only late in a play that never found him does he
-    // settle into a hole in the coverage.
-    const stop = !r || r[r.length - 1]?.stop;
+    // settle into a hole in the coverage. A route with no point on it (nothing was drawn) has
+    // no arrow to follow, so he settles instead of reading a point that is not there.
+    const last = r?.length ? r[r.length - 1] : null;
+    let pointed = false;
+    if (r) for (const w of r) if (w && w.x != null) { pointed = true; break; }
+    const stop = !pointed || !!last?.stop;
     if (!stop) {
       if (live) p.doneAt ??= lp.t;
       if (p.x < lp.goalX + 7.5 && (!live || lp.t - p.doneAt < 2)) return arrowWant(lp, p, r);
@@ -243,6 +247,7 @@ export function routeWant(lp, p) {
     return seekSpace(lp, p, p.settle ??= { x: Math.min(p.x + (stop ? 0 : 1.5), lp.goalX + 5), y: p.y }, stop ? 1.6 : 3.2, stop ? 0.5 : 0.75);
   }
   const w = r[p.wp];
+  if (!w || (w.x == null && w.block == null)) { p.wp++; return routeWant(lp, p); }
   if (w.block != null) {
     if (lp.t > w.block) {
       // Done checking for the blitz: release into the route, the same shape as drawn, from
@@ -302,8 +307,13 @@ function arrowWant(lp, p, r) {
 // The arrow as the play art draws it on: from the last break, along that leg, turning upfield
 // at the sideline instead of running out of bounds.
 function arrowArt(p, r) {
-  const b = r[r.length - 1], a0 = r[r.length - 2];
-  const a = a0 && a0.x != null ? a0 : p.legFrom && (p.legFrom.x !== b.x || p.legFrom.y !== b.y) ? p.legFrom : r.from ?? { x: p.x, y: p.y };
+  const pts = [];
+  if (r) for (const w of r) if (w && w.x != null) pts.push(w);
+  const b = pts[pts.length - 1] ?? { x: p.x, y: p.y };
+  const a0 = pts.length >= 2 ? pts[pts.length - 2] : null;
+  const leg = p.legFrom && p.legFrom.x != null && (p.legFrom.x !== b.x || p.legFrom.y !== b.y) ? p.legFrom : null;
+  const from = r?.from && r.from.x != null ? r.from : null;
+  const a = a0 ?? leg ?? from ?? { x: p.x, y: p.y };
   let dx = b.x - a.x, dy = b.y - a.y;
   const l = len(dx, dy) || 1;
   dx /= l; dy /= l;
@@ -311,9 +321,9 @@ function arrowArt(p, r) {
   let k = 25;
   if (dy && Math.abs(b.y + dy * k) > sideIn) k = Math.max(0, (sideIn * Math.sign(dy) - b.y) / dy);
   const e = { x: b.x + dx * k, y: clamp(b.y + dy * k, -sideIn, sideIn) };
-  const pts = [b, e];
-  if (k < 25) pts.push({ x: e.x + 30, y: e.y });
-  return pts;
+  const out = [b, e];
+  if (k < 25) out.push({ x: e.x + 30, y: e.y });
+  return out;
 }
 
 // A point `ahead` yards further along a polyline than the closest point to (x, y).

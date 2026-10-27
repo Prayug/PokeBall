@@ -123,7 +123,8 @@ export function kickStep(lp) {
 function kickIt(lp) {
   const K = lp.kick, g = lp.g, kp = lp.kicker, b = lp.ball;
   K.kickedAt = lp.t;
-  const from = K.punt ? kp : lp.holder;
+  const from = K.punt ? kp : lp.holder ?? kp;
+  if (!from || from.x == null) return;
   // A rusher on top of the kick when the foot meets the ball can get a hand on it.
   const rusher = lp.players.find((q) => q.side === 'def' && !q.eng && q.stun <= 0 && dist(q, from) < (K.punt ? 1.9 : 1.6) && q.x < from.x + 2.2);
   if (rusher && chance(g, K.punt ? 0.45 : 0.35)) {
@@ -251,7 +252,8 @@ export function kickWant(lp, p) {
     case 'ksafety': return seek(p, { x: Math.max(p.x, Math.min(land.x - 18, p.x + 10)), y: land.y * 0.4 }, 0.6, 1);
     case 'kblock': {
       // Protect the spot the ball is kicked from: square up on the nearest free rusher.
-      const from = K.punt ? { x: kp.x + 1.5, y: kp.y } : lp.holder ?? kp;
+      const from = K.punt ? (kp ? { x: kp.x + 1.5, y: kp.y } : null) : lp.holder ?? kp;
+      if (!from || from.x == null) return seek(p, p.home, 0.4, 0.5);
       let m = null, md = 4;
       for (const q of lp.players) if (q.side === 'def' && q.role === 'krush' && !q.eng && dist(q, p) < md) { md = dist(q, p); m = q; }
       if (!m) return seek(p, { x: p.home.x - 0.5, y: p.home.y }, 0.4, 0.5);
@@ -268,7 +270,8 @@ export function kickWant(lp, p) {
       return seek(p, { x: land.x - 2, y: land.y + lane }, 1, 0.5);
     }
     case 'krush': {
-      const from = K.punt ? { x: kp.x + 1.8, y: kp.y } : lp.holder ?? kp;
+      const from = K.punt ? (kp ? { x: kp.x + 1.8, y: kp.y } : null) : lp.holder ?? kp;
+      if (!from || from.x == null) return seek(p, p.home, 1, 0.1);
       return seek(p, from, 1, 0.1);
     }
     case 'kjam': {

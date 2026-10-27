@@ -134,7 +134,7 @@ export function boardRowsHtml() {
   const L = S.league, me = user();
   const myTurn = LG.currentPick(L)?.team === me.id;
   const rows = boardIds();
-  if (!rows.length) return `<tr><td colspan="17" class="empty">No Pokémon match. Clear the search, type, generation or open-spots filter.</td></tr>`;
+  if (!rows.length) return `<p class="empty">No Pokémon match. Clear the search, type, generation or open-spots filter.</p>`;
   const rank = rankerFor(L, me);
   const queued = new Set(draftQueue(L, me));
   const canQueue = !S.online;
@@ -142,12 +142,12 @@ export function boardRowsHtml() {
     const p = P(id);
     const block = LG.blockReason(L, me, id);
     const why = fitShort(fit, rank(id, fit.slot));
-    return `<tr class="${S.draft.sel === id ? 'sel' : ''}" data-act="select" data-id="${id}">
-      <td class="pk">${sprite(id, 'sm')}<span><b>${esc(p.name)}</b>${p.legendary ? '<i class="leg">Legendary</i>' : ''}${roleHtml(p)}<span class="types">${typeChips(p.types)}</span></span></td>
-      <td class="fit" title="${esc(why)}"><div class="fitcell"><b class="fitnum">${fitNum(fit)}</b><span class="fitsub"><span class="slot">${fit.slot}</span>${fit.rated ? '' : ovr(fit.v)}</span><span class="fitwhy">${esc(why)}</span></div></td>
-      ${Object.keys(ATTRS).map((k) => `<td class="num a-${k}">${p.attrs[k]}</td>`).join('')}
-      <td class="acts">${canQueue ? `<button class="btn tiny ghost star ${queued.has(id) ? 'on' : ''}" data-act="queue" data-id="${id}" aria-pressed="${queued.has(id)}" title="${queued.has(id) ? 'Take off your queue' : 'Add to your queue'}">${queued.has(id) ? '★' : '☆'}</button>` : ''}<button class="btn tiny ${myTurn && !block ? 'primary' : ''}" data-act="draftbtn" data-id="${id}" ${myTurn && !block ? '' : 'disabled'} title="${block ? esc(block) : ''}">${block ? 'Blocked' : 'Draft'}</button></td>
-    </tr>`;
+    return `<article class="prospect ${S.draft.sel === id ? 'sel' : ''}" data-act="select" data-id="${id}">
+      ${sprite(id, 'sm')}
+      <span class="pk-name"><b>${esc(p.name)}</b>${p.legendary ? '<i class="leg">Legendary</i>' : ''}${roleHtml(p)}<span class="types">${typeChips(p.types)}</span></span>
+      <span class="fit" title="${esc(why)}"><b class="fitnum">${fitNum(fit)}</b><span class="slot">${fit.slot}</span>${fit.rated ? '' : ovr(fit.v)}<span class="fitwhy">${esc(why)}</span></span>
+      <span class="acts">${canQueue ? `<button class="btn tiny ghost star ${queued.has(id) ? 'on' : ''}" data-act="queue" data-id="${id}" aria-pressed="${queued.has(id)}" title="${queued.has(id) ? 'Take off your queue' : 'Add to your queue'}">${queued.has(id) ? '★' : '☆'}</button>` : ''}<button class="btn tiny ${myTurn && !block ? 'primary' : ''}" data-act="draftbtn" data-id="${id}" ${myTurn && !block ? '' : 'disabled'} title="${block ? esc(block) : ''}">${block ? 'Blocked' : 'Draft'}</button></span>
+    </article>`;
   }).join('');
 }
 
@@ -207,14 +207,13 @@ export function renderDraft() {
   const onClock = pk ? L.teams[pk.team] : null;
   const myTurn = onClock?.id === me.id;
   const types = Object.keys(TYPE_COLORS);
-  const head = (k, label) => `<th class="num a-${k}"><button class="sort ${d.sort === k ? 'on' : ''}" data-act="sort" data-key="${k}" title="${ATTRS[k] ?? ''}">${label}</button></th>`;
   const recent = L.picks.slice(0, L.pickIndex).slice(-10).reverse();
   return `<section class="draft">
     <div class="draft-head">
       <div>
         <p class="eyebrow">${(L.season ?? 1) > 1 ? `Season ${L.season} rookie draft · ` : ''}Round ${pk?.round ?? '-'} of ${L.picks[L.picks.length - 1].round} · Pick ${L.pickIndex + 1} of ${L.picks.length}${pk?.from != null ? ` · ${esc(L.teams[pk.from].abbr)}'s pick, traded` : ''}</p>
         <h1>${myTurn ? 'You are on the clock' : `${esc(onClock?.name ?? '')} are picking`}</h1>
-        ${coachTip('draft', 'The rating is for a position. Open a row to see the card, then draft into a spot.')}
+        ${coachTip('draft', 'The rating is for a position. Open a prospect to see the card, then draft into a spot.')}
         ${S.online && !myTurn && onClock ? `<p class="small muted">${onClock.human ? `${esc(onClock.coachName)} is on the clock` : 'The AI picks for this team'}</p>` : ''}
         ${me.coach !== 'balanced' && SCHEMES[me.coach] ? `<p class="small muted">${esc(SCHEMES[me.coach].name)}: auto-picks reach for ${schemeGroups(me.coach)}.</p>` : ''}
       </div>
@@ -237,14 +236,14 @@ export function renderDraft() {
           <select id="d-rate" aria-label="Rate at position"><option value="fit" ${d.rate === 'fit' ? 'selected' : ''}>Fit: value to your roster</option>${SLOT_KEYS.map((k) => `<option value="${k}" ${d.rate === k ? 'selected' : ''}>Rate at ${k}</option>`).join('')}</select>
         </div>
         ${needsHtml(me)}
-        <div class="tablewrap">
-          <table class="board-table">
-            <thead><tr><th><button class="sort ${d.sort === 'name' ? 'on' : ''}" data-act="sort" data-key="name">Pokémon</button></th>
-            <th><button class="sort ${d.sort === 'fit' ? 'on' : ''}" data-act="sort" data-key="fit" title="${d.rate === 'fit' ? 'Value to your roster: the slot weight times the rating over a typical starter, at your best open slot' : `Rating at ${d.rate}`}">${d.rate === 'fit' ? 'Fit' : d.rate}</button></th>
-            ${Object.keys(ATTRS).map((k) => head(k, ATTR_SHORT[k])).join('')}<th></th></tr></thead>
-            <tbody id="board-body">${boardRowsHtml()}</tbody>
-          </table>
+        <div class="board-sort">
+          <button class="btn tiny ${d.sort === 'name' ? 'primary' : ''}" data-act="sort" data-key="name">Name</button>
+          <button class="btn tiny ${d.sort === 'fit' ? 'primary' : ''}" data-act="sort" data-key="fit">Fit</button>
+          <details><summary>Sort by a rating</summary>
+            <span class="board-sort">${Object.keys(ATTRS).map((k) => `<button class="btn tiny ${d.sort === k ? 'primary' : ''}" data-act="sort" data-key="${k}" title="${esc(ATTRS[k] ?? '')}">${ATTR_SHORT[k]}</button>`).join('')}</span>
+          </details>
         </div>
+        <div class="prospects" id="board-body">${boardRowsHtml()}</div>
       </div>
       <aside class="draft-side">
         <div class="card detail" id="detail">${detailHtml()}</div>
@@ -299,6 +298,7 @@ export function detailHtml() {
     ${rivalEdgeHtml(edge)}
     <h4>Best positions</h4>
     <ul class="best">${p.best.slice(0, 3).map((k) => `<li><span class="slot">${k}</span>${bar(p.ovr[k])}${ovr(p.ovr[k])}</li>`).join('')}</ul>
+    <ul class="attrgrid">${Object.keys(ATTRS).map((k) => `<li title="${esc(ATTRS[k] ?? '')}"><span>${ATTR_SHORT[k]}</span><b>${p.attrs[k]}</b></li>`).join('')}</ul>
     <details><summary>Type notes and base stats</summary>
       ${p.types.map((t) => `<p class="small"><b>${t}.</b> ${TYPE_TRAITS[t].text}</p>`).join('')}
       <p class="small muted mono">HP ${s.hp} · Atk ${s.atk} · Def ${s.def} · SpA ${s.spa} · SpD ${s.spd} · Spe ${s.spe}</p>
