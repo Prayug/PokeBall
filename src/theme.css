@@ -103,10 +103,10 @@ details:not([open]) > :not(summary), [hidden] { display: none !important; }
 .abar .bar { width: auto; height: 8px; min-width: 0; flex: none; }
 .abar b { color: var(--chalk); text-align: right; }
 .abar.wide { grid-template-columns: 110px minmax(0, 1fr) 28px; }
-.tbadge { display: inline-flex; align-items: center; gap: 4px; }
-.tbadge .tlogo { width: 18px; height: 18px; flex: none; display: block; }
-.tbadge .tmark { letter-spacing: 0.04em; }
-.bc-abbr .tlogo { width: 16px; height: 16px; display: block; margin: 0 auto 1px; }
+.tbadge, .top-team .tbadge, .rv-head .tbadge, .onclock .tbadge { display: inline-flex; align-items: center; gap: 4px; padding: 0; border-radius: 0; background: none; box-shadow: none; min-width: 0; text-shadow: none; color: var(--chalk); }
+.tbadge .tlogo { width: 26px; height: 26px; flex: none; display: block; }
+.tbadge .tmark { letter-spacing: 0.04em; color: var(--team); }
+.bc-abbr .tlogo { width: 20px; height: 20px; display: block; margin: 0 auto 1px; }
 .coach { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--amber) 12%, var(--turf-2)); border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); }
 .coach p { margin: 0; }
 

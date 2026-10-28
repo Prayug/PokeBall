@@ -54,6 +54,13 @@ const DEFAULT_KITS = {
   LAV: { stadium: 'haunted', chant: 'howl', style: 'outline' },
   VIR: { stadium: 'classic', chant: 'stomp', style: 'stripes' },
   PAL: { stadium: 'classic', chant: 'letsgo', style: 'block' },
+  // Johto clubs, pinned so a display-name change does not move their venue.
+  GLD: { stadium: 'classic', chant: 'stomp', style: 'outline' },
+  ECR: { stadium: 'classic', chant: 'charge', style: 'outline' },
+  OLV: { stadium: 'dome', chant: 'letsgo' },
+  MAH: { stadium: 'classic', chant: 'letsgo', style: 'block' },
+  BLK: { stadium: 'seaside', chant: 'letsgo' },
+  AZA: { stadium: 'classic', chant: 'letsgo', style: 'script' },
 };
 
 const HEX = /^#[0-9a-f]{6}$/i;
