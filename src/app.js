@@ -3,13 +3,14 @@
 import { applyGrowth, autoDepthChart } from './ratings.js';
 import { createGame, manualSub, simUntil } from './engine.js';
 import { worldSpots } from './live.js';
-import { cry, initAudio, ui } from './audio.js';
+import { cry, initAudio, soundOn, ui } from './audio.js';
 import { applySound, clickSound, soundButtonHtml, soundInput, soundTest, syncMusic, toggleMute } from './screens/sound.js';
 import { cameraDefaults } from './camera3d.js';
 import * as LG from './league.js';
 import { S, clearTimers, deleteSlot, loadPrefs, loadSaved, migrateStorage, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
 import { download, esc, profileOverlay, teamBadge, user } from './ui.js';
 import { importSave, loadSnapshot, renderHome } from './screens/home.js';
+import { mountMenu, unmountMenu } from './screens/menu3d.js';
 import { boardRowsHtml, detailHtml, draftSkip, draftSwap, draftTick, moveQueue, queueTop, renderDraft, renderGrades, toggleQueue, userDraft } from './screens/draft.js';
 import { depthClick, depthDrop, renderDepth } from './screens/depth.js';
 import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthers } from './screens/season.js';
@@ -260,6 +261,7 @@ function onClick(e) {
     case 'draftbtn': { const id = Number(el.dataset.id); const n = L?.pickIndex; userDraft(id, null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
     case 'draftsel': { const id = S.draft.sel, n = L?.pickIndex; userDraft(id, document.getElementById('d-slot')?.value ?? null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
     case 'sort': S.draft.sort = el.dataset.key; render(); break;
+    case 'draftsheet': S.draft.sheet = !S.draft.sheet; render(); break;
     case 'draftskip': draftSkip(); break;
     case 'queue': toggleQueue(Number(el.dataset.id)); render(); if (S.draft.queueAuto) draftTick(); break;
     case 'queueup': case 'queuedown': moveQueue(Number(el.dataset.id), act === 'queueup' ? -1 : 1); render(); break;
@@ -477,6 +479,7 @@ export function render() {
     default: body = renderHome();
   }
   const y = window.scrollY;
+  unmountMenu();
   const boardScroll = document.querySelector('.board .tablewrap')?.scrollTop;
   const focusId = document.activeElement?.id;
   // A box being typed in keeps its text and caret through a re-render (an online pick, a ping).
@@ -491,8 +494,10 @@ export function render() {
   lastScreen = S.screen;
   app.innerHTML = renderTop() + `<main class="scr-${S.screen}${enter ? ' enter' : ''}">${body}</main>` + (S.screen !== 'game' && S.profile != null ? profileOverlay(S.profile) : '');
   document.body.classList.toggle('g3d-on', S.screen === 'game' && !!stage);
+  document.body.classList.toggle('menu-on', S.screen === 'home');
   syncMusic();
   if (S.screen === 'game') mountStage();
+  if (S.screen === 'home') mountMenu(document.getElementById('menu-stage'));
   if (S.screen === 'kit') drawKitPreview();
   if (S.screen === 'draft') document.documentElement.style.setProperty('--top-h', `${document.querySelector('.top')?.offsetHeight ?? 0}px`);
   if (S.screen === 'draft' && boardScroll != null) { const b = document.querySelector('.board .tablewrap'); if (b) b.scrollTop = boardScroll; }
@@ -508,6 +513,15 @@ export function render() {
     if (t.left < r.left || t.right > r.right) row.scrollLeft += t.left - r.left - 8;
   }
   window.scrollTo(0, y);
+}
+
+let menuSoundAt = 0;
+function menuHover(e) {
+  const item = e.target.closest?.('.menu-item');
+  if (!item || S.screen !== 'home') return;
+  const blurb = document.getElementById('menu-blurb');
+  if (blurb && item.dataset.blurb) blurb.textContent = item.dataset.blurb;
+  if (e.type === 'pointerover' && soundOn() && performance.now() - menuSoundAt > 180) { menuSoundAt = performance.now(); ui('tab'); }
 }
 
 function start(data) {
@@ -552,11 +566,23 @@ function start(data) {
   document.addEventListener('input', onInput);
   document.addEventListener('change', onChange);
   window.addEventListener('resize', () => { if (S.screen === 'game' && stage) fitStage(); });
+  document.addEventListener('pointerover', menuHover);
+  document.addEventListener('focusin', menuHover);
   document.addEventListener('submit', onSubmit);
   window.addEventListener('keydown', (e) => {
     // U mutes and unmutes the game on any screen.
     if (e.code === 'Escape' && S.profile != null && S.screen !== 'game') { S.profile = null; S.profileCmp = null; render(); return; }
     if (e.code === 'KeyU' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('input, select, textarea')) { e.preventDefault(); toggleMute(); return; }
+    if (S.screen === 'home' && !e.repeat && !e.target.closest?.('input, select, textarea') && (e.code === 'ArrowDown' || e.code === 'ArrowUp')) {
+      const items = [...document.querySelectorAll('.menu-console .menu-item, .menu-feature .menu-item')];
+      if (items.length) {
+        e.preventDefault();
+        const i = items.indexOf(document.activeElement);
+        const n = e.code === 'ArrowDown' ? (i + 1) % items.length : (i <= 0 ? items.length - 1 : i - 1);
+        items[n].focus();
+        return;
+      }
+    }
     onKey(e, true);
   });
   window.addEventListener('keyup', (e) => onKey(e, false));

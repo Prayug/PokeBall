@@ -2,7 +2,7 @@
 import { ATTRS, SLOT_KEYS } from '../ratings.js';
 import * as LG from '../league.js';
 import { S } from '../state.js';
-import { P, esc, ovr, sprite, teamBadge, user } from '../ui.js';
+import { P, esc, monCard, teamBadge, user } from '../ui.js';
 import { HOF_POINTS } from '../records.js';
 
 // ---------- offseason ----------
@@ -20,7 +20,7 @@ export function renderOffseason() {
     return (sa ? SLOT_KEYS.indexOf(sa) : 99) - (sb ? SLOT_KEYS.indexOf(sb) : 99);
   });
   const others = L.teams.filter((t) => !t.user);
-  const campCard = (c, big) => `<article class="dev-card">${sprite(c.id, big ? 'sm' : 'xs')}<span><b>${esc(P(c.id).name)}</b> ${c.team != null && c.team !== me.id ? teamBadge(L.teams[c.team]) : ''}<span class="slot">${c.slot ?? ''}</span>${c.slot ? ovr(P(c.id).ovr[c.slot]) : ''}</span><span class="small good">${gainText(c.gains)}</span></article>`;
+  const campCard = (c, big) => `<article class="dev-card">${monCard(c.id, { slot: c.slot, size: big ? 'sm' : 'sm' })}${c.team != null && c.team !== me.id ? teamBadge(L.teams[c.team]) : ''}<span class="small good">${gainText(c.gains)}</span></article>`;
   return `<section class="offseason">
     <p class="eyebrow">Season ${L.season} offseason</p>
     <h1>Training camp and cuts</h1>
@@ -34,7 +34,7 @@ export function renderOffseason() {
             const k = slotOf(id) ?? P(id).best[0];
             return `<article class="cut-card ${cuts.has(id) ? 'cut' : ''}"><label class="check">
               <input type="checkbox" data-cut="${id}" ${cuts.has(id) ? 'checked' : ''}>
-              ${sprite(id, 'sm')}<span class="cn"><b>${esc(P(id).name)}</b><span class="slot">${slotOf(id) ?? 'BN'}</span>${ovr(P(id).ovr[k])}</span>
+              ${monCard(id, { slot: k, size: 'sm' })}
               <span class="cutmark">${cuts.has(id) ? 'Cut' : 'Keep'}</span></label></article>`;
           }).join('')}</div>
           <div class="actions"><button class="btn primary" data-act="finishoffseason" ${cuts.size === need ? '' : 'disabled'}>Confirm cuts and open free agency</button>
@@ -55,6 +55,6 @@ function hofClassHtml(L) {
   const cls = L.hof.filter((h) => h.season === L.season);
   if (!cls.length) return '';
   return `<div class="card"><h3>Hall of Fame class <span class="muted small">Season ${L.season}</span></h3>
-    <ul class="awards hof">${cls.map((h) => `<li>${sprite(h.id, 'md')}<span><b>${esc(P(h.id).name)}</b> ${teamBadge(L.teams[h.team])}<span class="small muted">${esc(h.line)} · ${h.points} points, the bar is ${HOF_POINTS}</span></span></li>`).join('')}</ul>
+    <ul class="awards hof">${cls.map((h) => `<li>${monCard(h.id, { size: 'sm' })} ${teamBadge(L.teams[h.team])}<span class="small muted">${esc(h.line)} · ${h.points} points, the bar is ${HOF_POINTS}</span></li>`).join('')}</ul>
     <button class="btn tiny" data-act="go" data-to="records">Open the record book</button></div>`;
 }

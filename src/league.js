@@ -10,24 +10,26 @@ import { openFreeAgency } from './freeagency.js';
 import { buildSchedule, firstRound, isFinalRound, makeDivisions, pairSeeds, playoffRounds, playoffSeeds, roundLabel } from './geometry.js';
 import { makeTradeOffer, migrateTrades, pickOwner, weeklyTradeOffer } from './trades.js';
 
+// Colors follow the town: water is blue, electric is yellow, the ghost town is black and
+// purple. `accent` is the second kit color. It is not a team id and it is not saved as one.
 export const AI_TEAMS = [
-  { name: 'Cerulean Surf', abbr: 'CER', color: '#2F6FD6', coach: 'speed', coachName: 'Speed Kills' },
-  { name: 'Pewter Boulders', abbr: 'PEW', color: '#8A7A5C', coach: 'trench', coachName: 'Trench Builder' },
-  { name: 'Saffron Seers', abbr: 'SAF', color: '#D9A21B', coach: 'balanced', coachName: 'Best Available' },
-  { name: 'Vermilion Volts', abbr: 'VER', color: '#D8452F', coach: 'types', coachName: 'Type Stacker' },
-  { name: 'Celadon Bloom', abbr: 'CEL', color: '#3E9B5A', coach: 'balanced', coachName: 'Best Available' },
-  { name: 'Fuchsia Shadows', abbr: 'FUC', color: '#B03A8C', coach: 'speed', coachName: 'Speed Kills' },
-  { name: 'Cinnabar Blaze', abbr: 'CIN', color: '#E0702A', coach: 'trench', coachName: 'Trench Builder' },
-  { name: 'Lavender Haunts', abbr: 'LAV', color: '#7D5BB5', coach: 'types', coachName: 'Type Stacker' },
-  { name: 'Viridian Rangers', abbr: 'VIR', color: '#2E7D6B', coach: 'balanced', coachName: 'Best Available' },
+  { name: 'Cerulean Surf', abbr: 'CER', color: '#1B6CA8', accent: '#E8F4FF', coach: 'speed', coachName: 'Speed Kills' },
+  { name: 'Pewter Boulders', abbr: 'PEW', color: '#6E6558', accent: '#D9D2C5', coach: 'trench', coachName: 'Trench Builder' },
+  { name: 'Saffron Seers', abbr: 'SAF', color: '#C9A227', accent: '#5B3A8C', coach: 'balanced', coachName: 'Best Available' },
+  { name: 'Vermilion Volts', abbr: 'VER', color: '#F0C400', accent: '#1A2744', coach: 'types', coachName: 'Type Stacker' },
+  { name: 'Celadon Bloom', abbr: 'CEL', color: '#2F8F4E', accent: '#D7F5C8', coach: 'balanced', coachName: 'Best Available' },
+  { name: 'Fuchsia Shadows', abbr: 'FUC', color: '#6A1848', accent: '#F2A0C8', coach: 'speed', coachName: 'Speed Kills' },
+  { name: 'Cinnabar Blaze', abbr: 'CIN', color: '#D23A1A', accent: '#FFD0A8', coach: 'trench', coachName: 'Trench Builder' },
+  { name: 'Lavender Haunts', abbr: 'LAV', color: '#140C1C', accent: '#9B5CFF', coach: 'types', coachName: 'Type Stacker' },
+  { name: 'Viridian Rangers', abbr: 'VIR', color: '#1E6B38', accent: '#C8E6B0', coach: 'balanced', coachName: 'Best Available' },
   // Bigger leagues (12 and 16 teams) draw from these too; an 8-team league only from the nine
   // above, so a seed (and a shared league code) builds the same league it always did.
-  { name: 'Goldenrod Gears', abbr: 'GLD', color: '#C9A227', coach: 'trench', coachName: 'Trench Builder' },
-  { name: 'Ecruteak Embers', abbr: 'ECR', color: '#B5482D', coach: 'types', coachName: 'Type Stacker' },
-  { name: 'Olivine Tides', abbr: 'OLV', color: '#2A8FA8', coach: 'speed', coachName: 'Speed Kills' },
-  { name: 'Mahogany Frost', abbr: 'MAH', color: '#6FA8C9', coach: 'balanced', coachName: 'Best Available' },
-  { name: 'Blackthorn Wyverns', abbr: 'BLK', color: '#3B4A8F', coach: 'speed', coachName: 'Speed Kills' },
-  { name: 'Azalea Swarm', abbr: 'AZA', color: '#7FA332', coach: 'trench', coachName: 'Trench Builder' },
+  { name: 'Goldenrod Gears', abbr: 'GLD', color: '#C8961A', accent: '#3A3A40', coach: 'trench', coachName: 'Trench Builder' },
+  { name: 'Ecruteak Embers', abbr: 'ECR', color: '#8C2E2A', accent: '#E8C56B', coach: 'types', coachName: 'Type Stacker' },
+  { name: 'Olivine Tides', abbr: 'OLV', color: '#1E7A96', accent: '#D6F3F8', coach: 'speed', coachName: 'Speed Kills' },
+  { name: 'Mahogany Frost', abbr: 'MAH', color: '#2E5F86', accent: '#E7F6FF', coach: 'balanced', coachName: 'Best Available' },
+  { name: 'Blackthorn Wyverns', abbr: 'BLK', color: '#1A2148', accent: '#6AA0FF', coach: 'speed', coachName: 'Speed Kills' },
+  { name: 'Azalea Swarm', abbr: 'AZA', color: '#6B8E23', accent: '#F4E27A', coach: 'trench', coachName: 'Trench Builder' },
 ];
 const CLASSIC_TEAMS = 9;
 export const MAX_TEAMS = AI_TEAMS.length + 1;
@@ -57,7 +59,7 @@ export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', round
   while (ai.length < numTeams - 1) ai.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   const teams = [
     { id: 0, name: teamName, abbr, color: userColor, coach: SCHEMES[scheme] ? scheme : 'balanced', coachName: 'You', user: true },
-    ...ai.map((t, i) => ({ id: i + 1, ...t, user: false })),
+    ...ai.map((t, i) => cpuTeam(t, i + 1)),
   ];
   for (const t of teams) {
     t.roster = []; t.slots = {}; t.lineup = {}; t.bench = [];
@@ -111,7 +113,26 @@ export function migrateLeague(L) {
   migrateTrades(L);
   ensureRecords(L);
   replaceRetired(L);
+  applyTeamIdentity(L);
   return L;
+}
+
+// A CPU club keeps its id. Its colors follow the name the league already gave it. A franchise
+// the player named is left alone, even when the abbreviation matches a CPU club.
+function cpuTeam(t, id) {
+  const { accent, ...rest } = t;
+  const team = { id, ...rest, user: false };
+  if (accent) team.kit = { color2: accent };
+  return team;
+}
+function applyTeamIdentity(L) {
+  for (const t of L.teams ?? []) {
+    if (t.user) continue;
+    const canon = AI_TEAMS.find((a) => a.name === t.name);
+    if (!canon) continue;
+    t.color = canon.color;
+    t.kit = { ...(t.kit ?? {}), color2: canon.accent };
+  }
 }
 
 // Pokémon without a 3D model left the game. A saved league that has one on a roster gets the

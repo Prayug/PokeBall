@@ -3,7 +3,7 @@ import { ATTRS, SLOT, unitRatings } from '../ratings.js';
 import { kickingUnit } from '../engine.js';
 import { render } from '../app.js';
 import { S, save } from '../state.js';
-import { P, attrRow, coachTip, esc, monCard, ovr, powerTag, rangeLine, roleHtml, sprite, user } from '../ui.js';
+import { P, coachTip, esc, monCard, ovr, powerTag, rangeLine, roleHtml, sprite, user } from '../ui.js';
 
 function conditionTag(id) {
   const inj = S.league?.injuries?.[id];
@@ -59,8 +59,7 @@ export function renderDepth() {
       ${shown.map(cell).join('')}
     </div></div>
     ${compareHtml(me)}
-    <div class="card"><h3>Bench</h3><div class="benchrow">${me.bench.length ? me.bench.map((id) => `<button class="dslot bench" data-act="dbench" data-id="${id}" data-drag="id:${id}" draggable="true">${sprite(id, 'md')}<span class="dn">${esc(P(id).name)}</span>
-      ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}${roleHtml(P(id))}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 28 rounds to carry 4 backups.</p>'}</div></div>
+    <div class="card"><h3>Bench</h3><div class="benchrow">${me.bench.length ? me.bench.map((id) => `<button class="dslot bench" data-act="dbench" data-id="${id}" data-drag="id:${id}" draggable="true">${monCard(id, { slot: S.depthSel, size: 'sm' })}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 28 rounds to carry 4 backups.</p>'}</div></div>
     <details class="card"><summary>Injuries and soreness</summary>
       <p class="small muted">Injured Pokémon miss games until they heal. Leave them in the lineup and the best healthy backup covers each game. With no bench, a starter from the other side of the ball plays both ways. Sore Pokémon start the next game below full energy.</p>
     </details>
@@ -76,7 +75,7 @@ function compareHtml(me) {
   const ranked = alts.map(([k, pid]) => ({ k, pid, ovr: P(pid).ovr[slot] })).sort((a, b) => b.ovr - a.ovr).slice(0, 3);
   return `<div class="card depth-compare"><h3>${esc(P(id).name)} at ${esc(slot)}</h3>
     <div class="depth-now">${monCard(id, { slot })}<button class="btn tiny" data-act="profile" data-id="${id}">Full card</button></div>
-    ${ranked.length ? `<h4>Other options at ${esc(slot)}</h4><ul class="depth-alts">${ranked.map((a) => `<li><button class="alt" ${a.k === 'BN' ? `data-act="dbench" data-id="${a.pid}"` : `data-act="dslot" data-slot="${a.k}"`}>${sprite(a.pid, 'sm')}<span><b>${esc(P(a.pid).name)}</b> ${ovr(a.ovr)} <span class="small muted">${a.k === 'BN' ? 'Bench' : a.k}</span><span class="small">${esc(swapNote(slot, id, a.pid))}</span>${attrRow(a.pid, slot)}</span></button></li>`).join('')}</ul>` : ''}
+    ${ranked.length ? `<h4>Other options at ${esc(slot)}</h4><ul class="depth-alts">${ranked.map((a) => `<li><button class="alt" ${a.k === 'BN' ? `data-act="dbench" data-id="${a.pid}"` : `data-act="dslot" data-slot="${a.k}"`}>${monCard(a.pid, { slot, size: 'sm' })}<span class="small">${esc(swapNote(slot, id, a.pid))}</span></button></li>`).join('')}</ul>` : ''}
   </div>`;
 }
 function swapNote(slot, outId, inId) {

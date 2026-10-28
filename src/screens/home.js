@@ -1,17 +1,14 @@
 // Home screen: new league setup, the save slots (continue, export, delete), quick game and save import.
-import { PLAYERS } from '../ratings.js';
 import * as LG from '../league.js';
 import { render, setScreen } from '../app.js';
 import { S, firstFreeSlot, savedSlots } from '../state.js';
-import { P, esc, sprite, teamBadge } from '../ui.js';
+import { coachTip, esc, teamBadge } from '../ui.js';
 import { autoAdvance, difficultyHtml } from './game.js';
 import { SCHEMES, SCHEME_KEYS } from '../coach.js';
 import { sharedInHtml } from './share.js';
 import { LEAGUE_SIZES } from '../geometry.js';
 import { quarterText } from '../engine.js';
-import { TYPE_COLORS } from '../types.js';
 import { lastSeat } from '../net.js';
-import { coachTip } from '../ui.js';
 import { DIFFICULTY } from '../difficulty.js';
 
 const SWATCHES = ['#c8102e', '#e0702a', '#d9a21b', '#3e9b5a', '#2e7d6b', '#2f6fd6', '#1d3a8a', '#7d5bb5', '#b03a8c', '#2b2f36', '#8a7a5c', '#f2f0e8'];
@@ -41,32 +38,32 @@ export function importSave(text, slot = S.slot) {
 }
 
 // ---------- home ----------
+const MENU = [
+  ['continue', 'Continue', 'Pick up the franchise in this slot.'],
+  ['quick', 'Quick play', 'Two drafted clubs. Kickoff right now. You coach the home side.'],
+  ['wizopen', 'New franchise', 'Name the club, pick a league size, and open the draft.'],
+  ['kit', 'Team builder', 'Colors, wordmark, stadium, and the chant.'],
+  ['sound', 'Settings', 'Sound, music, and the booth.'],
+];
 export function renderHome() {
   const slots = savedSlots();
   const target = firstFreeSlot() ?? S.slot;
-  const showcase = [130, 248, 135, 65, 448, 445].filter((id) => PLAYERS[id]);
   const cont = continueSlot(slots);
-  return `<section class="title-screen">
-    ${sharedInHtml()}
-    ${coachTip('home', 'Continue a franchise, start a new one, or jump straight into a game.')}
-    <div class="title-hero">
-      <div class="title-stage" aria-hidden="true"><span class="title-glow"></span><span class="title-yard"></span>
-        <div class="showcase">${showcase.map((id) => `<figure style="--tc:${TYPE_COLORS[P(id).types[0]]}">${sprite(id, 'lg')}<figcaption>${esc(P(id).name)}<b>${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</b></figcaption></figure>`).join('')}</div>
-      </div>
-      <div class="title-brand"><span class="hero-ball" aria-hidden="true"></span><p class="eyebrow">Pokémon football</p><h1>PokeBall</h1></div>
-    </div>
-    <nav class="title-menu" aria-label="Main menu">
+  const item = (act, label, blurb, extra = '') => `<button class="menu-item ${act === 'continue' || (!cont && act === 'wizopen') ? 'primary' : ''}" data-act="${act === 'kit' ? 'go' : act}" ${act === 'kit' ? 'data-to="kit"' : ''} data-blurb="${esc(blurb)}" ${extra}>${label}</button>`;
+  return `<section class="menu-screen">
+    <div class="menu-stage" id="menu-stage"></div>
+    <div class="menu-word"><span>Pokémon football</span><h1>PokeBall</h1><em id="menu-feature-name">On the field</em></div>
+    <nav class="menu-console" aria-label="Main menu">
+      ${sharedInHtml()}
+      ${coachTip('home', 'Continue a franchise, start a new one, or jump straight into a game.')}
+      <p class="menu-blurb" id="menu-blurb">${esc(cont ? MENU[0][2] : MENU[2][2])}</p>
       ${resumeQuickHtml()}
-      ${cont ? `<button class="btn primary xl" data-act="continue" data-slot="${cont.n}">Continue · ${esc(cont.name)}</button>` : ''}
-      <button class="btn ${cont ? '' : 'primary'} xl" data-act="wizopen">New franchise</button>
-      <button class="btn xl" data-act="quick">Quick play</button>
-      <button class="btn xl" data-act="go" data-to="kit">Team studio</button>
-      <button class="btn xl" data-act="sound">Settings</button>
-    </nav>
-    ${S.wizOpen ? wizardHtml(slots, target) : ''}
-    <div class="title-lower">
-      <div class="card title-saves"><h2>Franchises</h2><ul class="saveslots">${slots.map(slotRow).join('')}</ul></div>
-      <details class="card title-more" ${S.importMsg || S.netMsg ? 'open' : ''}><summary>More ways to play</summary>
+      ${cont ? item('continue', `Continue · ${cont.name}`, MENU[0][2], `data-slot="${cont.n}"`) : ''}
+      ${item('quick', 'Quick play', MENU[1][2])}
+      ${item('wizopen', 'New franchise', MENU[2][2])}
+      ${item('kit', 'Team builder', MENU[3][2])}
+      ${item('sound', 'Settings', MENU[4][2])}
+      <details class="menu-more" ${S.importMsg || S.netMsg ? 'open' : ''}><summary>More ways to play</summary>
         <div class="actions"><button class="btn" data-act="quick2">Two players, one screen</button>
           <button class="btn" data-act="watchgame">Watch a game</button>
           <button class="btn" data-act="onlinequick">Quick match online</button>
@@ -83,8 +80,51 @@ export function renderHome() {
         <button class="btn" data-act="importpaste">Load what I pasted</button>
         ${S.importMsg ? `<p class="small bad">${esc(S.importMsg)}</p>` : ''}
       </details>
-    </div>
+    </nav>
+    ${featureHtml(slots)}
+    ${S.wizOpen ? wizardHtml(slots, target) : ''}
   </section>`;
+}
+function featureHtml(slots) {
+  const hit = slots.find((s) => s.n === S.slot && s.save) ?? slots.find((s) => s.save);
+  const empties = slots.filter((s) => !s.save);
+  if (!hit?.save) {
+    return `<aside class="menu-feature"><p class="eyebrow">Franchise</p><h2>Three open slots</h2><p>An empty slot is a new franchise. Nothing is filled in for you.</p>
+      <button class="menu-item primary" data-act="wizopen" data-blurb="Name the club, pick a league size, and open the draft.">New franchise</button></aside>`;
+  }
+  const L = hit.save.league, me = L.teams.find((t) => t.user) ?? L.teams[0];
+  const row = (L.results ? LG.standings(L) : []).find((r) => r.id === me.id);
+  const rec = row ? `${row.w}-${row.l}${row.t ? `-${row.t}` : ''}` : '0-0';
+  const nxt = nextOpp(L, me);
+  const manage = S.confirmDelete === hit.n
+    ? `<span class="small">Delete this league for good?</span><button class="btn tiny danger" data-act="slotdelete" data-slot="${hit.n}">Delete</button><button class="btn tiny" data-act="slotkeep">Keep</button>`
+    : `<button class="btn tiny" data-act="exportsave" data-slot="${hit.n}">Export</button><button class="btn tiny ghost" data-act="slotconfirm" data-slot="${hit.n}">Delete</button>`;
+  return `<aside class="menu-feature"><p class="eyebrow">Slot ${hit.n} · Season ${L.season ?? 1}</p>
+    <h2>${teamBadge(me)} ${esc(me.name)}</h2>
+    <p class="feature-rec"><b>${rec}</b> <span>${phaseLabel(L)}</span></p>
+    <p>${nxt ? `Next: ${nxt.home ? 'vs' : 'at'} ${teamBadge(nxt.team)} ${esc(nxt.team.name)} · ${esc(nxt.label)}` : esc(phaseLabel(L))}</p>
+    <button class="menu-item primary" data-act="continue" data-slot="${hit.n}" data-blurb="Pick up the franchise in this slot.">Continue</button>
+    <details class="feature-more"><summary>Export or delete</summary><div class="actions">${manage}</div>
+      ${slots.length > 1 ? `<ul class="feature-slots">${slots.map((s) => s.save ? `<li><button class="btn tiny" data-act="continue" data-slot="${s.n}">Slot ${s.n} · ${esc((s.save.league.teams.find((t) => t.user) ?? s.save.league.teams[0]).name)}</button></li>` : `<li><button class="btn tiny" data-act="wizopen">Slot ${s.n} · empty, start a franchise</button></li>`).join('')}</ul>` : ''}
+    </details>
+    ${empties.length && empties.length === slots.length ? '' : empties.length ? `<p class="small muted">${empties.length} empty ${empties.length === 1 ? 'slot' : 'slots'}. Each one starts a new franchise.</p>` : ''}</aside>`;
+}
+function nextOpp(L, me) {
+  if (L.phase === 'season') {
+    const gm = LG.userGame(L);
+    if (!gm) return null;
+    const oid = gm.home === me.id ? gm.away : gm.home;
+    const team = L.teams.find((t) => t.id === oid);
+    return team ? { team, home: gm.home === me.id, label: `Week ${(L.week ?? 0) + 1}` } : null;
+  }
+  if (L.phase === 'playoffs') {
+    const gm = (L.playoffs?.games ?? []).find((g) => (g.home === me.id || g.away === me.id) && g.winner == null);
+    if (!gm) return null;
+    const oid = gm.home === me.id ? gm.away : gm.home;
+    const team = L.teams.find((t) => t.id === oid);
+    return team ? { team, home: gm.home === me.id, label: 'Playoffs' } : null;
+  }
+  return null;
 }
 function continueSlot(slots) {
   const hit = slots.find((s) => s.n === S.slot && s.save) ?? slots.find((s) => s.save);

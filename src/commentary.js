@@ -492,7 +492,10 @@ function afterRaw(B, g, e, before, lp) {
     return out;
   }
   if (e.conversion) {
-    const good = g.score[o] > (before?.score?.[o] ?? g.score[o]) || /good|GOOD/.test(e.text ?? '');
+    // "No good." contains the word good. The score and the miss flag decide the call.
+    const beforeScore = before?.score?.[o];
+    const delta = beforeScore == null ? null : g.score[o] - beforeScore;
+    const good = e.highlight === 'miss' ? false : delta != null ? delta > 0 : e.highlight === 'td';
     if (/two|2-point|conversion/i.test(e.head ?? '') && !/Extra point/i.test(e.head ?? '')) out.push(pbp(good ? pick(B, '2good', ['They get it! The two-point try is good!', 'In for two!']) : pick(B, '2no', ['They come up short on the try.', 'Stopped. No good on the two-point try.']), 2, good ? 2 : 1));
     else if (!said.has('fgres')) out.push(pbp(good ? pick(B, 'xpgood', ['The extra point is good.', 'And the kick is good.']) : 'The extra point is no good!', 1, good ? 0 : 1));
     out.push(pbp(`${scoreLine(g)}.`, 1));
