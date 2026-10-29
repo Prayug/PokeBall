@@ -952,6 +952,14 @@ function loop(now) {
     const html = kickPrompt(L3.lp);
     if (kp.dataset.html !== html) { kp.dataset.html = html; kp.innerHTML = html; kp.hidden = !html; }
   }
+  // The screen furniture below must never stop the field: an error in it is logged and the
+  // frame still draws (a frame that skips stage.frame freezes every player where it stands).
+  try { hudFrame(dt, now); } catch (e) { if (!L3.hudErr) { L3.hudErr = true; console.error('hud', e); } }
+  stage.frame(now, sim && sim.phase !== undefined && !hold ? Math.min(1, L3.acc / DT) : 1);
+  if (S.debug) debugHud();
+}
+
+function hudFrame(dt, now) {
   const tip = document.getElementById('hud-tip');
   const th = tipHtml(L3.lp);
   if (tip && tip.dataset.html !== th) { tip.dataset.html = th; tip.innerHTML = th; tip.setAttribute('aria-label', tipText(L3.lp)); }
@@ -971,8 +979,6 @@ function loop(now) {
     const ts = document.getElementById('tut-slot'), th = tutorialHtml();
     if (ts && ts.dataset.html !== th) { ts.dataset.html = th; ts.innerHTML = th; }
   }
-  stage.frame(now, sim && sim.phase !== undefined && !hold ? Math.min(1, L3.acc / DT) : 1);
-  if (S.debug) debugHud();
 }
 
 // ---------- pause, replay and the controls card ----------
