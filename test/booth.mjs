@@ -49,15 +49,15 @@ const problems = [];
 const audioUp = await page.evaluate(() => !!(window.AudioContext || window.webkitAudioContext));
 if (!audioUp) problems.push('no Web Audio in this browser');
 
-// The sound panel from the top bar.
-await page.click('[data-act="sound"]');
-await page.waitForSelector('.sndpop', { timeout: 5000 });
+// The sound settings, under Settings on the main menu.
+await page.click('[data-panel="settings"]');
+await page.waitForSelector('.mm-panel .snd', { timeout: 5000 });
 await page.screenshot({ path: join(out, '0-sound-panel.png') });
 for (const id of ['snd-master', 'snd-booth', 'snd-crowd', 'snd-fx', 'snd-music']) if (!(await page.$(`#${id}`))) problems.push(`sound panel: no ${id}`);
 await page.$eval('#snd-crowd', (el) => { el.value = '40'; el.dispatchEvent(new Event('input', { bubbles: true })); });
 const vol = await page.evaluate(() => window.__pb.S.vol.crowd);
 if (Math.abs(vol - 0.4) > 0.001) problems.push(`crowd slider: volume ${vol}`);
-await page.click('[data-act="sound"]');
+await page.click('[data-panel="quick"]');
 
 await page.click('[data-act="watchgame"]').catch(async () => page.evaluate(() => window.__pb && null));
 await page.waitForFunction(() => window.__pb?.stage && window.__pb.S.game, null, { timeout: 90000 });

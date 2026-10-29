@@ -71,7 +71,9 @@ export function setCarrier(lp, p) {
     else if (q.role === 'route' || q.role === 'qb' || q.role === 'handoff' || q.role === 'idle' || q.role === 'carrier' || (lp.kick && q.role?.[0] === 'k') || q.role === 'returner'
       // An interception: the rest of the defense turns blocker for the man with the ball
       // instead of chasing him.
-      || (!lp.kick && p.side === 'def' && (q.role === 'cover' || q.role === 'rush'))) {
+      || (!lp.kick && p.side === 'def' && (q.role === 'cover' || q.role === 'rush'))
+      // A fumble his own side scooped up: he was chasing the old carrier, now he blocks.
+      || q.role === 'pursue') {
       // The quarterback carries out his fake after a handoff and trails the play after a
       // completion; he is not a lead blocker 20 yards downfield.
       q.role = q.side === 'off' && p.side === 'off' && q.slot === 'QB' ? (lp.kind === 'run' ? 'fake' : 'trail') : 'escort';

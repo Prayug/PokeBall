@@ -31,6 +31,7 @@ const pb = (f, arg) => page.evaluate(f, arg);
 
 await page.goto(pathToFileURL(page0).href);
 await page.waitForTimeout(800);
+await page.click('[data-panel="quick"]');
 await page.click('[data-act="quick"]');
 await page.waitForFunction(() => window.__pb?.stage && window.__pb.L3.flow === 'PLAY_SELECTION', null, { timeout: 90000 });
 await pb(() => {

@@ -26,6 +26,7 @@ page.on('pageerror', (e) => errors.push(`pageerror ${e.message}`));
 page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('ERR_FILE_NOT_FOUND')) errors.push(`console ${m.text()}`); });
 await page.goto(pathToFileURL(page0).href);
 await page.waitForTimeout(800);
+await page.click('[data-panel="quick"]');
 await page.click('[data-act="quick"]');
 await page.waitForFunction(() => window.__pb?.stage && window.__pb.L3.flow === 'PLAY_SELECTION', null, { timeout: 90000 });
 await page.evaluate(() => window.__pb.setMode('play'));
