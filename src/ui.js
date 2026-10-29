@@ -3,6 +3,7 @@ import { PLAYERS, roleLabel } from './ratings.js';
 import { SPRITES } from './sprites.js';
 import { ABILITIES, TYPE_COLORS, bestMatchup, effectLabel } from './types.js';
 import { S } from './state.js';
+import { teamLogo } from './logos.js';
 import { POWER_OF, powerColor, powerText, sidePowers, worksAt } from './powers.js';
 
 // ---------- small view helpers ----------
@@ -23,7 +24,10 @@ export function roleHtml(p) {
   const cls = p.wildcard ? 'wild' : p.flex ? 'flex' : '';
   return `<span class="role ${cls}">${esc(roleLabel(p))}</span>`;
 }
-export function teamBadge(t) { return `<span class="tbadge" style="--team:${t.color}">${esc(t.abbr)}</span>`; }
+// A team in a line of text: its crest and its abbreviation on a strip of its color.
+export function teamBadge(t) { return `<span class="tbadge" style="--team:${t.color}" title="${esc(t.name ?? t.abbr)}">${teamLogo(t, { size: 22, title: false })}<b>${esc(t.abbr)}</b></span>`; }
+// The crest alone, for headers, cards and the scoreboard.
+export function teamMark(t, size = 40, cls = '') { return teamLogo(t, { size, cls }); }
 export function user() { return S.league?.teams.find((t) => t.user); }
 export function abilityText(id) { const a = ABILITIES[P(id).ability]; return a ? a.text : 'No football effect'; }
 export function bar(v) { return `<span class="bar"><span style="width:${Math.max(4, v)}%"></span></span>`; }

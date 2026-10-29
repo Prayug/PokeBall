@@ -94,6 +94,8 @@ export function cleanKit(k, team = {}) {
     stadium: STADIUMS[o.stadium] ? o.stadium : d.stadium,
     kickoff: KICKOFFS[o.kickoff] ? o.kickoff : d.kickoff,
     chant: CHANTS[o.chant] ? o.chant : d.chant,
+    // The crest (logos.js): a crest key, 'monogram', or '' for the team's own.
+    logo: typeof o.logo === 'string' && /^[a-z]{1,16}$/.test(o.logo) ? o.logo : '',
   };
 }
 // The kit a team plays in: its own color, and its kit (or the defaults) for the rest.

@@ -32,86 +32,129 @@ export function diagram(g, call, side, form = null, flip = false) {
   g.spot = 50;
   let lp;
   try { lp = side === 'off' ? createLivePlay(g, call, 'base', { formation: form, aiSide: false, flip }) : createLivePlay(g, 'slant', call, { defFormation: form }); } finally { g.rng = saved; g.spot = spot; g.call = call0; }
-  // Play frame to SVG: downfield is up, the field's width across.
+  svg = playArt(lp, side);
+  if (cache.size > 200) { cache.clear(); sides.clear(); }
+  if (lp.kind === 'run') sides.set(key, lp.runSide);
+  cache.set(key, svg);
+  return svg;
+}
+
+// The play a live play is set to run right now, adjustments included (a hot route, motion, a
+// flipped run, the coverage shade): the lined-up card's diagram. Not cached; it is cheap.
+export function liveDiagram(lp, side) {
+  if (!lp || lp.kick) return '';
+  return playArt(lp, side);
+}
+
+// The diagram renderer. Every play is drawn the same way:
+//   - the field: downfield is up, a faint line every 5 yards, the line of scrimmage in blue
+//   - offense: circles; receivers are filled in their throw color with their throw number,
+//     the primary read ringed in white
+//   - defense: X marks
+//   - routes: solid colored lines ending in an arrow (or a bar where the route stops)
+//   - blocks: thin grey lines ending in a T; pulling linemen in white
+//   - the ball carrier's track: a thick gold line; a pitch or a QB keep dashed
+//   - motion: a zigzag from where the man starts to where he is at the snap
+//   - coverage: zones as shaded ovals (deep blue, underneath gold), man as dashed lines to the
+//     receiver, rushers as red arrows
+// Strokes keep one pixel width at any card size, so a small card and the big one read alike.
+function playArt(lp, side) {
   const X = (p) => (p.y).toFixed(2), Y = (p) => (-p.x).toFixed(2);
   const parts = [];
-  parts.push('<line x1="-23" y1="0" x2="23" y2="0" class="los"/>');
-  const arrowAt = (a, b, color, size = 1.5) => {
+  for (const yd of [5, 10, 15, 20]) parts.push(`<line x1="-24" y1="${-yd}" x2="24" y2="${-yd}" class="yl"/>`);
+  parts.push('<line x1="-24" y1="0" x2="24" y2="0" class="los"/>');
+  const arrowAt = (a, b, color, size = 1.7) => {
+    const dx = b.y - a.y, dy = -(b.x - a.x), l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l;
+    const bx = b.y + ux * size * 0.5, by = -b.x + uy * size * 0.5;
+    return `<polygon points="${(bx + ux * size).toFixed(2)},${(by + uy * size).toFixed(2)} ${(bx - uy * size * 0.62).toFixed(2)},${(by + ux * size * 0.62).toFixed(2)} ${(bx + uy * size * 0.62).toFixed(2)},${(by - ux * size * 0.62).toFixed(2)}" fill="${color}" class="head"/>`;
+  };
+  const barAt = (a, b, color, w) => {
     const dx = b.y - a.y, dy = -(b.x - a.x), l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l;
     const bx = b.y, by = -b.x;
-    return `<polygon points="${(bx + ux * size).toFixed(2)},${(by + uy * size).toFixed(2)} ${(bx - uy * size * 0.6).toFixed(2)},${(by + ux * size * 0.6).toFixed(2)} ${(bx + uy * size * 0.6).toFixed(2)},${(by - ux * size * 0.6).toFixed(2)}" fill="${color}"/>`;
+    return `<line x1="${(bx - uy * 1.3).toFixed(2)}" y1="${(by + ux * 1.3).toFixed(2)}" x2="${(bx + uy * 1.3).toFixed(2)}" y2="${(by - ux * 1.3).toFixed(2)}" stroke="${color}" stroke-width="${w}" stroke-linecap="round"/>`;
   };
-  const barAt = (a, b, color) => {
-    const dx = b.y - a.y, dy = -(b.x - a.x), l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l;
-    const bx = b.y, by = -b.x;
-    return `<line x1="${(bx - uy * 1.2).toFixed(2)}" y1="${(by + ux * 1.2).toFixed(2)}" x2="${(bx + uy * 1.2).toFixed(2)}" y2="${(by - ux * 1.2).toFixed(2)}" stroke="${color}" stroke-width="0.7" stroke-linecap="round"/>`;
-  };
-  const path = (pts, color, w, end, dash = '') => {
+  // A line with a dark edge under it, so it reads on the turf. w in pixels.
+  const path = (pts, color, w, end, { dash = '', edge = true, cls = '' } = {}) => {
     if (pts.length < 2) return '';
     const d = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p)} ${Y(p)}`).join(' ');
     const a = pts[pts.length - 2], b = pts[pts.length - 1];
-    return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${w}" stroke-linejoin="round" stroke-linecap="round" ${dash ? `stroke-dasharray="${dash}"` : ''}/>${end === 'arrow' ? arrowAt(a, b, color) : end === 'bar' ? barAt(a, b, color) : ''}`;
+    const da = dash ? `stroke-dasharray="${dash}"` : '';
+    return `${edge ? `<path d="${d}" class="edge" stroke-width="${w + 2}" ${da}/>` : ''}<path d="${d}" class="ln ${cls}" stroke="${color}" stroke-width="${w}" ${da}/>${end === 'arrow' ? arrowAt(a, b, color) : end === 'bar' ? barAt(a, b, color, Math.max(1.5, w)) : ''}`;
+  };
+  const zigzag = (from, to) => {
+    const n = 6, pts = [];
+    for (let i = 0; i <= n; i++) {
+      const u = i / n, x = from.x + (to.x - from.x) * u, y = from.y + (to.y - from.y) * u;
+      pts.push({ x: x + (i % 2 && i < n ? 0.7 : 0), y });
+    }
+    return path(pts, '#ffffff', 1.6, 'arrow', { cls: 'motion' });
   };
   const O = lp.off, D = lp.def;
+  const primary = lp.kind === 'pass' ? Object.entries(lp.play.targets ?? {}).sort((a, b) => b[1] - a[1])[0]?.[0] : null;
   if (side === 'off') {
+    for (const p of Object.values(O)) if (p.motion?.y0 != null && Math.abs(p.motion.y0 - p.home.y) > 1) parts.push(zigzag({ x: p.home.x, y: p.motion.y0 }, p.home));
     if (lp.kind === 'pass') {
       RECEIVERS.forEach((k, i) => {
         const p = O[k];
         if (!p) return;
-        if (p.role === 'stalk' && p.assign) { parts.push(path([p.home, { x: (p.home.x + p.assign.home.x) / 2, y: (p.home.y + p.assign.home.y) / 2 }], '#cfd8e3', 0.55, 'bar')); return; }
-        if (!p.route) { parts.push(path([p.home, { x: p.home.x - 1.6, y: p.home.y * 0.85 }], '#9fb3c8', 0.55, 'bar')); return; }
+        if (p.role === 'stalk' && p.assign) { parts.push(path([p.home, { x: (p.home.x + p.assign.home.x) / 2, y: (p.home.y + p.assign.home.y) / 2 }], '#c9d3dc', 1.6, 'bar', { edge: false })); return; }
+        if (!p.route) { parts.push(path([p.home, { x: p.home.x - 1.6, y: p.home.y * 0.85 }], '#c9d3dc', 1.6, 'bar', { edge: false })); return; }
         const pts = [p.home, ...p.route.filter((w) => w.x != null)];
-        parts.push(path(pts, ART_COLORS[i], 1, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow'));
+        parts.push(path(pts, ART_COLORS[i], k === primary ? 3.4 : 2.4, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow', { cls: k === primary ? 'primary' : '' }));
       });
-      if (O.QB) parts.push(path(lp.play.boot ? [O.QB.home, { x: lp.dropX, y: 1 }, { x: lp.dropX + 2.5, y: (O.TE ? -Math.sign(O.TE.home.y) : 1) * 8 }] : [O.QB.home, { x: lp.dropX, y: O.QB.home.y }], '#ffffff', 0.45, lp.play.boot ? 'arrow' : '', '0.8 0.6'));
+      for (const k of ['LT', 'LG', 'C', 'RG', 'RT']) if (O[k]) parts.push(path([O[k].home, { x: O[k].home.x - 1.3, y: O[k].home.y }], '#c9d3dc', 1.4, 'bar', { edge: false }));
+      if (O.QB) parts.push(path(lp.play.boot ? [O.QB.home, { x: lp.dropX, y: 1 }, { x: lp.dropX + 2.5, y: (O.TE ? -Math.sign(O.TE.home.y) : 1) * 8 }] : [O.QB.home, { x: lp.dropX, y: O.QB.home.y }], '#ffffff', 1.4, lp.play.boot ? 'arrow' : '', { dash: '3 2', edge: false }));
     } else {
       // The carrier's track is the one he runs on the field (see live/runs.js).
       const c = lp.carrier ?? O.RB, hole = lp.holeY ?? 0, dir = lp.play.dir;
       const track = c?.track ?? (dir === 'sneak' ? [{ x: 3, y: 0 }] : null);
-      if (c && track) parts.push(path([c.home, ...track], '#ffd23f', 1.3, 'arrow'));
-      // The toss: the pitch out to the back.
-      if (dir === 'toss' && O.QB && track) parts.push(path([O.QB.home, track[0]], '#ffd23f', 0.5, '', '0.8 0.6'));
-      // Read option: the give (solid) and the keep around the unblocked end (dashed).
-      if (dir === 'read' && O.QB) {
-        parts.push(path([O.QB.home, ...keepTrack(lp)], '#ffd23f', 0.8, 'arrow', '1 0.7'));
-        if (lp.readEnd) parts.push(`<circle cx="${X(lp.readEnd.home)}" cy="${Y(lp.readEnd.home)}" r="1.6" fill="none" stroke="#ff5a4f" stroke-width="0.4"/>`);
-      }
       // Pullers run flat behind the line, then up to their man; lead blockers go through the hole.
       for (const b of Object.values(O)) {
-        if (b.pull) parts.push(path([b.home, ...b.pull.path, b.assign ? { x: Math.min(1.5, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1.5, y: hole }], '#ffffff', 0.6, 'bar'));
-        else if (b.role === 'lead') parts.push(path([b.home, b.assign ? { x: Math.min(2, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1, y: hole * 0.85 }], '#ffffff', 0.6, 'bar'));
+        if (b.pull) parts.push(path([b.home, ...b.pull.path, b.assign ? { x: Math.min(1.5, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1.5, y: hole }], '#ffffff', 1.8, 'bar'));
+        else if (b.role === 'lead') parts.push(path([b.home, b.assign ? { x: Math.min(2, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1, y: hole * 0.85 }], '#ffffff', 1.8, 'bar'));
       }
       for (const k of ['LT', 'LG', 'C', 'RG', 'RT', 'TE', 'WR1', 'WR2', 'WR3']) {
         const b = O[k];
         if (!b?.assign || b.pull) continue;
         const d = b.assign;
-        parts.push(path([b.home, { x: (b.home.x + d.home.x) / 2 + 0.6, y: (b.home.y + d.home.y) / 2 }], '#cfd8e3', 0.5, 'bar'));
+        parts.push(path([b.home, { x: (b.home.x + d.home.x) / 2 + 0.6, y: (b.home.y + d.home.y) / 2 }], '#c9d3dc', 1.4, 'bar', { edge: false }));
+      }
+      if (c && track) parts.push(path([c.home, ...track], '#ffd23f', 3.6, 'arrow', { cls: 'primary' }));
+      // The toss: the pitch out to the back.
+      if (dir === 'toss' && O.QB && track) parts.push(path([O.QB.home, track[0]], '#ffd23f', 1.4, '', { dash: '3 2', edge: false }));
+      // Read option: the give (solid) and the keep around the unblocked end (dashed).
+      if (dir === 'read' && O.QB) {
+        parts.push(path([O.QB.home, ...keepTrack(lp)], '#ffd23f', 2, 'arrow', { dash: '4 3' }));
+        if (lp.readEnd) parts.push(`<circle cx="${X(lp.readEnd.home)}" cy="${Y(lp.readEnd.home)}" r="1.9" class="read"/>`);
       }
     }
   } else {
     for (const p of Object.values(D)) {
       if (p.zone) {
-        const z = p.zone, deep = z.x >= 15;
-        parts.push(`<ellipse cx="${z.y.toFixed(2)}" cy="${(-z.x).toFixed(2)}" rx="${(z.r * 0.8).toFixed(2)}" ry="${(z.r * 0.55).toFixed(2)}" fill="${deep ? '#4fc3f7' : '#ffd23f'}" fill-opacity="0.22" stroke="${deep ? '#4fc3f7' : '#ffd23f'}" stroke-opacity="0.7" stroke-width="0.3"/>`);
-        parts.push(path([p.home, z], deep ? '#4fc3f7' : '#ffd23f', 0.4, ''));
-      } else if (p.man) parts.push(path([p.home, { x: p.man.home.x + 0.8, y: p.man.home.y }], '#ff9d7a', 0.45, '', '0.9 0.6'));
+        const z = p.zone, deep = z.x >= 15, col = deep ? '#4fc3f7' : '#ffd23f';
+        parts.push(`<ellipse cx="${z.y.toFixed(2)}" cy="${(-z.x).toFixed(2)}" rx="${(z.r * 0.8).toFixed(2)}" ry="${(z.r * 0.55).toFixed(2)}" fill="${col}" fill-opacity="0.2" stroke="${col}" stroke-opacity="0.8" class="zone"/>`);
+        parts.push(path([p.home, z], col, 1.4, '', { edge: false }));
+      } else if (p.man) parts.push(path([p.home, { x: p.man.home.x + 0.8, y: p.man.home.y }], '#ff9d7a', 1.6, '', { dash: '3 2', edge: false }));
       else if (p.role === 'rush') {
         const blitz = !['LE', 'DE', 'DT1', 'DT2'].includes(p.slot);
-        parts.push(path([p.home, { x: -3, y: p.home.y * 0.45 }], blitz ? '#ff5a4f' : '#e7b7b0', blitz ? 0.8 : 0.5, 'arrow'));
+        parts.push(path([p.home, { x: -3, y: p.home.y * 0.45 }], blitz ? '#ff5a4f' : '#e7b7b0', blitz ? 2.6 : 1.6, 'arrow', { edge: blitz }));
       }
     }
   }
-  // Players: offense as circles, defense as crosses; the side you call is solid.
-  for (const p of Object.values(O)) parts.push(`<circle cx="${X(p.home)}" cy="${Y(p.home)}" r="${side === 'off' ? 1.05 : 0.8}" class="o ${side === 'off' ? 'on' : ''}"/>`);
-  for (const p of Object.values(D)) {
-    const x = p.home.y, y = -p.home.x, s = side === 'def' ? 0.95 : 0.7;
-    parts.push(`<path d="M${(x - s).toFixed(2)} ${(y - s).toFixed(2)}L${(x + s).toFixed(2)} ${(y + s).toFixed(2)}M${(x + s).toFixed(2)} ${(y - s).toFixed(2)}L${(x - s).toFixed(2)} ${(y + s).toFixed(2)}" class="x ${side === 'def' ? 'on' : ''}"/>`);
+  // Players: offense as circles, defense as X marks; the side you call is bold, the other faint.
+  const onO = side === 'off';
+  for (const [k, p] of Object.entries(O)) {
+    const i = RECEIVERS.indexOf(k);
+    const rec = onO && lp.kind === 'pass' && i >= 0 && p.route;
+    if (rec) {
+      parts.push(`<circle cx="${X(p.home)}" cy="${Y(p.home)}" r="1.55" fill="${ART_COLORS[i]}" class="o rec${k === primary ? ' prim' : ''}"/><text x="${X(p.home)}" y="${(-p.home.x + 0.62).toFixed(2)}" class="num">${i + 1}</text>`);
+    } else parts.push(`<circle cx="${X(p.home)}" cy="${Y(p.home)}" r="${onO ? (k === 'QB' || (lp.kind === 'run' && p === (lp.carrier ?? O.RB)) ? 1.35 : 1.1) : 0.85}" class="o ${onO ? 'on' : ''}${onO && k === 'QB' ? ' qb' : ''}"/>`);
   }
-  svg = `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true">${parts.join('')}</svg>`;
-  if (cache.size > 200) { cache.clear(); sides.clear(); }
-  if (lp.kind === 'run') sides.set(key, lp.runSide);
-  cache.set(key, svg);
-  return svg;
+  for (const p of Object.values(D)) {
+    const x = p.home.y, y = -p.home.x, s = onO ? 0.7 : 1.05;
+    parts.push(`<path d="M${(x - s).toFixed(2)} ${(y - s).toFixed(2)}L${(x + s).toFixed(2)} ${(y + s).toFixed(2)}M${(x + s).toFixed(2)} ${(y - s).toFixed(2)}L${(x - s).toFixed(2)} ${(y + s).toFixed(2)}" class="x ${onO ? '' : 'on'}"/>`);
+  }
+  return `<svg class="pdiag" viewBox="-24 -25 48 35" aria-hidden="true">${parts.join('')}</svg>`;
 }
 
 // The side a run call goes, as its card shows it: 'Left' or 'Right' (the offense's left and
@@ -129,20 +172,20 @@ function kickArt(kind, P = {}) {
   if (kind === 'spike' || kind === 'kneel') {
     const art = kind === 'spike' ? '<path d="M0 2 L0 7.5" stroke="#ffd23f" stroke-width="1.2"/><polygon points="-1.6,6.6 1.6,6.6 0,9" fill="#ffd23f"/><path d="M-3 9.4 L-1.4 8.6 M3 9.4 L1.4 8.6" stroke="#ffffff" stroke-width="0.6"/>'
       : '<path d="M-2 4 L0 9 L3 9" fill="none" stroke="#ffd23f" stroke-width="1.2"/>';
-    return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>${art}<circle cx="0" cy="${kind === 'spike' ? 0 : 2}" r="1.05" class="o on"/></svg>`;
+    return `<svg class="pdiag" viewBox="-24 -25 48 35" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>${art}<circle cx="0" cy="${kind === 'spike' ? 0 : 2}" r="1.05" class="o on"/></svg>`;
   }
   // After a flag: the yellow flag, with the march off (accept) or crossed out (decline).
   if (kind === 'penalty') {
     const flag = '<path d="M-2 8 L-2 -12" stroke="#ffffff" stroke-width="0.7"/><path d="M-2 -12 L7 -9 L-2 -5 Z" fill="#ffd23f"/>';
     const mark = P.name === 'Accept' ? '<path d="M-14 -16 L14 -16" stroke="#ffd23f" stroke-width="1" stroke-dasharray="2 1"/><polygon points="14,-18 17,-16 14,-14" fill="#ffd23f"/>'
       : '<path d="M-9 -15 L7 3 M7 -15 L-9 3" stroke="#ff6b6b" stroke-width="1.2"/>';
-    return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>${flag}${mark}</svg>`;
+    return `<svg class="pdiag" viewBox="-24 -25 48 35" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>${flag}${mark}</svg>`;
   }
   // The try kicks through the uprights; a kickoff flies deep, an onside kick bounces short.
   if (kind === 'xp') kind = 'fg';
   if (kind === 'kickoff') {
     const arc = P.onside ? 'M0 9 Q2 6 4 3 Q6 0 7 -4' : 'M0 9 Q0 -40 0 -24';
-    return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/><line x1="-23" y1="-10" x2="23" y2="-10" class="los" opacity="0.4"/>
+    return `<svg class="pdiag" viewBox="-24 -25 48 35" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/><line x1="-23" y1="-10" x2="23" y2="-10" class="los" opacity="0.4"/>
       <path d="${arc}" fill="none" stroke="#ffffff" stroke-width="0.6" stroke-dasharray="1 0.8"/><circle cx="0" cy="9" r="1.05" class="o on"/></svg>`;
   }
   // Punt: a high arc downfield (a coffin-corner kick angles out short of the goal line).
@@ -150,7 +193,7 @@ function kickArt(kind, P = {}) {
   const arc = kind === 'punt' ? (P.aim === 'coffin' ? 'M0 9 Q4 -34 17 -20' : 'M0 9 Q0 -40 0 -24') : 'M0 9 Q0 -30 0 -25';
   const fake = !P.fake ? '' : kind === 'punt' ? '<path d="M0 9 L-6 4 L-9 -8" fill="none" stroke="#ffd23f" stroke-width="1.2"/><polygon points="-9.3,-10 -10.6,-7 -7.6,-7.4" fill="#ffd23f"/>'
     : '<path d="M0 7 L9 -9" fill="none" stroke="#ffd23f" stroke-width="1"/><polygon points="9.8,-10.6 7.4,-9.4 9.6,-7.6" fill="#ffd23f"/>';
-  return `<svg class="pdiag" viewBox="-23 -24 46 33" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>
+  return `<svg class="pdiag" viewBox="-24 -25 48 35" aria-hidden="true"><line x1="-23" y1="0" x2="23" y2="0" class="los"/>
     ${kind === 'fg' ? '<path d="M-3.1 -24 L-3.1 -18 M3.1 -24 L3.1 -18 M-3.1 -21 L3.1 -21 M0 -21 L0 -17" stroke="#ffd23f" stroke-width="0.7" fill="none"/>' : ''}
     <path d="${arc}" fill="none" stroke="#ffffff" stroke-width="0.6" stroke-dasharray="1 0.8" ${P.fake ? 'opacity="0.35"' : ''}/>${fake}<circle cx="0" cy="9" r="1.05" class="o on"/></svg>`;
 }

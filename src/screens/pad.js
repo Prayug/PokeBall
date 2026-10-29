@@ -12,7 +12,7 @@
 import { render } from '../app.js';
 import { S } from '../state.js';
 import { L3, closeHelp, cycleCamera, inputFor, padKey, recall, skipBeat, stage, stopReplay, togglePause } from './live3d.js';
-import { csMove } from './callsheet.js';
+import { csBack, csMove } from './callsheet.js';
 import { twoPlayer } from './game.js';
 
 const A = 0, B = 1, X = 2, Y = 3, LB = 4, RB = 5, LT = 6, RT = 7, BACK = 8, START = 9, RS = 11, UP = 12, DOWN = 13, LEFT = 14, RIGHT = 15;
@@ -68,7 +68,10 @@ function poll(gp, who) {
   for (const [i, code] of st.codes) if (up(i)) { padKey(src, code, false); st.codes.delete(i); }
 
   const inGame = S.screen === 'game' && stage && S.game;
-  if (S.helpOpen) { if (down(A) || down(B) || down(START)) closeHelp(); return; }
+  // The controls card closes on a fresh press: the A that started the game can still be held
+  // (or read as new) on the frame the card opens.
+  if (S.helpOpen) { if (!st.helpArmed) { st.helpArmed = !pressed[A] && !pressed[B] && !pressed[START]; return; } if (down(A) || down(B) || down(START)) { st.helpArmed = false; closeHelp(); } return; }
+  st.helpArmed = false;
   if (inGame && L3.replay) { if (down(A) || down(B) || down(START)) stopReplay(); return; }
   if (inGame && down(BACK)) cycleCamera();
   const lp = inGame ? L3.lp : null;
@@ -104,6 +107,7 @@ function poll(gp, who) {
   if (inGame && !lp && document.querySelector('.callsheet')) {
     if (down(LB)) { csMove(-1); return; }
     if (down(RB)) { csMove(1); return; }
+    if (down(B) && csBack()) return;
   }
   if (inGame && lp?.phase === 'pre' && down(B) && !S.coachDown) { recall(); return; }
   navigate(st, upv, right, now, down(A));

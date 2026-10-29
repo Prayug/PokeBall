@@ -29,6 +29,16 @@
   --f-data: 'Barlow Condensed', 'Arial Narrow', 'Barlow', system-ui, sans-serif;
   --r: 6px;
   color-scheme: dark;
+  /* Design system (Phase 2): one spacing scale, three radii, three elevations, one type
+     scale and the play-family colors, shared by the menus, the call sheet, the HUD and the
+     franchise screens. New components use these; the older rules map onto them. */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  --rad-s: 6px; --rad-m: 10px; --rad-l: 14px;
+  --elev-1: 0 2px 6px rgba(0, 0, 0, 0.25); --elev-2: 0 8px 20px rgba(0, 0, 0, 0.35); --elev-3: 0 16px 40px rgba(0, 0, 0, 0.5);
+  --glass-bg: linear-gradient(180deg, rgba(14, 34, 25, 0.94), rgba(7, 18, 13, 0.94)); --glass-line: rgba(238, 242, 230, 0.14);
+  --t-xs: 11px; --t-s: 13px; --t-m: 15px; --t-l: 19px; --t-xl: 26px;
+  --c-run: #ffc233; --c-qbrun: #ff9a3c; --c-short: #7fd6ff; --c-mid: #4fa3f7; --c-deep: #b58cff; --c-kick: #a7bba9; --c-clock: #c792ff;
+  --c-rec: #ffb547; --c-recent: #dfe7dc; --c-man: #ffc233; --c-zone: #4fc3f7; --c-blitz: #ff5a4f; --c-flag: #ffd23f;
 }
 * { box-sizing: border-box; }
 html, body { background: var(--turf); color: var(--chalk); }
@@ -739,12 +749,24 @@ body.g3d-on main { max-width: none; }
 .cs-flip[aria-pressed="true"] { background: #ffd23f; color: #1a1a1a; }
 .pcard .pblurb { display: none; font-size: 12px; line-height: 1.2; color: var(--chalk-dim); padding: 0 2px; }
 .callsheet.all .pcard .pblurb { display: block; }
-.pdiag { width: 100%; height: auto; aspect-ratio: 46 / 33; display: block; background: linear-gradient(#2f7a45, #2a6f3f); border-radius: 5px; }
-.pdiag .los { stroke: #6fb0ff; stroke-width: 0.45; }
-.pdiag .o { fill: rgba(238,242,230,0.4); }
-.pdiag .o.on { fill: #ffffff; stroke: #0d2b20; stroke-width: 0.3; }
-.pdiag .x { stroke: rgba(238,242,230,0.4); stroke-width: 0.45; fill: none; }
-.pdiag .x.on { stroke: #ffffff; stroke-width: 0.6; }
+.pdiag { width: 100%; height: auto; aspect-ratio: 48 / 35; display: block; border-radius: 6px;
+  background: repeating-linear-gradient(0deg, transparent 0 14.2%, rgba(0, 0, 0, 0.05) 14.2% 28.4%), linear-gradient(#2f7a45, #286a3c); }
+.pdiag path, .pdiag line, .pdiag ellipse, .pdiag circle { vector-effect: non-scaling-stroke; }
+.pdiag .yl { stroke: rgba(255, 255, 255, 0.16); stroke-width: 1; }
+.pdiag .los { stroke: #6fb0ff; stroke-width: 2.2; }
+.pdiag .edge { fill: none; stroke: rgba(6, 22, 12, 0.75); stroke-linejoin: round; stroke-linecap: round; }
+.pdiag .ln { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.pdiag .head { stroke: rgba(6, 22, 12, 0.75); stroke-width: 1; paint-order: stroke; }
+.pdiag .zone { stroke-width: 1.2; }
+.pdiag .read { fill: none; stroke: #ff5a4f; stroke-width: 1.6; stroke-dasharray: 2 2; }
+.pdiag .o { fill: rgba(238, 242, 230, 0.35); }
+.pdiag .o.on { fill: #ffffff; stroke: #0d2b20; stroke-width: 1.2; }
+.pdiag .o.qb { fill: #ffe9a8; }
+.pdiag .o.rec { stroke: #0d2b20; stroke-width: 1.4; }
+.pdiag .o.prim { stroke: #ffffff; stroke-width: 2.4; }
+.pdiag .num { font: 800 2.1px/1 var(--f-data); fill: #10161c; text-anchor: middle; pointer-events: none; }
+.pdiag .x { stroke: rgba(238, 242, 230, 0.4); stroke-width: 1.4; fill: none; stroke-linecap: round; }
+.pdiag .x.on { stroke: #ffffff; stroke-width: 2.6; }
 /* Result lower third: shown after the whistle, never during the play */
 .lower3 { position: absolute; left: 16px; bottom: calc(18px + var(--dock, 0px)); z-index: 4; pointer-events: none; width: min(460px, calc(100% - 32px)); padding: 10px 14px 10px 16px; border-radius: 6px;
   background: rgba(9, 22, 17, 0.9); border-left: 5px solid var(--chalk-dim); box-shadow: 0 8px 24px rgba(0,0,0,0.35); opacity: 0; transform: translateX(-24px); transition: opacity 0.22s, transform 0.22s, bottom 0.22s; }
@@ -1584,6 +1606,183 @@ main.enter > section.mm { animation: none; }
   main.enter .mm-title, main.enter .mm-list li, main.enter .mm-plate, .mm-panel.fresh { animation: none; }
   .mm.launch::after { animation: none; }
 }
+
+/* ---------- Team crests (logos.js) ---------- */
+.tlogo { display: inline-block; flex: none; vertical-align: middle; overflow: visible; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35)); }
+/* A team in a line: the crest riding on a strip of the team's color, then its abbreviation. */
+.tbadge { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px 1px 1px; border-radius: 999px; vertical-align: middle; line-height: 1; }
+.tbadge .tlogo { width: 1.75em; height: 1.75em; margin: -3px 0 -3px -3px; }
+.tbadge b { font: inherit; }
+.top-team .top-crest { width: 38px; height: 38px; }
+/* The scorebug: the crest stands in the team's color block, the abbreviation beside it. */
+.bc-team { background: linear-gradient(90deg, var(--team) 0 46px, rgba(255, 255, 255, 0.04) 46px); }
+.bc-team .bc-logo { width: 34px; height: 34px; margin-left: 6px; }
+.bc-team::before { width: 46px; }
+.bc-team .bc-abbr { width: auto; min-width: 40px; color: #fff; }
+.game.spectate .bc-team { background: linear-gradient(90deg, var(--team) 0 60px, rgba(255, 255, 255, 0.04) 60px); }
+.game.spectate .bc-team .bc-logo { width: 46px; height: 46px; margin-left: 7px; }
+.game.spectate .bc-team::before { width: 60px; }
+/* Season hub matchup and the franchise card. */
+.tblock .tb-crest { width: 64px; height: 64px; }
+.matchup .tblock .tb-crest { width: 84px; height: 84px; }
+.fr-crest, .fr-ocrest { filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45)); }
+/* The kit screen: the crest library in the team's colors. */
+.kit-bug .kb-crest { align-self: center; margin: 6px 4px 6px 10px; width: 56px; height: 56px; }
+.kb-name small { display: block; font: 600 11px/1.2 var(--f-data); color: var(--chalk-dim); text-transform: uppercase; letter-spacing: 0.08em; }
+.crests { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 8px; }
+.crest-pick { display: grid; justify-items: center; gap: 4px; padding: 8px 4px 6px; border-radius: var(--r); background: rgba(0, 0, 0, 0.22); border: 1px solid var(--line); cursor: pointer;
+  font: 600 11px/1.15 var(--f-data); text-transform: uppercase; letter-spacing: 0.05em; color: var(--chalk-dim); text-align: center; transition: transform 0.15s, border-color 0.15s; }
+.crest-pick:hover { transform: translateY(-2px); border-color: var(--chalk-dim); color: var(--chalk); }
+.crest-pick.on { border-color: var(--amber); color: var(--chalk); box-shadow: 0 0 0 1px var(--amber), 0 6px 16px rgba(0, 0, 0, 0.3); }
+
+/* ---------- The call sheet in three steps (callsheet.js) ---------- */
+.cs-steps { display: flex; gap: 2px; margin: 0; padding: 3px; list-style: none; border-radius: 999px; background: rgba(238, 242, 230, 0.06); counter-reset: st; }
+.cs-steps li { counter-increment: st; display: flex; align-items: center; gap: 6px; padding: 5px 11px 5px 6px; border-radius: 999px; font: 700 var(--t-s)/1 var(--f-data);
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--chalk-dim); white-space: nowrap; }
+.cs-steps li::before { content: counter(st); display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: var(--t-xs); background: rgba(238, 242, 230, 0.12); }
+.cs-steps li.on { background: var(--chalk); color: #10241a; }
+.cs-steps li.on::before { background: #10241a; color: var(--chalk); }
+.cs-steps li.done::before { content: '✓'; background: var(--good); color: #10241a; }
+.cs-crumb, .cs-back { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; }
+.cs-crumb:hover { color: var(--chalk); text-decoration: underline; }
+.cs-steps-all { font: 700 var(--t-s)/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--amber); }
+.callsheet.lvl-1, .callsheet.lvl-2 { width: min(1080px, calc(100% - 24px)); max-height: 58%; }
+.callsheet.lvl-2 { max-height: 68%; }
+/* Step 1: the categories as big tiles. */
+.cs-cats { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: var(--sp-2); }
+.cs-cat { --cc: var(--chalk-dim); position: relative; display: grid; grid-template-columns: 44px 1fr auto; gap: var(--sp-2) var(--sp-3); align-items: center; text-align: left; cursor: pointer;
+  padding: var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-2); border-radius: var(--rad-m); color: var(--chalk); border: 1px solid var(--glass-line); border-left: 4px solid var(--cc);
+  background: linear-gradient(180deg, rgba(238, 242, 230, 0.08), rgba(238, 242, 230, 0.02)); transition: transform 0.12s, background 0.12s, box-shadow 0.12s; }
+.cs-cat:hover, .cs-cat:focus-visible { transform: translateY(-2px); background: color-mix(in srgb, var(--cc) 14%, rgba(238, 242, 230, 0.06)); box-shadow: 0 0 0 1px var(--cc), var(--elev-2); outline: none; }
+.cs-cat .cc-ico { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--cc) 22%, transparent); border: 1px solid color-mix(in srgb, var(--cc) 55%, transparent); }
+.cs-cat .cc-ico svg { width: 24px; height: 24px; fill: var(--cc); stroke: var(--cc); stroke-linecap: round; stroke-linejoin: round; }
+.cs-cat .cc-txt { display: grid; gap: 2px; min-width: 0; }
+.cs-cat .cc-txt b { font: 800 var(--t-l)/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.03em; }
+.cs-cat .cc-hint { font: 500 var(--t-xs)/1.2 var(--f-body); color: var(--chalk-dim); }
+.cs-cat .cc-sample { font: 600 var(--t-s)/1.2 var(--f-data); color: color-mix(in srgb, var(--cc) 60%, var(--chalk)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; letter-spacing: 0.03em; }
+.cs-cat .cc-n { align-self: start; font: 700 var(--t-xs)/1 var(--f-data); color: var(--chalk-dim); }
+.cs-cat kbd { position: absolute; right: var(--sp-2); bottom: var(--sp-2); }
+.cs-cat.c-rec { --cc: var(--c-rec); grid-column: span 2; background: linear-gradient(90deg, color-mix(in srgb, var(--c-rec) 20%, transparent), rgba(238, 242, 230, 0.03)); }
+.cs-cat.c-rec .cc-sample { white-space: normal; }
+.cs-cat.c-run { --cc: var(--c-run); } .cs-cat.c-qbrun { --cc: var(--c-qbrun); } .cs-cat.c-short { --cc: var(--c-short); } .cs-cat.c-mid { --cc: var(--c-mid); }
+.cs-cat.c-deep { --cc: var(--c-deep); } .cs-cat.c-kick { --cc: var(--c-kick); } .cs-cat.c-clock { --cc: var(--c-clock); } .cs-cat.c-recent { --cc: var(--c-recent); }
+.cs-cat.c-front { --cc: var(--c-man); } .cs-cat.c-cover { --cc: var(--c-zone); } .cs-cat.c-blitz { --cc: var(--c-blitz); } .cs-cat.c-penalty { --cc: var(--c-flag); }
+/* Step 2: four big cards of one category. */
+.cs-l2head { display: flex; align-items: center; gap: var(--sp-3); padding: 0 2px var(--sp-2); }
+.cs-l2head h4 { margin: 0; font-size: var(--t-m); color: var(--chalk); }
+.cs-back { display: inline-flex; gap: 6px; align-items: center; font: 700 var(--t-s)/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.05em; color: var(--chalk-dim);
+  padding: 6px 10px; border-radius: 999px; border: 1px solid var(--glass-line); }
+.cs-back:hover { color: var(--chalk); border-color: var(--chalk-dim); }
+.cs-pager { display: inline-flex; gap: 6px; align-items: center; font: 700 var(--t-s)/1 var(--f-data); color: var(--chalk-dim); }
+.cs-l2keys { margin-left: auto; font: 600 var(--t-xs)/1 var(--f-data); color: var(--chalk-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.cs-cards.big { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-2); overflow: visible; }
+.pcard.big { width: auto; padding: var(--sp-2) var(--sp-2) var(--sp-3); gap: 5px; align-content: start; }
+.pcard.big .pname { font-size: 21px; }
+.pcard.big .pblurb { display: block; font-size: var(--t-s); line-height: 1.3; color: var(--chalk); }
+.pcard.big .pc-art kbd { font-size: 15px; padding: 3px 8px; }
+.pc-guide { display: grid; gap: 2px; padding: 0 2px; font: 600 var(--t-xs)/1.25 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; }
+.pc-guide .good { color: var(--good); } .pc-guide .bad { color: var(--bad); }
+.pc-guide .good::before { content: '▲ '; } .pc-guide .bad::before { content: '▼ '; }
+.pc-why { font-size: var(--t-xs); line-height: 1.3; color: var(--amber); padding: 0 2px; }
+.pcard .fittag.alt { background: rgba(9, 22, 17, 0.85); color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber); }
+.callsheet.all .pc-guide { font-size: 10px; }
+@media (max-width: 900px) {
+  .cs-cards.big { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cs-cat.c-rec { grid-column: auto; }
+  .cs-cats { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .cs-cat { grid-template-columns: 34px 1fr; }
+  .cs-cat .cc-ico { width: 34px; height: 34px; } .cs-cat .cc-ico svg { width: 18px; height: 18px; }
+  .cs-cat .cc-n, .cs-cat .cc-hint { display: none; }
+  .cs-steps li { padding: 4px 8px 4px 4px; }
+}
+
+/* Step 3: the play lined up, its live diagram and the one thing to do. */
+.pill.lined.has-art { padding-left: 6px; }
+.pill.lined .l3-art { width: 104px; flex: none; }
+.pill.lined .l3-art .pdiag { border-radius: var(--rad-s); }
+.pill.lined .pl-play em { font: 700 var(--t-xs)/1 var(--f-data); font-style: normal; color: var(--good); letter-spacing: 0.1em; }
+.pill.lined .l3-go { display: grid; gap: 4px; justify-items: center; }
+.pill.lined .l3-go small { font: 600 var(--t-xs)/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--amber); white-space: nowrap; }
+.pill.lined .l3-go .btn.primary { animation: go-glow 1.6s ease-in-out infinite; }
+@keyframes go-glow { 50% { box-shadow: 0 0 0 3px rgba(229, 64, 43, 0.35), 0 0 18px rgba(229, 64, 43, 0.5); } }
+@media (prefers-reduced-motion: reduce) { .pill.lined .l3-go .btn.primary { animation: none; } }
+@media (max-width: 700px) { .pill.lined .l3-art { display: none; } }
+
+/* The control strip: the keys that work right now (controls.js), as key chips. */
+.game.g3d .hud-tip { display: flex; flex-direction: column; gap: 4px; align-items: center; background: none; padding: 0; text-align: center; }
+.hud-tip .kline { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 6px; padding: 5px 8px; border-radius: 999px; background: rgba(9, 22, 17, 0.78);
+  backdrop-filter: blur(6px); border: 1px solid var(--glass-line); box-shadow: var(--elev-1); }
+.hud-tip .kc { display: inline-flex; gap: 5px; align-items: center; font: 600 var(--t-s)/1 var(--f-data); letter-spacing: 0.04em; text-transform: uppercase; color: var(--chalk); white-space: nowrap; padding-right: 4px; }
+.hud-tip .kc kbd { font-size: var(--t-xs); min-width: 22px; text-align: center; }
+.hud-tip .kc:first-child kbd { background: var(--amber); color: #1b1408; border-color: var(--amber); }
+.hud-tip .kwho { font: 800 var(--t-xs)/1 var(--f-data); letter-spacing: 0.08em; color: var(--amber); padding: 0 4px; }
+/* The controls card: a table per moment of play. */
+.ctl-sections { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--sp-3) var(--sp-4); margin-top: var(--sp-2); }
+.ctl-sections h4 { margin: 0 0 4px; color: var(--amber); }
+.ctl-table { width: 100%; border-collapse: collapse; font-size: var(--t-s); }
+.ctl-table th, .ctl-table td { padding: 3px 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); text-align: left; vertical-align: middle; }
+.ctl-table thead th { font: 600 10px/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.08em; color: var(--chalk-dim); background: none; }
+.ctl-table tbody th { font-weight: 500; color: var(--chalk); }
+.ov-help .card { max-height: 86vh; overflow-y: auto; }
+.help-acts { justify-content: center; }
+
+/* The result card's headline: who did it and what it means for the down. */
+.lower3 .l3-line { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin: 2px 0; }
+.lower3 .l3-line b { font: 800 var(--t-l)/1.1 var(--f-data); text-transform: uppercase; letter-spacing: 0.02em; color: #fff; }
+.lower3 .l3-line em { font: 800 var(--t-s)/1 var(--f-data); font-style: normal; letter-spacing: 0.08em; padding: 4px 7px; border-radius: 4px; background: rgba(255, 226, 122, 0.16); color: #ffe27a; }
+.lower3.td .l3-line em { background: var(--amber); color: #1b1408; }
+.lower3.to .l3-line em { background: rgba(255, 138, 122, 0.2); color: var(--bad); }
+.lower3 .l3-line .spr { width: 34px; height: 34px; margin: -6px 0; }
+.lower3 .l3-text.sub { font-size: var(--t-s); color: var(--chalk-dim); }
+
+/* The practice field's coach card (tutorial.js): one instruction at a time under the scoreboard. */
+.tut-slot { position: absolute; top: calc(var(--bug-b, 64px) + 8px); left: 50%; transform: translateX(-50%); z-index: 5; width: min(520px, calc(100% - 32px)); pointer-events: none; }
+.tut-slot:empty { display: none; }
+.tut { pointer-events: auto; gap: 6px; padding: var(--sp-3) var(--sp-4); border-radius: var(--rad-m); background: var(--glass-bg); border: 1px solid var(--glass-line); border-top: 3px solid var(--amber); box-shadow: var(--elev-3); animation: cs-in 0.25s ease-out; }
+.tut-eyebrow { display: flex; justify-content: space-between; align-items: center; font: 700 var(--t-xs)/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.1em; color: var(--amber); }
+.tut-dots { display: inline-flex; gap: 4px; }
+.tut-dots i { width: 18px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.18); }
+.tut-dots i.done { background: var(--good); } .tut-dots i.on { background: var(--amber); }
+.tut-title { font: 800 var(--t-xl)/1.05 var(--f-data); text-transform: uppercase; letter-spacing: 0.02em; }
+.tut-text { font-size: var(--t-m); line-height: 1.4; }
+.tut-text kbd { background: var(--amber); color: #1b1408; border-color: var(--amber); }
+.tut-msg { font: 700 var(--t-s)/1.3 var(--f-data); text-transform: uppercase; letter-spacing: 0.05em; color: var(--good); }
+.tut-acts { display: flex; gap: var(--sp-2); justify-content: flex-end; }
+.hud-tip .kc.hl kbd { background: var(--amber); color: #1b1408; border-color: var(--amber); animation: key-pulse 1s ease-in-out infinite; }
+.hud-tip .kc.hl { color: var(--amber); }
+@keyframes key-pulse { 50% { box-shadow: 0 0 0 4px rgba(255, 181, 71, 0.35); } }
+@media (prefers-reduced-motion: reduce) { .hud-tip .kc.hl kbd { animation: none; } }
+
+/* Franchise screens: the season banner, the standings meters and the draft report card. */
+.fhero { display: grid; grid-template-columns: auto 1fr auto; gap: var(--sp-4); align-items: center; padding: var(--sp-4) var(--sp-5); border-radius: var(--rad-l);
+  background: radial-gradient(600px 220px at 0 50%, color-mix(in srgb, var(--team) 34%, transparent), transparent 70%), var(--glass-bg); border: 1px solid var(--glass-line); box-shadow: var(--elev-2); }
+.fhero h1 { margin: 0; }
+.fhero .eyebrow { margin: 0 0 4px; }
+.fh-crest { width: 96px; height: 96px; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.45)); }
+.fh-stats { display: flex; gap: var(--sp-2); }
+.fh-stats .hs { display: grid; justify-items: center; min-width: 84px; padding: var(--sp-2) var(--sp-3); border-radius: var(--rad-m); background: rgba(0, 0, 0, 0.28); border: 1px solid var(--glass-line); }
+.fh-stats b { font: 700 var(--t-xl)/1 var(--f-data); }
+.fh-stats b small { font-size: 0.55em; opacity: 0.6; }
+.fh-stats span { font-size: var(--t-xs); text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.7; margin-top: 4px; }
+@media (max-width: 760px) { .fhero { grid-template-columns: auto 1fr; } .fh-stats { grid-column: 1 / -1; flex-wrap: wrap; } .fh-stats .hs { flex: 1; min-width: 70px; } .fh-crest { width: 64px; height: 64px; } }
+.wpc { width: 64px; }
+.wmeter, .gmeter { display: inline-block; position: relative; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); overflow: hidden; vertical-align: middle; }
+.wmeter { width: 56px; }
+.wmeter i, .gmeter i { position: absolute; inset: 0 auto 0 0; width: var(--f); border-radius: inherit; background: var(--amber); }
+tr.me .wmeter i { background: var(--good); }
+.gmeter { width: 44px; margin-left: 8px; }
+.gmeter i { background: linear-gradient(90deg, var(--bad, #e05a4f), var(--amber) 50%, var(--good)); background-size: 44px 100%; }
+.gspot { display: grid; grid-template-columns: auto 1fr; gap: var(--sp-3) var(--sp-4); align-items: center;
+  background: radial-gradient(520px 200px at 0 0, color-mix(in srgb, var(--team) 30%, transparent), transparent 70%), var(--glass-bg); }
+.gspot h2 { margin: 0; }
+.gspot .eyebrow { margin: 0; }
+.gs-crest { width: 96px; height: 96px; }
+.gs-units { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-2); }
+.gs-unit { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--sp-2); align-items: center; padding: var(--sp-2) var(--sp-3); border-radius: var(--rad-m); background: rgba(0, 0, 0, 0.25); border: 1px solid var(--glass-line); }
+.gs-unit .grade { grid-row: span 3; font-size: 30px; }
+.gs-unit b { font-size: var(--t-s); }
+.gs-unit .gmeter { width: 100%; margin: 0; }
+.gs-unit em { font-style: normal; font-size: var(--t-xs); opacity: 0.7; }
 </style>
 <div id="app"></div>
 <!--APP-->
