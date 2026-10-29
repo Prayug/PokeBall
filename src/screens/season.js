@@ -7,7 +7,7 @@ import { clockText, quarterText, simUntil } from '../engine.js';
 import * as LG from '../league.js';
 import { setScreen } from '../app.js';
 import { S } from '../state.js';
-import { P, edgeRow, esc, kickerHtml, punterHtml, rangeLine, sprite, teamBadge, user } from '../ui.js';
+import { P, edgeRow, esc, kickerHtml, punterHtml, rangeLine, sprite, teamBadge, teamMark, user } from '../ui.js';
 import { tradeCardHtml } from './draft.js';
 import { SCHEMES } from '../coach.js';
 import { injuryReport } from '../injuries.js';
@@ -56,7 +56,7 @@ export function renderSeason() {
   }
   const results = L.results.map((r, i) => ({ r, i })).reverse();
   return `<section class="season">
-    <h1>${esc(me.name)} · ${record(st.find((r) => r.id === me.id))}</h1>
+    ${heroHtml(L, me, st)}
     <div class="season-grid">
       <div class="col">${main}
         ${challengeCardHtml(L)}
@@ -76,6 +76,19 @@ export function renderSeason() {
       </div>
     </div>
   </section>`;
+}
+
+// The franchise banner: the crest, the record, where the team stands and how it is scoring.
+function heroHtml(L, me, st) {
+  const i = st.findIndex((r) => r.id === me.id), r = st[i];
+  const diff = r ? r.pf - r.pa : 0, gp = r ? r.w + r.l + r.t : 0;
+  const seed = playoffSeeds(L, st).indexOf(me.id) + 1;
+  const stat = (v, l) => `<div class="hs"><b>${v}</b><span>${l}</span></div>`;
+  return `<div class="fhero" style="--team:${me.color}">
+    ${teamMark(me, 96, 'fh-crest')}
+    <div class="fh-name"><p class="eyebrow">Season ${L.season ?? 1} · ${L.phase === 'playoffs' ? 'Playoffs' : L.phase === 'done' ? 'Final' : `Week ${Math.min(L.week + 1, L.schedule.length)} of ${L.schedule.length}`}</p><h1>${esc(me.name)}</h1></div>
+    <div class="fh-stats">${stat(record(r), 'Record')}${stat(gp ? `${i + 1}<small>/${st.length}</small>` : '–', 'Standing')}${stat(gp ? `${diff > 0 ? '+' : ''}${diff}` : '–', 'Point diff')}${stat(gp && seed ? `#${seed}` : gp ? 'Out' : '–', 'Playoff seed')}</div>
+  </div>`;
 }
 
 // Play or sim this week's game. A game already under way is resumed (or simmed from where it
@@ -182,10 +195,10 @@ function seasonFinish(L, id) {
 // where each team would land in the playoffs if the season ended today.
 function standingsHtml(L, st) {
   const seeds = playoffSeeds(L, st);
-  const head = '<thead><tr><th>Team</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">PF</th><th class="num">PA</th><th class="num">Diff</th></tr></thead>';
+  const head = '<thead><tr><th>Team</th><th class="num">W</th><th class="num">L</th><th class="num">T</th><th class="num">PF</th><th class="num">PA</th><th class="num">Diff</th><th class="wpc">Win %</th></tr></thead>';
   const row = (r, i, cut) => {
     const t = L.teams[r.id], seed = seeds.indexOf(r.id) + 1;
-    return `<tr class="${t.user ? 'me' : ''} ${cut ? 'cut' : ''}"><td>${seed ? `<em class="seed" title="Seed ${seed}">${seed}</em>` : ''}${teamBadge(t)} ${esc(t.name)}</td><td class="num">${r.w}</td><td class="num">${r.l}</td><td class="num">${r.t}</td><td class="num">${r.pf}</td><td class="num">${r.pa}</td><td class="num">${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td></tr>`;
+    return `<tr class="${t.user ? 'me' : ''} ${cut ? 'cut' : ''}"><td>${seed ? `<em class="seed" title="Seed ${seed}">${seed}</em>` : ''}${teamBadge(t)} ${esc(t.name)}</td><td class="num">${r.w}</td><td class="num">${r.l}</td><td class="num">${r.t}</td><td class="num">${r.pf}</td><td class="num">${r.pa}</td><td class="num">${r.pf - r.pa > 0 ? '+' : ''}${r.pf - r.pa}</td><td class="wpc">${winMeter(r)}</td></tr>`;
   };
   const field = playoffField(L);
   if (!L.divisions) {
@@ -333,8 +346,12 @@ function injuryHtml(L) {
 }
 
 function statFor(k, r) { return { 'Passing yards': r.py, 'Rushing yards': r.ry, 'Receiving yards': r.rcy, Sacks: r.dsk, Interceptions: r.dint, Tackles: r.tk }[k]; }
+function winMeter(r) {
+  const gp = r.w + r.l + r.t, pct = gp ? (r.w + r.t / 2) / gp : 0;
+  return `<span class="wmeter" style="--f:${Math.round(pct * 100)}%" title="${gp ? pct.toFixed(3).replace(/^0/, '') : 'No games'}"><i></i></span>`;
+}
 function record(r) { return r ? `${r.w}-${r.l}${r.t ? `-${r.t}` : ''}` : '0-0'; }
-function teamBlock(t) { return `<div class="tblock" style="--team:${t.color}"><span class="tabbr">${esc(t.abbr)}</span><span>${esc(t.name)}</span></div>`; }
+function teamBlock(t) { return `<div class="tblock" style="--team:${t.color}">${teamMark(t, 72, 'tb-crest')}<span>${esc(t.name)}</span></div>`; }
 function resultLine(r, i) {
   const L = S.league, h = L.teams[r.home], a = L.teams[r.away];
   const inner = `${r.playoff ? '<em class="po">Playoffs</em>' : `<em>Wk ${r.week + 1}</em>`}${teamBadge(a)} <b class="${r.winner === a.id ? 'won' : ''}">${r.score[1]}</b> at ${teamBadge(h)} <b class="${r.winner === h.id ? 'won' : ''}">${r.score[0]}</b>`;

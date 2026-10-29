@@ -9,6 +9,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { buildVenue } from './venue3d.js';
 import { inkOn, kitOf } from './kits.js';
 import { fitText, paintEndZone } from './kitdraw.js';
+import { logoDataUrl } from './logos.js';
 
 export const FIELD_W = 53.3;
 export const HALF_W = FIELD_W / 2;
@@ -216,16 +217,29 @@ export class Stadium {
         x.restore();
       }
     }
-    // Midfield logo: a small, faint Poké Ball, a mark on the turf rather than a billboard.
-    x.save(); x.translate(X(50), H / 2); x.globalAlpha = 0.32;
-    const R = PX * 2.6;
-    x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.fillStyle = '#f2f4ee'; x.fill();
-    x.beginPath(); x.arc(0, 0, R, Math.PI, Math.PI * 2); x.fillStyle = '#c9543f'; x.fill();
-    x.fillStyle = '#16221b'; x.fillRect(-R, -PX * 0.35, R * 2, PX * 0.7);
-    x.beginPath(); x.arc(0, 0, PX * 1.35, 0, Math.PI * 2); x.fill();
-    x.beginPath(); x.arc(0, 0, PX * 0.85, 0, Math.PI * 2); x.fillStyle = '#f2f4ee'; x.fill();
-    x.lineWidth = PX * 0.3; x.strokeStyle = '#16221b'; x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.stroke();
-    x.restore();
+    // Midfield logo: the home team's crest (logos.js), painted on the turf once its image has
+    // loaded; the league's own Poké Ball when there is no home team (the main menu).
+    if (teams[0]?.abbr && teams[0].abbr !== 'PKB') {
+      const img = new Image(), R = PX * 4.6;
+      img.onload = () => {
+        if (this.teamsKey !== key) return;
+        x.save(); x.translate(X(50), H / 2); x.rotate(view < 0 ? -Math.PI / 2 : Math.PI / 2); x.globalAlpha = 0.92;
+        x.drawImage(img, -R, -R, R * 2, R * 2);
+        x.restore();
+        this.fieldTex.needsUpdate = true;
+      };
+      img.src = logoDataUrl(teams[0], 256);
+    } else {
+      x.save(); x.translate(X(50), H / 2); x.globalAlpha = 0.32;
+      const R = PX * 2.6;
+      x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.fillStyle = '#f2f4ee'; x.fill();
+      x.beginPath(); x.arc(0, 0, R, Math.PI, Math.PI * 2); x.fillStyle = '#c9543f'; x.fill();
+      x.fillStyle = '#16221b'; x.fillRect(-R, -PX * 0.35, R * 2, PX * 0.7);
+      x.beginPath(); x.arc(0, 0, PX * 1.35, 0, Math.PI * 2); x.fill();
+      x.beginPath(); x.arc(0, 0, PX * 0.85, 0, Math.PI * 2); x.fillStyle = '#f2f4ee'; x.fill();
+      x.lineWidth = PX * 0.3; x.strokeStyle = '#16221b'; x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.stroke();
+      x.restore();
+    }
     this.fieldTex.needsUpdate = true;
     // Team colors on the sideline, the benches, the wall and the crowd.
     this.teamArea[0].material.color.set(teams[1].color); this.teamArea[1].material.color.set(teams[0].color);

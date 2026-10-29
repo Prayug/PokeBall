@@ -6,6 +6,7 @@ import { clockText, downText, quarterText, spotText } from '../engine.js';
 import * as LG from '../league.js';
 import { S, reduceMotion } from '../state.js';
 import { esc, sprite, typeChips } from '../ui.js';
+import { teamLogo } from '../logos.js';
 import { inkOn, kitOf, venueOf } from '../kits.js';
 import { boothBefore, driveLine, driveSegs, openCard, playerToWatch, stingerFor } from '../broadcast.js';
 import { chant, crowd, setCrowdBase, stinger as playStinger } from '../audio.js';
@@ -41,7 +42,7 @@ export function scorebugHtml(g, { pclock = 40, scored = [0, 0], live = false } =
     return `<span class="tos ${ti === 0 ? 'home' : 'away'}" title="${esc(g.teams[ti].abbr)}: ${n} timeout${n === 1 ? '' : 's'} left">${[0, 1, 2].map((i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('')}</span>`;
   };
   const team = (t, i) => `<div class="bc-team ${g.poss === i && !g.final ? 'has' : ''} ${(scored[i] ?? 0) > now ? 'scored' : ''}" style="${teamVars(t)}">
-    <span class="bc-abbr">${esc(t.abbr)}${rec?.[i] ? `<small class="bc-rec">${rec[i]}</small>` : ''}</span><span class="bc-score">${g.score[i]}</span>${g.final ? '' : tos(i)}${g.poss === i && !g.final ? '<span class="bc-poss" title="Has the ball" aria-label="Has the ball"></span>' : ''}</div>`;
+    ${teamLogo(t, { size: 30, cls: 'bc-logo', title: false })}<span class="bc-abbr">${esc(t.abbr)}${rec?.[i] ? `<small class="bc-rec">${rec[i]}</small>` : ''}</span><span class="bc-score">${g.score[i]}</span>${g.final ? '' : tos(i)}${g.poss === i && !g.final ? '<span class="bc-poss" title="Has the ball" aria-label="Has the ball"></span>' : ''}</div>`;
   const last = [...g.log].reverse().find((e) => e.kind !== 'sub' && e.kind !== 'info');
   const tag = g.final ? '' : g.phase === 'penalty' || (last?.highlight === 'flag' && last.kind === 'penalty' && !live) ? '<div class="bc-cell bc-tag flag">Flag</div>'
     : last?.kind === 'timeout' && !live ? '<div class="bc-cell bc-tag to">Timeout</div>'

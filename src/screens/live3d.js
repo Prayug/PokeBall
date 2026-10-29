@@ -1,5 +1,7 @@
 // The live 3D game: the stage, the play flow state machine, the frame loop, keyboard and touch
 // input, the result banner, pause, replay, the controls card and the debug HUD.
+import { BIND, chips, chipsText, controlsCardHtml, keyFor } from '../controls.js';
+import { tutorialHtml, tutorialKeys, tutorialOn, tutorialTick } from './tutorial.js';
 import { DEF_PLAYS, OFF_PLAYS, clockText, downText, nm, runLivePlay, spotText } from '../engine.js';
 import { DT, createLivePlay, hurry, playSeconds, playState, returnPrompt, snap, step as stepLive, swapPads, worldSpots } from '../live.js';
 import { measureVersion } from '../body.js';
@@ -8,11 +10,11 @@ import { Stage, webglAvailable } from '../field3d.js';
 import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
 import { S, netGame, save, savePrefs, timers } from '../state.js';
-import { P, esc } from '../ui.js';
+import { P, esc, sprite } from '../ui.js';
 import { sfx } from '../audio.js';
 import { POWER_OF, powerLine } from '../powers.js';
 import { autoAdvance, doCall, needsUser, playClockOut, setMode, spectating, toggleTakeOver, twoPlayer, userSide, userTimeout } from './game.js';
-import { KICK_KEYS, clockShortcuts, csMove, csTabs, cycleForm, psOptions, quickCalls } from './callsheet.js';
+import { clockShortcuts, csBack, csKey, csMove, csOpen, csTabs, cycleForm, psOptions, quickCalls } from './callsheet.js';
 import { SHADES, audibles, cycleShade, flipRun, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
 import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
@@ -22,54 +24,15 @@ import { boothAfter } from '../broadcast.js';
 import { boothAfter as callAfter, boothFlow, boothHush, boothLive, boothReset, boothReview, captionHtml } from './booth.js';
 import { afterPlay as broadcastAfter, afterReview as broadcastReview, layersHtml, onCall as broadcastCall, onFlow as broadcastFlow, resetBroadcast } from './broadcast.js';
 
-// The controls card: the eight keys a first game needs, and every other key behind More.
+// The controls card: the basics a first game needs, and every binding behind More, all from
+// the control registry (controls.js), with the tutorial one click away.
 function keysHelp() {
-  return `<div class="keygrid keys8">
-    <span><kbd>1</kbd>-<kbd>8</kbd> call a play · <kbd>Enter</kbd> call the one that fits</span>
-    <span><kbd>H</kbd> open or fold the full call sheet</span>
-    <span><kbd>Space</kbd> snap, then juke with the ball or dive to tackle</span>
-    <span><kbd>W A S D</kbd> or arrows: move your player</span>
-    <span><kbd>Shift</kbd> sprint</span>
-    <span><kbd>1</kbd>-<kbd>5</kbd> throw to that receiver</span>
-    <span><kbd>Esc</kbd> change the play once you are lined up</span>
-    <span><kbd>M</kbd> menu · <kbd>?</kbd> this card</span>
-  </div>
-  <p class="small muted">Leave the keys alone and your player runs on autopilot.</p>
-  <details class="keys-more"><summary>More controls</summary>
-  <div class="keygrid">
-    <span><kbd>←</kbd> <kbd>→</kbd> between plays: turn the page · <kbd>R</kbd> call your last call again</span>
-    <span><kbd>Space</kbd> after the whistle: skip the result and the walk back to the line</span>
-    <span><kbd>C</kbd> change camera (gameplay, tactical, broadcast, player) · <kbd>U</kbd> mute</span>
-    <span><kbd>1</kbd>-<kbd>5</kbd> throw: tap for touch, hold for a bullet, <kbd>Shift</kbd> + number for a lob</span>
-    <span>Hold a direction as you throw to place the ball: up leads him, down brings it back, sideways away from the defender</span>
-    <span><kbd>Space</kbd> while the ball is in the air: go up and attack it</span>
-    <span><kbd>T</kbd> throw it away</span>
-    <span><kbd>E</kbd> truck through a tackler · <kbd>R</kbd> spin move</span>
-    <span><kbd>Q</kbd> on defense: switch to the player nearest the ball</span>
-    <span>At the line on offense: <kbd>V</kbd> audible, <kbd>B</kbd> hot route (on a run: flip it to the other side), <kbd>N</kbd> motion, then a number to pick</span>
-    <span><kbd>B</kbd> on the play sheet or at the line: flip the runs to the other side</span>
-    <span>At the line on defense: <kbd>V</kbd> shade the coverage, <kbd>B</kbd> show blitz, <kbd>N</kbd> back out</span>
-    <span><kbd>I</kbd> on the play sheet: type edges and their tendencies · <kbd>X</kbd> every play at once</span>
-    <span><kbd>T</kbd> between plays: call a timeout · the Tempo menu on the call sheet picks no huddle, huddle or bleeding the clock</span>
-    <span><kbd>L</kbd> between plays: play-by-play, box score, drives and lineup</span>
-    <span><kbd>P</kbd> pause during a play · <kbd>Y</kbd> replay the last play</span>
-    <span><kbd>G</kbd> between plays: challenge the last call (one a half; a lost challenge costs a timeout) · <kbd>J</kbd> the film room</span>
-    <span><kbd>O</kbd> in Watch mode: call the next play yourself (press again to hand it back)</span>
-  </div>
-  <h4>Gamepad</h4>
-  <div class="keygrid">
-    <span>Left stick or D-pad: move · <kbd>RT</kbd> sprint · <kbd>A</kbd> snap, juke, dive, go up for the ball</span>
-    <span><kbd>B</kbd> spin · <kbd>X</kbd> truck · <kbd>Y</kbd> switch defender · right stick click: throw it away</span>
-    <span>On a pass, <kbd>A</kbd> <kbd>B</kbd> <kbd>X</kbd> <kbd>Y</kbd> <kbd>RB</kbd> throw to receivers 1-5: tap for touch, hold for a bullet, with <kbd>LB</kbd> held for a lob</span>
-    <span><kbd>A</kbd> after the whistle skips to the next call · between plays the D-pad moves between plays and <kbd>A</kbd> calls one · <kbd>LB</kbd> <kbd>RB</kbd> turn the page · <kbd>B</kbd> change the call · <kbd>Start</kbd> pause or menu · <kbd>Back</kbd> camera</span>
-  </div>
-  <h4>Two players on one screen</h4>
-  <div class="keygrid">
-    <span>Player 1 (home): <kbd>W A S D</kbd> move · <kbd>Left Shift</kbd> sprint · <kbd>Space</kbd> snap, juke, dive · <kbd>E</kbd> truck · <kbd>R</kbd> spin · <kbd>Q</kbd> switch</span>
-    <span>Player 2 (away): arrows move · <kbd>Right Shift</kbd> sprint · <kbd>Enter</kbd> snap, juke, dive · <kbd>L</kbd> truck · <kbd>K</kbd> spin · <kbd>.</kbd> switch</span>
-    <span>Whoever has the ball throws with <kbd>1</kbd>-<kbd>5</kbd> and <kbd>T</kbd>. The offense calls its play first, then the defense, and only the offense can snap.</span>
-    <span>One gamepad plays for player 2; with two, the first is player 1 and the second player 2.</span>
-  </div></details>`;
+  const basic = [['pick', 'Pick a category, then a play'], ['fits', 'Call the play that fits'], ['action', 'Snap, juke, dive to tackle'], ['move', 'Move your player'],
+    ['sprint', 'Sprint'], ['throw', 'Throw to that receiver'], ['change', 'Change the play at the line'], ['help', 'This card']];
+  return `<div class="keygrid keys8">${basic.map(([id, t]) => `<span><kbd>${esc(keyFor(id))}</kbd> ${esc(t)}</span>`).join('')}</div>
+  <p class="small muted">Leave the keys alone and your player runs on autopilot. The strip at the bottom of the screen always shows the keys that work right now.</p>
+  <details class="keys-more"><summary>All controls</summary>${controlsCardHtml({ twoPlayer: true })}</details>
+  <div class="actions help-acts"><button class="btn" data-act="tutorial">Practice the controls</button></div>`;
 }
 
 // ---------- the live 3D game ----------
@@ -465,7 +428,34 @@ function resultBanner(e, lp, before) {
   const next = g.final ? 'Final' : g.phase === 'penalty' ? 'Accept or decline the penalty' : `${changed ? `${g.teams[g.poss].abbr} ball · ` : ''}${downText(g)} at ${spotText(g)}`;
   const clock = !g.final && g.phase === 'play' && !changed && !td && e.down ? (g.clockRunning ? '' : 'Clock stopped') : '';
   const booth = boothAfter(g, e, before, lp?.notes ?? []);
-  return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed, booth };
+  const line = playHeadline(e, lp, b, { td, changed });
+  return { head, tone, yds, text: e.text.replace(/ It's super effective!/, ''), next, notes, clock, possession: changed, booth, line };
+}
+
+// The play in one line, from what the field recorded (the live play's result, its tackler and the
+// throw's verdict) and the game after it: "Raikou gains 12 yards", "Garchomp sacks Mewtwo", then
+// what it means for the down. Only names the engine put on the play; anything it cannot attribute
+// (a kick, a clock play, a flag) keeps the play-by-play text instead.
+function playHeadline(e, lp, b, { td, changed }) {
+  const g = S.game, r = lp?.result;
+  if (!r || lp.kick || r.noPlay || e.head || e.kind === 'penalty' || r.fouls?.length) return null;
+  const n = (id) => (id == null ? null : P(id)?.name ?? null);
+  const yd = e.yards ?? r.yards ?? 0, ys = (v) => `${Math.abs(v)} yard${Math.abs(v) === 1 ? '' : 's'}`;
+  const tackler = lp.end?.tackler?.id ?? null, V = lp.throwVerdict;
+  let text = '', who = [];
+  if (r.turnover === 'int') { text = `${n(r.returner)} intercepts ${n(r.qb)}`; who = [r.returner]; }
+  else if (r.turnover === 'fumble') { text = `${n(r.returner)} takes it away from ${n(lp.fumble?.c?.id ?? r.carrier)}`; who = [r.returner]; }
+  else if (r.kind === 'sack') { text = `${n(tackler)} sacks ${n(r.qb ?? r.carrier)}${yd < 0 ? `: loss of ${ys(yd)}` : ''}`; who = [tackler]; }
+  else if (r.incomplete) {
+    const tgt = lp.stats?.target?.id;
+    text = V?.by && (V.how === 'broken' || V.how === 'int') ? `${n(V.by.id)} breaks up the pass${tgt ? ` to ${n(tgt)}` : ''}` : V?.how === 'dropped' && tgt ? `${n(tgt)} drops it` : `Incomplete${tgt ? `, intended for ${n(tgt)}` : ''}`;
+    who = [V?.by?.id ?? tgt];
+  } else if (td) { text = r.kind === 'pass' ? `${n(r.qb)} to ${n(r.carrier)}, ${ys(yd)}` : `${n(r.carrier)} scores from ${ys(yd)} out`; who = [r.carrier]; }
+  else if (r.kind === 'pass') { text = `${n(r.carrier)} catches it for ${yd === 0 ? 'no gain' : yd > 0 ? ys(yd) : `a loss of ${ys(yd)}`}`; who = [r.carrier]; }
+  else if (r.kind === 'run') { text = yd > 0 ? `${n(r.carrier)} gains ${ys(yd)}` : yd < 0 ? `${n(r.carrier)} loses ${ys(yd)}` : `${n(r.carrier)}: no gain`; who = [r.carrier]; }
+  if (!text || text.includes('null')) return null;
+  const then = td ? 'TOUCHDOWN' : g.final ? '' : r.turnover ? 'TURNOVER' : changed ? 'TURNOVER ON DOWNS' : g.phase === 'play' && g.down === 1 && (b.down ?? 1) >= 1 && !r.incomplete && yd > 0 ? 'FIRST DOWN' : g.phase === 'play' ? downText(g).toUpperCase() : '';
+  return { text, then, who: who.filter((id) => id != null).slice(0, 1) };
 }
 function showBanner(B) {
   const el = document.getElementById('lower3');
@@ -474,7 +464,7 @@ function showBanner(B) {
   L3.banner = B;
   el.className = `lower3 on ${B.tone}${B.possession ? ' poss' : ''}`;
   el.innerHTML = `<div class="l3-head"><b>${esc(B.head)}</b>${B.yds ? `<span class="l3-yds">${esc(B.yds)}</span>` : ''}${B.clock ? `<span class="l3-clock">${B.clock}</span>` : ''}</div>
-    <p class="l3-text">${esc(B.text)}</p>${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size', weather: 'Weather', power: 'Power', powerOff: 'Power lost' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}${B.booth ? `<p class="l3-booth"><span class="l3-mic" aria-hidden="true"></span>${esc(B.booth)}</p>` : ''}<p class="l3-next">${esc(B.next)}</p>`;
+    ${B.line ? `<p class="l3-line">${B.line.who.map((id) => sprite(id, 'sm')).join('')}<b>${esc(B.line.text)}</b>${B.line.then ? `<em>${esc(B.line.then)}</em>` : ''}</p><p class="l3-text sub">${esc(B.text)}</p>` : `<p class="l3-text">${esc(B.text)}</p>`}${B.notes.map((n) => `<p class="l3-note"><span class="l3-tag ${n.kind}">${{ type: 'Type', ability: 'Ability', size: 'Size', weather: 'Weather', power: 'Power', powerOff: 'Power lost' }[n.kind] ?? ''}</span>${esc(n.text)}</p>`).join('')}${B.booth ? `<p class="l3-booth"><span class="l3-mic" aria-hidden="true"></span>${esc(B.booth)}</p>` : ''}<p class="l3-next">${esc(B.next)}</p>`;
 }
 function hideBanner(after = 0) {
   clearTimeout(timers.banner);
@@ -498,82 +488,89 @@ function readInput(lp, src = L3) {
   const m = stage.toPlayFrame(up, right);
   // Throws: tap a receiver's number for a touch pass, hold it for a bullet, Shift with it for a
   // lob. The stick at release places the ball.
-  const shift = k.has('ShiftLeft') || k.has('ShiftRight');
-  const pressed = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].find((d) => e.has(d));
+  // Every action key comes from the registry (controls.js).
+  const held = (id) => BIND[id].codes.some((c) => k.has(c)), hit = (id) => BIND[id].codes.some((c) => e.has(c));
+  const shift = held('sprint');
+  const pressed = BIND.throw.codes.find((d) => e.has(d));
   let throwKey = null, throwType = null;
   if (pressed) {
     if (shift || src.lob === pressed) { throwKey = pressed; throwType = 'lob'; src.hold = null; src.lob = null; }
     else src.hold = { key: pressed, t0: performance.now() };
   }
   if (src.hold && !throwKey) {
-    const held = performance.now() - src.hold.t0;
+    const heldMs = performance.now() - src.hold.t0;
     if (!k.has(src.hold.key)) { throwKey = src.hold.key; throwType = 'touch'; src.hold = null; }
-    else if (held >= 220) { throwKey = src.hold.key; throwType = 'bullet'; src.hold = null; }
+    else if (heldMs >= 220) { throwKey = src.hold.key; throwType = 'bullet'; src.hold = null; }
   }
   const inp = {
     mx: m.mx, my: m.my, sprint: shift && !throwKey,
-    juke: e.has('Space'), dive: e.has('Space'), truck: e.has('KeyE'), spin: e.has('KeyR'),
-    throwTo: throwKey ? ['WR1', 'WR2', 'WR3', 'TE', 'RB'][Number(throwKey.slice(5)) - 1] : null, throwType,
-    throwAway: e.has('KeyT'), switchTo: e.has('KeyQ') || e.has('Tab') ? 'ball' : null, fair: e.has('KeyF'),
+    juke: hit('action'), dive: hit('action'), truck: hit('truck'), spin: hit('spin'),
+    throwTo: throwKey ? ['WR1', 'WR2', 'WR3', 'TE', 'RB'][BIND.throw.codes.indexOf(throwKey)] : null, throwType,
+    throwAway: hit('away'), switchTo: hit('switch') ? 'ball' : null, fair: hit('fair'),
   };
   e.clear();
   return inp;
 }
 
-// The one line of controls for the moment, at the bottom of the screen (a line per player in a
-// two-player game, each with that player's own keys or gamepad buttons).
-const KEY_NAMES = {
-  p1: { Arrows: 'WASD', arrows: 'WASD', Shift: 'Left Shift' },
-  p2: { Space: 'Enter', Shift: 'Right Shift', Q: '.', R: 'K', E: 'L' },
-  pad: { Space: 'A', Arrows: 'Stick', arrows: 'stick', Shift: 'RT', Q: 'Y', F: 'Y', R: 'B', E: 'X', T: 'RS', '1-5': 'A B X Y RB', Esc: 'B' },
-};
-// A lob is either Shift on the keyboard (LB on a pad); only the sprint has a side.
-const renameKeys = (t, names) => t.replace(/\b(Space|Esc|Shift|Arrows|arrows|Q|F|R|E|T|1-5)\b( lob)?/g, (m, k, lob) => (lob ? (names === KEY_NAMES.pad ? 'LB lob' : m) : names[k] ?? k));
-function tipText(lp) {
+// The control strip at the bottom of the screen: the keys that work in this moment of play and
+// what each does, from the registry (controls.js). A line per player in a two-player game, each
+// with that player's own keys, or a gamepad's buttons once one is in use.
+function tipLines(lp) {
   if (!twoPlayer() || !lp?.p2) {
-    const t = hudTip(lp);
-    return padRecent(0) ? renameKeys(t, KEY_NAMES.pad) : t;
+    const ctx = controlContext(lp);
+    return ctx ? [{ ctx, device: padRecent(0) ? 'pad' : 'kb', who: '' }] : [];
   }
-  const g = S.game, line = (n, t) => (t ? `P${n + 1} ${g.teams[n].abbr} · ${renameKeys(t, padRecent(n) ? KEY_NAMES.pad : KEY_NAMES[`p${n + 1}`])}` : '');
-  const t1 = hudTip(lp);
+  const g = S.game;
+  const c1 = controlContext(lp);
   swapPads(lp);
-  let t2;
-  try { t2 = hudTip(lp); } finally { swapPads(lp); }
-  return [line(0, t1), line(1, t2)].filter(Boolean).join('\n');
+  let c2;
+  try { c2 = controlContext(lp); } finally { swapPads(lp); }
+  return [[0, c1], [1, c2]].filter(([, c]) => c).map(([n, ctx]) => ({ ctx, device: padRecent(n) ? 'pad' : n ? 'p2' : 'kb', who: `P${n + 1} ${g.teams[n].abbr}` }));
 }
 // Has this player used a gamepad in the last few seconds (its buttons go in the tips)?
 function padRecent(n) { return performance.now() - ((n === 0 ? L3 : L3.p2in).padAt ?? 0) < 8000; }
-function hudTip(lp) {
+// Which moment of play it is, as a controls.js context (null: nothing to press).
+export function controlContext(lp) {
   const f = L3.flow;
   if (!lp) {
-    if (!(f === 'PLAY_SELECTION' && S.game && !S.game.final && needsUser(S.game) && !S.busy)) return '';
-    if (twoPlayer()) { const s = userSide(); return `Player ${s + 1} (${S.game.teams[s].abbr}): ${S.game.phase === 'penalty' ? 'accept or decline the penalty' : `call your ${S.game.poss === s ? 'offense' : 'defense'}`} · number keys · ← → categories`; }
-    return padRecent(0) ? 'Pick a play · D-pad and A · LB RB categories' : 'Pick a play · number keys · Enter the play that fits · ← → categories';
+    if (S.game?.final) return 'final';
+    if (f === 'PLAY_RESULT' || f === 'RESET_FORMATION') return S.game && !L3.replay && !FILM.open ? 'dead' : null;
+    if (!(f === 'PLAY_SELECTION' && S.game && needsUser(S.game) && !S.busy)) return null;
+    if (twoPlayer()) return 'select2p';
+    const T = csTabs(S.game);
+    return T.level === 'all' ? 'selectAll' : T.level === 1 ? 'select1' : 'select';
   }
   const c = lp.control;
   // Two players: the defense waits for the offense to snap.
-  if (lp.p2 && lp.phase === 'pre' && lp.user === lp.d) return lp.kick ? (c && c === lp.kick.returner ? 'You are back to return it' : '') : 'Q pick a defender · the offense snaps';
-  if (f === 'FORMATION_SETUP') return 'Lining up…';
+  if (lp.p2 && lp.phase === 'pre' && lp.user === lp.d) return lp.kick ? (c && c === lp.kick.returner ? 'kickReturner' : null) : 'preDef2p';
+  if (f === 'FORMATION_SETUP') return lp.user === lp.o && !lp.kick ? 'lining' : null;
   if (lp.kick) {
-    if (lp.phase === 'pre') return lp.user === lp.o ? `Space ${lp.kick.ko ? 'kick off' : 'snap'} · the kick goes on its own · Esc change call` : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
-    if (lp.phase === 'dead') return '';
-    const ring = lp.kick.F && !lp.kick.onside && (lp.kick.ko || lp.kick.punt) && lp.ball.state === 'air';
-    if (c && c === lp.kick.returner && !c.carrier) return `${ring ? 'The ring is where the ball comes down' : 'Get under it'} · arrows move · Shift sprint${lp.kick.ko ? '' : ' · F fair catch'}`;
-    if (c && !c.carrier && c.side === 'off') return `${ring ? 'The ring is where the ball comes down' : 'Cover the kick'} · arrows move · Shift sprint · Space dive`;
-    if (!c) return lp.kick.kickedAt != null ? (ring ? 'The ring is where the ball comes down' : 'Kick away') : lp.kick.ko ? 'The kicker runs up…' : 'The long snap…';
+    if (lp.phase === 'pre') return lp.user === lp.o ? (lp.kick.ko ? 'preKickoff' : 'preKick') : 'preReturn';
+    if (lp.phase === 'dead') return 'dead';
+    if (c && c === lp.kick.returner && !c.carrier) return lp.kick.ko ? 'kickReturner' : 'returner';
+    if (c?.carrier) return 'carrier';
+    if (c && c.side === 'off') return 'coverKick';
+    return null;
   }
   if (lp.phase === 'pre') {
-    if (!c) return 'Coach mode · Space to snap now · Esc to change the call';
-    return lp.user === lp.o ? `Space snap${lp.kind === 'pass' ? ' · then 1-5 throw' : ''} · V audible · B hot route · N motion · Esc change call` : 'Space start · Q or click pick a defender · V shade · B show blitz · N back out';
+    if (!c) return 'preCoach';
+    return lp.user === lp.o ? (lp.kind === 'run' ? 'preOffRun' : 'preOff') : 'preDef';
   }
-  if (lp.phase === 'dead') return '';
-  if (!c) return 'Watching the AI run your call';
-  if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'run') return '1-5 tap touch · hold bullet · Shift lob · arrows place the ball · T away';
-  if (lp.thrown && lp.ball.state === 'air' && lp.thrown.target === c) return 'Ball in the air · arrows adjust · Space go up for it';
-  if (c.carrier) return `Arrows run · Shift sprint · Space juke · R spin · E truck${c.side === 'off' && c.slot === 'QB' && !lp.kick ? ' · T slide' : ''}`;
-  if (c.side === 'def') return 'Arrows move · Shift sprint · Space dive/tackle · Q switch to the ball · click a defender to take him';
-  return 'Arrows move · Shift sprint';
+  if (lp.phase === 'dead') return 'dead';
+  if (!c) return null;
+  if (c.side === 'off' && c.slot === 'QB' && lp.kind === 'pass' && !lp.thrown && !lp.windup && lp.qbState !== 'run') return 'qb';
+  if (lp.thrown && lp.ball.state === 'air' && lp.thrown.target === c) return 'air';
+  if (c.carrier) return c.side === 'off' && c.slot === 'QB' ? 'carrierQB' : 'carrier';
+  if (c.side === 'def') return 'defense';
+  return 'blocker';
 }
+// The strip's markup and its text.
+function tipHtml(lp) {
+  const lines = tipLines(lp);
+  const hl = tutorialKeys();
+  return lines.map((l) => `<span class="kline">${l.who ? `<b class="kwho">${esc(l.who)}</b>` : ''}${chips(l.ctx, l.device, hl)}</span>`).join('');
+}
+function tipText(lp) { return tipLines(lp).map((l) => `${l.who ? `${l.who} · ` : ''}${chipsText(l.ctx, l.device)}`).join('\n'); }
 
 // The throw chart: on your pass play, every receiver's number, name and how open he is (open,
 // contested, covered, and by whom) for the whole dropback; once the ball is out, the target's
@@ -956,8 +953,8 @@ function loop(now) {
     if (kp.dataset.html !== html) { kp.dataset.html = html; kp.innerHTML = html; kp.hidden = !html; }
   }
   const tip = document.getElementById('hud-tip');
-  const t = tipText(L3.lp);
-  if (tip && tip.textContent !== t) tip.textContent = t;
+  const th = tipHtml(L3.lp);
+  if (tip && tip.dataset.html !== th) { tip.dataset.html = th; tip.innerHTML = th; tip.setAttribute('aria-label', tipText(L3.lp)); }
   const pad = document.getElementById('touch'), mode = touchMode(L3.lp);
   if (pad && pad.dataset.mode !== mode) { pad.dataset.mode = mode; if (mode !== 'pass') pad.classList.remove('lob'); }
   const call = document.getElementById('hud-call');
@@ -965,7 +962,15 @@ function loop(now) {
   if (call && call.textContent !== ct) call.textContent = ct;
   if (L3.flashT && now > L3.flashT) { L3.flashT = 0; const f = document.getElementById('hud-flash'); if (f) f.className = 'hud-flash'; }
   syncOverlays();
-  fitCaption();
+  // The call sheet changes height as it moves between its steps: keep the result card and the
+  // camera clear of it.
+  if ((L3.dockN = (L3.dockN ?? 0) + 1) % 15 === 0) fitDock(); else fitCaption();
+  // The practice field: watch for each exercise's step, and keep its card current.
+  if (tutorialOn()) {
+    tutorialTick(dt, now);
+    const ts = document.getElementById('tut-slot'), th = tutorialHtml();
+    if (ts && ts.dataset.html !== th) { ts.dataset.html = th; ts.innerHTML = th; }
+  }
   stage.frame(now, sim && sim.phase !== undefined && !hold ? Math.min(1, L3.acc / DT) : 1);
   if (S.debug) debugHud();
 }
@@ -977,7 +982,7 @@ function loop(now) {
 // for the first offensive snap of a career (Rookie makes the fitting call for you instead).
 export function pclockHeld(g) {
   if (S.busy || S.helpOpen || S.menuOpen || S.detailsOpen || S.csScout || S.csAll || S.soundOpen || S.skipOpen || S.psPick) return true;
-  if (L3.paused || L3.replay || FILM.open || L3.pcHold) return true;
+  if (L3.paused || L3.replay || FILM.open || L3.pcHold || tutorialOn()) return true;
   return !S.snapped && !twoPlayer() && g.phase === 'play' && g.poss === userSide() && S.difficulty !== 'rookie';
 }
 // A play lined up and taken back without a snap (a delay of game): the players stay where they
@@ -1258,7 +1263,9 @@ export function onKey(e, down) {
       if (S.menuOpen || S.detailsOpen) { S.menuOpen = false; S.detailsOpen = false; render(); return; }
       if (L3.paused || L3.lp?.phase === 'live') { e.preventDefault(); togglePause(); return; }
       if (L3.lp?.phase === 'pre' && !S.coachDown) { recall(); return; }
-      // Between plays: pause the call sheet (and its play clock).
+      // Between plays: back to the categories from a category's cards, else pause the call
+      // sheet (and its play clock).
+      if (!L3.lp && !L3.replay && L3.flow === 'PLAY_SELECTION' && !L3.paused && csBack()) { e.preventDefault(); return; }
       if (!L3.lp && !L3.replay && L3.flow === 'PLAY_SELECTION') { e.preventDefault(); togglePause(); return; }
     }
   }
@@ -1266,10 +1273,12 @@ export function onKey(e, down) {
   if (!L3.lp && !L3.replay && !FILM.open && !L3.paused && down && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
     const g = S.game;
     if (!g.final && needsUser(g) && !S.busy) {
-      const { tabs, cur } = csTabs(g);
-      const hit = (tabs.find(([k]) => k === cur)?.[2] ?? []).find((c) => c.code === code)
-        ?? tabs.flatMap(([, , cs]) => cs).find((c) => KICK_KEYS[c.call] && c.code === code);
-      if (hit) { e.preventDefault(); doCall(hit.call); return; }
+      // A category on the first step, a card on the second, a kick on any (see csKey).
+      const hit = csKey(g, code);
+      if (hit?.call) { e.preventDefault(); doCall(hit.call); return; }
+      if (hit?.tab) { e.preventDefault(); csOpen(hit.tab); return; }
+      // Esc or Backspace on a category's cards: back to the categories.
+      if ((code === 'Backspace' || code === 'Escape') && csBack()) { e.preventDefault(); return; }
       // Enter calls the play that fits the down; R calls your last call again.
       // (One player only: in a two-player game these keys belong to the players' moves.)
       if ((code === 'Enter' || code === 'NumpadEnter') && !twoPlayer() && free) {
@@ -1287,8 +1296,7 @@ export function onKey(e, down) {
     }
   }
   const two = twoPlayer();
-  const game = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyR', 'KeyQ', 'KeyT', 'KeyF', 'Tab',
-    'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'].includes(code) || (two && !!P2_KEYS[code]);
+  const game = FIELD_KEYS.has(code) || (two && !!P2_KEYS[code]);
   if (!game) return;
   if (isPaused()) { e.preventDefault(); return; }
   if (!L3.lp) { if (code === 'Space' && down && (e.target === document.body || take)) e.preventDefault(); return; }
@@ -1302,6 +1310,8 @@ export function onKey(e, down) {
   // Shift held as a number goes down: a lob (remembered, in case Shift is let go first).
   if (down && v.startsWith('Digit') && e.shiftKey) src.lob = v;
 }
+// The keys the field reads during a play (the registry's on-field bindings).
+const FIELD_KEYS = new Set(['move', 'sprint', 'action', 'truck', 'spin', 'switch', 'throw', 'away', 'fair'].flatMap((id) => BIND[id].codes));
 // Player two's keys in a two-player game, as the player-one codes the input reader knows.
 const P2_KEYS = { ArrowUp: 'KeyW', ArrowDown: 'KeyS', ArrowLeft: 'KeyA', ArrowRight: 'KeyD', Enter: 'Space', NumpadEnter: 'Space', ShiftRight: 'ShiftLeft',
   Period: 'KeyQ', KeyL: 'KeyE', KeyK: 'KeyR' };

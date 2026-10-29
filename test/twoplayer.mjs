@@ -49,6 +49,13 @@ const frames = (page) => page.evaluate(() => window.__pbPad.frames);
 async function polled(page, n = 2) { const f0 = await frames(page); await page.waitForFunction((f) => window.__pbPad.frames >= f, f0 + n, { timeout: 30000 }); }
 const tap = async (page, i, ms = 120) => { await page.evaluate((b) => window.__press(b, true), i); await page.waitForTimeout(ms); await polled(page); await page.evaluate((b) => window.__press(b, false), i); await polled(page); };
 
+// The call sheet opens on its categories: 1 opens the first, then 1 calls its first play. A sheet
+// with one category opens straight on its plays.
+async function callFirst(page) {
+  if (await page.$('.cs-cats')) { await page.keyboard.press('Digit1'); await page.waitForTimeout(250); }
+  await page.keyboard.press('Digit1');
+}
+
 // ---------- share a league ----------
 if (parts.includes('share')) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -112,7 +119,7 @@ if (parts.includes('2p')) {
     const who2 = await page.textContent('.cs-who');
     check(who2.includes(`Player ${2 - poss}`) && who2.includes('defense'), `down ${n + 1}: then the defense (player ${2 - poss}) calls: "${who2.trim()}"`);
     await page.screenshot({ path: join(out, `2p-${n + 1}-2-defense-call.png`) });
-    await page.keyboard.press('Digit1');
+    await callFirst(page);
     await page.waitForFunction(() => window.__pb.L3.lp?.set && window.__pb.L3.flow === 'PRE_SNAP', null, { timeout: 60000 });
     const lp0 = await page.evaluate(() => { const lp = window.__pb.L3.lp; return { p2: !!lp.p2, c1: lp.control?.side, c2: lp.p2?.control?.side, o: lp.o }; });
     check(lp0.p2 && lp0.c1 && lp0.c2 && lp0.c1 !== lp0.c2, `down ${n + 1}: each player controls a Pokémon on their own side (P1 ${lp0.c1}, P2 ${lp0.c2})`);
@@ -150,7 +157,9 @@ if (parts.includes('pad')) {
   const page = await newPage(ctx);
   await page.goto(url);
   await page.evaluate(() => { window.__fake.on = true; window.dispatchEvent(new Event('gamepadconnected')); });
-  // Menus: the D-pad moves focus, A presses. Walk to the quick game button.
+  // Menus: the D-pad moves focus, A presses. Open the Quick play panel, then walk to its quick
+  // game button.
+  await page.click('[data-panel="quick"]');
   let found = false;
   for (let i = 0; i < 30 && !found; i++) {
     await tap(page, 13);
@@ -162,17 +171,25 @@ if (parts.includes('pad')) {
   await page.waitForSelector('#help-ov:not([hidden])', { timeout: 10000 });
   await tap(page, 0);
   check(await page.evaluate(() => document.getElementById('help-ov').hidden), 'A closes the controls card');
-  // Make sure the user has the ball: if not, call a defense and let the play run first.
+  // Get past the kickoff to a sheet of plays (a kick's sheet has one category and no pages).
+  await page.waitForFunction(() => window.__pb.L3.flow === 'PLAY_SELECTION' && document.querySelector('.callsheet'), null, { timeout: 120000 });
+  for (let i = 0; i < 12 && (await page.evaluate(() => window.__pb.S.game.phase !== 'play')); i++) {
+    const pre = await page.evaluate(() => window.__pb.L3.lp?.phase === 'pre');
+    if (pre) await page.evaluate(() => window.__pb.doSnap());
+    else if (await page.$('.callsheet')) await page.keyboard.press('Enter');
+    await page.waitForTimeout(1500);
+    await page.waitForFunction(() => { const L = window.__pb.L3; return (L.flow === 'PLAY_SELECTION' && document.querySelector('.callsheet')) || L.lp?.phase === 'pre'; }, null, { timeout: 180000 }).catch(() => {});
+  }
   await page.waitForFunction(() => window.__pb.L3.flow === 'PLAY_SELECTION' && document.querySelector('.callsheet'), null, { timeout: 120000 });
   const onOff = await page.evaluate(() => window.__pb.S.game.poss === 0);
   // Call sheet: RB turns the page, the D-pad picks a card, A calls it.
-  const tab0 = await page.evaluate(() => document.querySelector('.cs-tab.on')?.dataset.tab);
+  const tab0 = await page.evaluate(() => window.__pb.S.csTab ?? 'categories');
   await tap(page, 5);
-  const tab1 = await page.evaluate(() => document.querySelector('.cs-tab.on')?.dataset.tab);
+  const tab1 = await page.evaluate(() => window.__pb.S.csTab ?? 'categories');
   check(tab0 !== tab1, `RB turns the call sheet page (${tab0} to ${tab1})`);
   if (onOff) {
     // Find the Quick page with passes.
-    for (let i = 0; i < 6 && (await page.evaluate(() => document.querySelector('.cs-tab.on')?.dataset.tab)) !== 'short'; i++) await tap(page, 5);
+    for (let i = 0; i < 6 && (await page.evaluate(() => window.__pb.S.csTab ?? 'categories')) !== 'short'; i++) await tap(page, 5);
   }
   await tap(page, 15);
   const focused = await page.evaluate(() => document.activeElement?.dataset?.call ?? null);
@@ -258,7 +275,7 @@ if (parts.includes('watch')) {
   await page.waitForSelector('.callsheet', { timeout: 240000 });
   await page.screenshot({ path: join(out, 'watch-1-takeover.png') });
   check(true, 'watch: O brings up the call sheet for the next down');
-  await page.keyboard.press('Digit1');
+  await callFirst(page);
   await page.waitForFunction(() => !window.__pb.S.takeOver && !document.querySelector('.callsheet'), null, { timeout: 30000 });
   check(true, 'watch: after the call the AI takes over again');
   if (page.errors.length) check(false, `page errors: ${page.errors.slice(0, 3).join(' | ')}`);

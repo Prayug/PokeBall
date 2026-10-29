@@ -5,7 +5,7 @@ import * as LG from '../league.js';
 import { SCHEMES, coachLabel } from '../coach.js';
 import { render, setScreen } from '../app.js';
 import { S, clearTimers, save, timers } from '../state.js';
-import { ATTR_SHORT, P, abilityText, bar, esc, ovr, powerHtml, roleHtml, sprite, teamBadge, typeChips, user } from '../ui.js';
+import { ATTR_SHORT, P, abilityText, bar, esc, ovr, powerHtml, roleHtml, sprite, teamBadge, teamMark, typeChips, user } from '../ui.js';
 import { shareCardHtml } from './share.js';
 import { send as netSend } from '../net.js';
 import * as TR from '../trades.js';
@@ -390,19 +390,35 @@ function afterPick() {
 }
 
 // ---------- grades ----------
+const ordinal = (n) => `${n}${[, 'st', 'nd', 'rd'][(n % 100 >> 3) ^ 1 && n % 10] || 'th'}`;
 export function renderGrades() {
   const L = S.league;
   const grades = LG.draftGrades(L);
   const units = [['passOff', 'Pass offense'], ['runOff', 'Run offense'], ['passRush', 'Pass rush'], ['coverage', 'Coverage'], ['runDef', 'Run defense']];
   const order = L.teams.map((t, i) => ({ t, g: grades[i] }));
+  // Each unit's rank in the league (1 = best), for the meters.
+  const rank = {};
+  for (const [k] of units) {
+    const sorted = grades.map((g) => g[k].value).sort((a, b) => b - a);
+    rank[k] = grades.map((g) => sorted.indexOf(g[k].value) + 1);
+  }
+  const n = L.teams.length;
+  const meter = (k, i) => `<span class="gmeter" style="--f:${Math.round(((n - rank[k][i]) / Math.max(1, n - 1)) * 100)}%"><i></i></span>`;
+  const me = L.teams.findIndex((t) => t.user);
+  const mine = me >= 0 ? `<div class="card gspot" style="--team:${L.teams[me].color}">
+      ${teamMark(L.teams[me], 96, 'gs-crest')}
+      <div class="gs-head"><p class="eyebrow">Your draft</p><h2>${esc(L.teams[me].name)}</h2><p class="muted small">${esc(coachLabel(L.teams[me]))}</p></div>
+      <div class="gs-units">${units.map(([k, l]) => `<div class="gs-unit"><span class="grade g-${grades[me][k].grade[0]}">${grades[me][k].grade}</span><b>${l}</b>${meter(k, me)}<em>${ordinal(rank[k][me])} of ${n}</em></div>`).join('')}</div>
+    </div>` : '';
   return `<section class="grades">
     <p class="eyebrow">Draft complete</p>
     <h1>Draft grades</h1>
-    <p class="lede">Each unit is graded against the other ${L.teams.length - 1} teams. Starters only; your bench subs in as starters tire.</p>
+    <p class="lede">Each unit is graded against the other ${n - 1} teams. Starters only; your bench subs in as starters tire.</p>
+    ${mine}
     <div class="tablewrap card"><table class="gtable">
       <thead><tr><th>Team</th><th>Coach</th>${units.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead>
-      <tbody>${order.map(({ t, g }) => `<tr class="${t.user ? 'me' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="muted">${esc(coachLabel(t))}${t.favTypes ? ` (${t.favTypes.join(', ')})` : ''}</td>
-        ${units.map(([k]) => `<td><span class="grade g-${g[k].grade[0]}">${g[k].grade}</span><span class="muted small"> ${g[k].value}</span></td>`).join('')}</tr>`).join('')}</tbody>
+      <tbody>${order.map(({ t, g }, i) => `<tr class="${t.user ? 'me' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="muted">${esc(coachLabel(t))}${t.favTypes ? ` (${t.favTypes.join(', ')})` : ''}</td>
+        ${units.map(([k]) => `<td title="${g[k].value} · ${ordinal(rank[k][i])} of ${n}"><span class="grade g-${g[k].grade[0]}">${g[k].grade}</span>${meter(k, i)}</td>`).join('')}</tr>`).join('')}</tbody>
     </table></div>
     ${tradeCardHtml(L)}
     ${S.online ? '' : `<div class="card share"><h3>Share this league</h3>${shareCardHtml(L)}</div>`}

@@ -8,6 +8,7 @@ import * as LG from '../league.js';
 import { render, setScreen } from '../app.js';
 import { S, firstFreeSlot, reduceMotion, savedSlots } from '../state.js';
 import { P, esc } from '../ui.js';
+import { teamLogo } from '../logos.js';
 import { autoAdvance, difficultyHtml } from './game.js';
 import { SCHEMES, SCHEME_KEYS } from '../coach.js';
 import { sharedInHtml } from './share.js';
@@ -220,13 +221,8 @@ function franchiseFacts(L) {
   return { facts, next };
 }
 const ordinal = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
-function crest(team, cls = 'fr-crest') {
-  const kit = kitOf(team), ink = inkOn(team.color);
-  return `<svg class="${cls}" viewBox="0 0 64 72" aria-hidden="true"><path d="M32 3 6 11v22c0 17 11 29 26 36 15-7 26-19 26-36V11z" fill="${team.color}" stroke="${kit.color2}" stroke-width="4" stroke-linejoin="round"/>
-    <path d="M6 33h52" stroke="${kit.color2}" stroke-width="3" opacity=".55"/>
-    <text x="32" y="${team.abbr.length > 2 ? 30 : 31}" text-anchor="middle" font-family="Barlow Condensed, Arial Narrow, sans-serif" font-weight="700" font-size="${team.abbr.length > 2 ? 19 : 23}" fill="${ink}">${esc(team.abbr)}</text>
-    <circle cx="32" cy="50" r="7" fill="none" stroke="${ink}" stroke-width="2.4" opacity=".85"/><path d="M25 50h14" stroke="${ink}" stroke-width="2.4" opacity=".85"/></svg>`;
-}
+// The franchise's own crest (logos.js).
+function crest(team, cls = 'fr-crest') { return teamLogo(team, { size: 64, cls, title: false }); }
 function franchiseCard(n, save) {
   const L = save.league, me = meOf(L), kit = kitOf(me), ink = inkOn(me.color);
   const { facts, next } = franchiseFacts(L);
@@ -292,6 +288,7 @@ function quickHtml() {
       <button class="qp-tile big" data-act="quick">${icon('quick')}<b>Play now</b><span>You coach the home side. Two AI-drafted rosters, kickoff right away.</span></button>
       <button class="qp-tile" data-act="quick2"><b>Two players, one screen</b><span>Player 1 on WASD, player 2 on the arrows, or two gamepads. Each side calls its own plays.</span></button>
       <button class="qp-tile" data-act="watchgame"><b>Watch a game</b><span>The AI plays both sides under a big scoreboard. Press O to call the next play yourself.</span></button>
+      <button class="qp-tile" data-act="tutorial"><b>Practice the controls</b><span>Six short drills on the field: call and snap, run, throw, switch, tackle and special moves.</span></button>
     </div>
     <h3 class="mp-sub">Online</h3>
     <div class="qp-online">

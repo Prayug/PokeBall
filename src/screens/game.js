@@ -10,7 +10,9 @@ import { quickGame, render, setScreen } from '../app.js';
 import { S, netGame, reduceMotion, save, savePrefs, timers } from '../state.js';
 import { soundPanelHtml } from './sound.js';
 import { P, edgeRow, esc, ovr, powersRow, sprite, teamBadge, typeChips } from '../ui.js';
-import { adjustHtml, aiFormation, aiFront, callSheet, callSheetHtml, clockRow, formFor, frontFor } from './callsheet.js';
+import { liveDiagram } from '../playbook.js';
+import { tutorialHtml, tutorialOn } from './tutorial.js';
+import { adjustHtml, aiFormation, aiFront, callSheet, callSheetHtml, clockRow, formFor, frontFor, noteRecent } from './callsheet.js';
 import { DIFFICULTY, DIFFICULTY_LEVELS, applyDifficulty } from '../difficulty.js';
 import { tendencyLines, typeEdges } from '../scout.js';
 import { powerColor, powerLine } from '../powers.js';
@@ -185,9 +187,17 @@ export function renderGame() {
       const theirs = lp.kick ? (lp.p2 || lp.user === lp.o ? `vs ${g.teams[lp.d].abbr} ${backTxt}` : `vs ${g.teams[lp.o].abbr} ${kickTxt}`)
         : lp.p2 ? `vs ${g.teams[lp.d].abbr} ${defTxt}` : lp.user === lp.o ? `vs ${defTxt}` : `vs ${offTxt}`;
       if (spectating() && (S.coachDown || lp.user == null)) overlay = watchChip();
-      else if (lp.phase === 'pre') overlay = `<div class="lined3">${S.coachDown || lp.p2 ? '' : adjustHtml(lp)}<div class="pill lined"><span class="pl-play">${esc(mine)}<small>${esc(theirs)}</small></span>
-        <button class="btn primary" data-act="snap">${lp.p2 || lp.user === lp.o ? 'Snap' : 'Start'} <kbd>${lp.p2 && lp.o === 1 ? 'Enter' : 'Space'}</kbd></button>
-        ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change <kbd>Esc</kbd></button>'}</div></div>`;
+      else if (lp.phase === 'pre') {
+        // Step 3 of the call: the play lined up, drawn as it stands now (a hot route, motion or a
+        // flip redraws it), the adjustments, and one thing to do: snap.
+        const yours = !lp.p2 && lp.user != null;
+        const art = yours && !lp.kick ? liveDiagram(lp, lp.user === lp.o ? 'off' : 'def') : '';
+        const snapKey = lp.p2 && lp.o === 1 ? 'Enter' : 'Space';
+        const doIt = lp.p2 || lp.user === lp.o ? (lp.kick?.ko ? 'kick off' : 'snap the ball') : 'start the play';
+        overlay = `<div class="lined3">${S.coachDown || lp.p2 ? '' : adjustHtml(lp)}<div class="pill lined ${art ? 'has-art' : ''}">${art ? `<span class="l3-art">${art}</span>` : ''}<span class="pl-play">${yours && !lp.kick ? '<em>Lined up</em>' : ''}${esc(mine)}<small>${esc(theirs)}</small></span>
+        <span class="l3-go"><button class="btn primary" data-act="snap">${lp.p2 || lp.user === lp.o ? (lp.kick?.ko ? 'Kick' : 'Snap') : 'Start'} <kbd>${snapKey}</kbd></button><small>Press ${snapKey} to ${doIt}</small></span>
+        ${S.coachDown ? '' : '<button class="btn" data-act="recall">Change play <kbd>Esc</kbd></button>'}</div></div>`;
+      }
     } else if (decide) overlay = callSheetHtml(g);
     else if (spectating()) overlay = watchChip();
     else if (L3.resultUntil > performance.now()) overlay = '';
@@ -201,6 +211,7 @@ export function renderGame() {
       ${S.detailsOpen && !S.menuOpen ? detailsDrawer(g) : ''}
       ${!L3.lp || L3.lp.phase === 'pre' ? tickerHtml(g) : ''}
       ${S.debug ? debugHtml() : ''}
+      <div class="tut-slot" id="tut-slot">${tutorialHtml()}</div>
       ${overlay}
     </div>
     <div class="below">
@@ -303,7 +314,8 @@ function menuHtml(g, simBtns, coachBox) {
     <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}><span>Team markers under every player</span></label>
     <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}><span>Debug view <kbd>\`</kbd><small class="muted">Position labels, formation check, camera calibration</small></span></label>
     <h4>Sound</h4>${S.soundOpen ? '<p class="small muted">Open in the speaker panel above.</p>' : soundPanelHtml()}
-    <div class="gm-row"><button class="btn tiny" data-act="help">Controls <kbd>?</kbd></button><button class="btn tiny" data-act="replay" ${replayReady() ? '' : 'disabled'}>Replay last play <kbd>Y</kbd></button></div>
+    <div class="gm-row"><button class="btn tiny" data-act="help">Controls <kbd>?</kbd></button><button class="btn tiny" data-act="tutorial">Practice the controls</button></div>
+    <div class="gm-row"><button class="btn tiny" data-act="replay" ${replayReady() ? '' : 'disabled'}>Replay last play <kbd>Y</kbd></button></div>
     <div class="gm-row"><button class="btn tiny" data-act="film" ${filmReady() ? '' : 'disabled'}>Film room <kbd>J</kbd></button><button class="btn tiny" data-act="challenge" ${challengeReady() ? '' : 'disabled'}>${challengeText(g)}</button></div>
     <button class="btn tiny" data-act="details">Box score and play-by-play <kbd>L</kbd></button>
   </div>`;
@@ -491,7 +503,7 @@ export function doCall(call) {
   const us = userSide();
   L3.pcHold = false;
   // R on the next call sheet calls it again (see quickCalls).
-  const remember = () => { if (g.phase === 'play') (S.lastCall ??= {})[`${us}:${g.poss === us ? 'off' : 'def'}`] = call; };
+  const remember = () => { if (g.phase === 'play') { (S.lastCall ??= {})[`${us}:${g.poss === us ? 'off' : 'def'}`] = call; noteRecent(call, g.poss === us); } };
   if (twoPlayer()) {
     if (g.phase === 'penalty') {
       if (OFF_PLAYS[call]?.kind !== 'penalty') return;
@@ -614,6 +626,8 @@ export const STREAM_NEXT_MS = 15000;
 export function autoAdvance() {
   if (netGame()) return;
   clearTimeout(timers.auto);
+  // The practice field sets up every down itself (tutorial.js).
+  if (tutorialOn()) return;
   const g = S.game;
   const kicks = g && (g.phase === 'pat' || g.phase === 'kickoff');
   // Streamer mode (?watch in the address): a finished game rolls into the next one.
@@ -638,11 +652,11 @@ export function startGame(game, meta) {
   // out on the field rather than resolved on the spot.
   const us = game.teams[0].id === (meta?.userTeamId ?? 0) ? 0 : 1;
   // Two players: both sides are people, so both make their own try, kickoff and penalty calls.
-  game.manual = meta?.twoPlayer ? [true, true] : [us === 0, us === 1]; game.liveKicks = true; S.gameTab = 'log'; S.busy = false; S.subSel = null; S.p2Call = null; S.lastCall = null;
+  game.manual = meta?.twoPlayer ? [true, true] : [us === 0, us === 1]; game.liveKicks = true; S.gameTab = 'log'; S.busy = false; S.subSel = null; S.p2Call = null; S.lastCall = null; S.recentCalls = null;
   resetBetweenGames();
   // The first game shows the controls once, and so does the first two-player game.
   S.takeOver = false;
-  if (!spectating() && (!S.seenHelp || (meta.twoPlayer && !S.seen2p))) { S.helpOpen = true; if (meta.twoPlayer) S.seen2p = true; }
+  if (!spectating() && !meta.tutorial && (!S.seenHelp || (meta.twoPlayer && !S.seen2p))) { S.helpOpen = true; if (meta.twoPlayer) S.seen2p = true; }
   setScreen('game');
   autoAdvance();
 }

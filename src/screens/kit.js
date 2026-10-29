@@ -6,6 +6,7 @@ import { S, save, savePrefs } from '../state.js';
 import { esc } from '../ui.js';
 import { CHANTS, CHANT_KEYS, KICKOFFS, STADIUMS, STADIUM_KEYS, WORDMARKS, cleanKit, inkOn, kitOf, shade, venueName } from '../kits.js';
 import { paintEndZone } from '../kitdraw.js';
+import { CREST_KEYS, crestName, crestOf, crestPreview, identityOf, teamLogo } from '../logos.js';
 import { chant } from '../audio.js';
 
 const SWATCHES = ['#c8102e', '#e0702a', '#d9a21b', '#3e9b5a', '#2e7d6b', '#2f6fd6', '#1d3a8a', '#7d5bb5', '#b03a8c', '#2b2f36', '#8a7a5c', '#f2f0e8'];
@@ -52,7 +53,7 @@ export function renderKit() {
   return `<section class="kitscreen">
     <div class="kit-head">
       <div><h1>Franchise kit</h1><p class="muted">${league ? `${esc(team.name)} wear this from your next game on, home and away; your home games are played in your stadium.` : 'For quick games and the next league you start.'}</p></div>
-      <div class="kit-bug" style="--team:${team.color};--team2:${kit.color2};--team-ink:${inkOn(team.color)}"><span class="kb-abbr">${esc(team.abbr)}</span><span class="kb-name">${esc(team.name)}</span></div>
+      <div class="kit-bug" style="--team:${team.color};--team2:${kit.color2};--team-ink:${inkOn(team.color)}">${teamLogo(team, { size: 64, cls: 'kb-crest' })}<span class="kb-abbr">${esc(team.abbr)}</span><span class="kb-name">${esc(team.name)}${identityOf(team) ? `<small>${esc(identityOf(team).tag)}</small>` : ''}</span></div>
     </div>
     <div class="kit-grid">
       <div class="card kit-form">
@@ -62,6 +63,12 @@ export function renderKit() {
           <label>Second color<input type="color" id="k-color2" value="${kit.color2}"></label>
         </div>
         <div class="swatches" role="group" aria-label="Main color presets">${SWATCHES.map((c) => `<button class="swatch ${c === team.color.toLowerCase() ? 'on' : ''}" style="--sw:${c}" data-act="kit" data-k="color" data-v="${c}" aria-label="Main color ${c}"></button>`).join('')}</div>
+        <h2>Crest</h2>
+        <div class="crests" role="group" aria-label="Team crest">${['', ...CREST_KEYS, 'monogram'].map((k) => {
+          const on = (kit.logo || '') === k, shown = k || crestOf({ ...team, kit: { ...kit, logo: '' } });
+          return `<button class="crest-pick ${on ? 'on' : ''}" data-act="kit" data-k="logo" data-v="${k}" aria-pressed="${on}" title="${esc(k ? crestName(k) : `Your own: ${crestName(shown)}`)}">${crestPreview(team, shown, 52)}<span>${esc(k ? crestName(k) : 'Your own')}</span></button>`;
+        }).join('')}</div>
+        <p class="small muted">The crest takes your colors. It shows on the scoreboard, the schedule, every table and at midfield in your home stadium.</p>
         <h2>End zone</h2>
         <label>Wordmark<input id="k-word" maxlength="18" placeholder="${esc(team.name)}" value="${esc(kit.wordmark)}"></label>
         ${seg('style', WORDMARKS, kit.style)}

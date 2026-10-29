@@ -8,7 +8,7 @@ import { applySound, clickSound, soundButtonHtml, soundInput, soundTest, syncMus
 import { cameraDefaults } from './camera3d.js';
 import * as LG from './league.js';
 import { S, clearTimers, deleteSlot, loadPrefs, loadSaved, migrateStorage, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
-import { download, esc, teamBadge, user } from './ui.js';
+import { download, esc, teamBadge, teamMark, user } from './ui.js';
 import { afterHomeRender, homeAct, homeKey, homeLaunch, importSave, initHome, loadSnapshot, renderHome } from './screens/home.js';
 import { boardRowsHtml, detailHtml, draftSkip, draftSwap, draftTick, moveQueue, queueTop, renderDraft, renderGrades, toggleQueue, userDraft } from './screens/draft.js';
 import { depthClick, renderDepth } from './screens/depth.js';
@@ -29,6 +29,8 @@ import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, o
 import { renderLobby } from './screens/lobby.js';
 import { bindUI, create as netCreate, join as netJoin, joinFromHash, leave as netLeave, roomLink, send as netSend, setName as netSetName } from './net.js';
 import { openFilm } from './screens/film.js';
+import { csBack, csMove, csOpen } from './screens/callsheet.js';
+import { beginTutorial, endTutorial, restartTutorial, skipExercise } from './screens/tutorial.js';
 
 const app = document.getElementById('app');
 
@@ -46,7 +48,7 @@ export function setScreen(screen) {
 
 // A quick game: two AI-drafted rosters. Two players: player one takes the home team, player two
 // the away team. Spectate: the AI calls and plays both (Watch mode for this game only).
-export function quickGame({ twoPlayer = false, spectate = false } = {}) {
+export function quickGame({ twoPlayer = false, spectate = false, tutorial = false } = {}) {
   applyGrowth({});
   // ?seed=N in the address replays the same quick game (rosters, weather, coin toss): the
   // screenshot tests compare builds on exactly the same game state. A streamer's later games
@@ -65,6 +67,8 @@ export function quickGame({ twoPlayer = false, spectate = false } = {}) {
   const game = createGame({ home: LG.teamForGame(a), away: LG.teamForGame(b), seed, liveKicks: true });
   const meta = { quick: true, userTeamId: a.id, twoPlayer };
   if (spectate) meta.spectate = true;
+  // The practice field (tutorial.js): you play every snap yourself.
+  if (tutorial) { meta.tutorial = true; S.coach = false; S.watch = false; S.spectate = false; beginTutorial(); } else endTutorial();
   startGame(game, meta);
 }
 
@@ -84,7 +88,7 @@ function renderTop() {
   return `<header class="top">
     <button class="brand" data-act="home" aria-label="Home"><span class="ball" aria-hidden="true"></span>PokeBall</button>
     <nav>${items.map(([k, label]) => `<button class="nav ${S.screen === k ? 'on' : ''}" data-act="go" data-to="${k}">${label}</button>`).join('')}</nav>
-    ${me ? `<span class="top-team">${teamBadge(me)}<span><b>${esc(me.name)}</b><small>Season ${L.season ?? 1}</small></span></span>` : ''}
+    ${me ? `<span class="top-team">${teamMark(me, 38, 'top-crest')}<span><b>${esc(me.name)}</b><small>Season ${L.season ?? 1}</small></span></span>` : ''}
     ${S.online && S.net?.code ? `<span class="top-team"><b>#${S.net.mode === 'league' ? 'online' : 'play'}=${esc(S.net.code)}</b><small id="net-ping">${S.netDown ? 'reconnecting…' : S.net.ping != null ? `${S.net.ping} ms` : '…'}</small></span>` : ''}
     ${soundButtonHtml()}
   </header>`;
@@ -211,6 +215,11 @@ function onClick(e) {
       break;
     }
     case 'quick': launch(() => quickGame()); break;
+    case 'tutorial': S.helpOpen = false; S.menuOpen = false; launch(() => quickGame({ tutorial: true })); break;
+    case 'tutskip': skipExercise(); break;
+    case 'tutrestart': restartTutorial(); break;
+    case 'tutquick': endTutorial(); launch(() => quickGame()); break;
+    case 'tutexit': endTutorial(); S.game = null; S.gameMeta = null; S.menuPanel = null; setScreen('home'); break;
     case 'quick2': launch(() => quickGame({ twoPlayer: true })); break;
     case 'watchgame': launch(() => quickGame({ spectate: true })); break;
     case 'takeover': toggleTakeOver(); break;
@@ -285,7 +294,10 @@ function onClick(e) {
     case 'finishgame': finishLeagueGame(); break;
     case 'call': doCall(el.dataset.call); break;
     case 'timeout': userTimeout(); break;
-    case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; S.csAll = false; render(); break;
+    case 'cstab': csOpen(el.dataset.tab); break;
+    case 'csback': csBack(); break;
+    case 'psswitch': L3.edges.add('KeyQ'); break;
+    case 'cspage': csMove(Number(el.dataset.d)); break;
     case 'calshot': S.calShot = el.dataset.k; render(); break;
     case 'calreset': S.cal = cameraDefaults(); stage?.rig.setCalibration(S.cal); savePrefs(); render(); break;
     case 'snap': doSnap(); break;
