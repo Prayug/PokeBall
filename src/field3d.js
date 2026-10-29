@@ -350,7 +350,8 @@ export class Stage {
         a.version = -1;
         return;
       }
-      if (!M.failed) { if (!a.ph && !a.fig) { a.ph = placeholder(); a.root.add(a.ph); } return; }
+      // Still loading: the figure built from the sprite stands in (below), so a slow or stuck
+      // model download shows the Pokémon, never a row of blank capsules.
     }
     const T = template(a.id);
     const strip = bank.strips[a.id];

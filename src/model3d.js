@@ -54,6 +54,9 @@ export function modelTemplate(id) {
   if (c == null) { T.failed = true; return T; }
   if (bank.chunks[c] === 'failed') { T.failed = true; return T; }
   const b64 = bank.glb[id];
+  // A chunk that ran without this species in it (a stale cached copy, an error page served in
+  // its place) will never deliver it: give up on the model and keep the sprite figure.
+  if (!b64 && bank.chunks[c] === 'ready') { T.failed = true; return T; }
   if (!b64) { loadChunk(c); return T; }
   T.parsing = true;
   loader.parse(b64ToBuffer(b64), '', (gltf) => {
