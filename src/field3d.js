@@ -1611,7 +1611,7 @@ function ribbon(pts, width, color, opacity, end, below = 0) {
 }
 
 // The football: a lathe-turned prolate spheroid, long axis along x.
-function footballGeometry() {
+export function footballGeometry() {
   const L = 0.31, R = 0.19, pts = [];
   for (let i = 0; i <= 16; i++) {
     const u = -1 + (2 * i) / 16;
@@ -1620,7 +1620,7 @@ function footballGeometry() {
   return new THREE.LatheGeometry(pts, 20).rotateZ(-Math.PI / 2);
 }
 
-function footballTexture() {
+export function footballTexture() {
   const c = document.createElement('canvas'); c.width = 128; c.height = 64;
   const x = c.getContext('2d');
   const gr = x.createLinearGradient(0, 0, 0, 64);

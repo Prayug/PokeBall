@@ -54,6 +54,7 @@ if (parts.includes('share')) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await newPage(ctx);
   await page.goto(url);
+  await page.click('[data-panel="new"]');
   await page.fill('#f-name', 'Share Testers');
   await page.click('#setup-form button[type="submit"]');
   await page.click('[data-act="autodraft"]');
@@ -92,6 +93,7 @@ if (parts.includes('2p')) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 760 } });
   const page = await newPage(ctx);
   await page.goto(url);
+  await page.click('[data-panel="quick"]');
   await page.click('[data-act="quick2"]');
   await page.waitForFunction(() => window.__pb?.stage && window.__pb.L3.flow === 'PLAY_SELECTION', null, { timeout: 90000 });
   await page.waitForSelector('#help-ov:not([hidden])', { timeout: 10000 });
@@ -211,6 +213,7 @@ if (parts.includes('challenge')) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await newPage(ctx);
   await page.goto(url);
+  await page.click('[data-panel="new"]');
   await page.fill('#f-name', 'Challengers');
   await page.click('#setup-form button[type="submit"]');
   await page.click('[data-act="autodraft"]');

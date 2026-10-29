@@ -21,6 +21,9 @@ export const S = {
   sound: true, vol: { master: 0.8, booth: 0.9, crowd: 0.8, fx: 0.8, music: 0.45 }, booth: true, boothVoice: true, captions: true, realCries: true, music: true, soundOpen: false,
   seenHelp: false, snapped: false, helpOpen: false, csFold: true, difficulty: 'pro', slot: 1, confirmDelete: null,
   online: false, net: null, netMsg: '',
+  // The main menu: the highlighted item, the open panel, the save slot it shows, the save slot
+  // whose ⋯ menu is open, the Pokémon picked in the team builder and the slot a new league goes to.
+  menuSel: null, menuPanel: null, menuSlot: null, menuMore: null, menuTeamPick: null, menuNewSlot: null,
 };
 export const timers = { draft: null, clock: null, auto: null, banner: null };
 // A game the server plays (online, against a person). A league game against the AI is played on

@@ -9,7 +9,7 @@ import { cameraDefaults } from './camera3d.js';
 import * as LG from './league.js';
 import { S, clearTimers, deleteSlot, loadPrefs, loadSaved, migrateStorage, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
 import { download, esc, teamBadge, user } from './ui.js';
-import { importSave, loadSnapshot, renderHome } from './screens/home.js';
+import { afterHomeRender, homeAct, homeKey, homeLaunch, importSave, initHome, loadSnapshot, renderHome } from './screens/home.js';
 import { boardRowsHtml, detailHtml, draftSkip, draftSwap, draftTick, moveQueue, queueTop, renderDraft, renderGrades, toggleQueue, userDraft } from './screens/draft.js';
 import { depthClick, renderDepth } from './screens/depth.js';
 import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthers } from './screens/season.js';
@@ -91,6 +91,8 @@ function renderTop() {
 }
 
 // ---------- events ----------
+// Into a game or a franchise from the main menu: a short cut first (see homeLaunch).
+const launch = (fn) => (S.screen === 'home' ? homeLaunch(fn) : fn());
 function onClick(e) {
   const el = e.target.closest('[data-act]');
   if (!el || el.disabled) return;
@@ -99,6 +101,7 @@ function onClick(e) {
   clickSound(act);
   // A click anywhere else closes the sound panel.
   if (S.soundOpen && act !== 'sound' && act !== 'sndtest' && !el.closest('.sndpop')) S.soundOpen = false;
+  if (homeAct(act, el)) return;
   switch (act) {
     case 'onlinequick': netCreate('quick', { name: 'Home' }); break;
     case 'onlineleague': netCreate('league', setupFromForm()); break;
@@ -121,21 +124,34 @@ function onClick(e) {
     case 'kit': case 'kitchant': kitAct(act, el); break;
     // A quick game in progress stays open: the home screen and the top bar take you back to it.
     // Home leaves an online room (Rejoin on the home screen, or the room's link, takes the seat back).
-    case 'home': if (S.online) netLeave({ keepScreen: true }); if (S.game?.final && S.gameMeta?.quick) { S.game = null; S.gameMeta = null; } setScreen('home'); break;
+    case 'home': S.menuPanel = null; S.menuMore = null; if (S.online) netLeave({ keepScreen: true }); if (S.game?.final && S.gameMeta?.quick) { S.game = null; S.gameMeta = null; } setScreen('home'); break;
     case 'go': setScreen(el.dataset.to); break;
     case 'continue': {
       const n = Number(el.dataset.slot ?? S.slot);
       const saved = loadSaved(n);
       if (!saved?.league) break;
-      // Leaving the home screen saved the league in memory; drop any quick game and switch.
-      if (S.gameMeta?.quick) { S.game = null; S.gameMeta = null; }
-      S.slot = n; S.confirmDelete = null;
-      loadSnapshot(saved);
+      launch(() => {
+        // Leaving the home screen saved the league in memory; drop any quick game and switch.
+        if (S.gameMeta?.quick) { S.game = null; S.gameMeta = null; }
+        S.slot = n; S.confirmDelete = null; S.menuPanel = null;
+        loadSnapshot(saved);
+      });
       break;
     }
+    // From the menu straight to one of a saved franchise's screens (the team builder's tiles).
+    case 'slotgo': {
+      const n = Number(el.dataset.slot), saved = loadSaved(n), to = el.dataset.to;
+      if (!saved?.league) break;
+      if (S.gameMeta?.quick) { S.game = null; S.gameMeta = null; }
+      S.slot = n; S.confirmDelete = null; S.menuPanel = null; S.menuMore = null;
+      loadSnapshot(saved);
+      if (to && to !== S.screen && S.screen !== 'game') setScreen(to);
+      break;
+    }
+    case 'mute': toggleMute(); render(); break;
     case 'slotconfirm': S.confirmDelete = Number(el.dataset.slot); render(); break;
     case 'slotkeep': S.confirmDelete = null; render(); break;
-    case 'slotdelete': deleteSlot(Number(el.dataset.slot)); S.confirmDelete = null; render(); break;
+    case 'slotdelete': deleteSlot(Number(el.dataset.slot)); S.confirmDelete = null; S.menuMore = null; render(); break;
     case 'exportsave': {
       const data = el.dataset.slot ? loadSaved(Number(el.dataset.slot)) : S.league ? snapshot() : loadSaved();
       if (!data?.league) break;
@@ -194,9 +210,9 @@ function onClick(e) {
       save(); render();
       break;
     }
-    case 'quick': quickGame(); break;
-    case 'quick2': quickGame({ twoPlayer: true }); break;
-    case 'watchgame': quickGame({ spectate: true }); break;
+    case 'quick': launch(() => quickGame()); break;
+    case 'quick2': launch(() => quickGame({ twoPlayer: true })); break;
+    case 'watchgame': launch(() => quickGame({ spectate: true })); break;
     case 'takeover': toggleTakeOver(); break;
     case 'newleague': S.league = null; S.game = null; setScreen('home'); break;
     case 'select': {
@@ -378,7 +394,7 @@ function onSubmit(e) {
     pick: f.querySelector('#f-pick')?.value ? Number(f.querySelector('#f-pick').value) : null,
   };
   if (S.setup.pick != null) S.setup.pick = Math.max(0, Math.min(S.setup.teams - 1, S.setup.pick));
-  S.slot = Number(f.querySelector('#f-slot')?.value ?? S.slot); S.confirmDelete = null;
+  S.slot = Number(f.querySelector('#f-slot')?.value ?? S.slot); S.confirmDelete = null; S.menuPanel = null; S.menuNewSlot = null;
   S.league = LG.createLeague({ teamName: S.setup.name, abbr: S.setup.abbr, rounds: S.setup.rounds, legendaries: S.setup.legendaries,
     typeCap: S.setup.typeCap, scheme: S.setup.scheme, numTeams: S.setup.teams, userPick: S.setup.pick ?? null, seed: Math.floor(Math.random() * 2 ** 31), ...(S.setup.color ? { userColor: S.setup.color } : {}) });
   if (S.setup.kit) S.league.teams[0].kit = cleanKit(S.setup.kit, S.league.teams[0]);
@@ -421,8 +437,11 @@ export function render() {
   // A new screen slides in; a re-render of the same screen (a draft pick, a toggle) does not.
   const enter = S.screen !== lastScreen && S.screen !== 'game';
   lastScreen = S.screen;
-  app.innerHTML = renderTop() + `<main class="scr-${S.screen}${enter ? ' enter' : ''}">${body}</main>`;
+  const menu = body.startsWith('<section class="mm');
+  app.innerHTML = (menu ? '' : renderTop()) + `<main class="scr-${menu ? 'home' : S.screen}${enter ? ' enter' : ''}">${body}</main>`;
   document.body.classList.toggle('g3d-on', S.screen === 'game' && !!stage);
+  document.body.classList.toggle('mm-on', menu);
+  afterHomeRender();
   syncMusic();
   if (S.screen === 'game') mountStage();
   if (S.screen === 'kit') drawKitPreview();
@@ -464,12 +483,14 @@ function start(data) {
   document.addEventListener('submit', onSubmit);
   window.addEventListener('keydown', (e) => {
     // U mutes and unmutes the game on any screen.
-    if (e.code === 'KeyU' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('input, select, textarea')) { e.preventDefault(); toggleMute(); return; }
+    if (e.code === 'KeyU' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('input, select, textarea')) { e.preventDefault(); toggleMute(); if (S.screen === 'home') render(); return; }
+    if (homeKey(e)) return;
     onKey(e, true);
   });
   window.addEventListener('keyup', (e) => onKey(e, false));
   window.addEventListener('blur', () => clearInput(true));
   initPads();
+  initHome();
   if (S.shareIn) S.screen = 'home';
   if (S.streamer && !S.shareIn) { quickGame({ spectate: true }); return; }
   joinFromHash();
