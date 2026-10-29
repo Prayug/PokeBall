@@ -1,8 +1,10 @@
 // Small view helpers shared by every screen: escaping, sprites, type chips, overall badges.
-import { PLAYERS, roleLabel } from './ratings.js';
+import { ATTRS, PLAYERS, SLOT, roleLabel } from './ratings.js';
 import { SPRITES } from './sprites.js';
 import { ABILITIES, TYPE_COLORS, bestMatchup, effectLabel } from './types.js';
 import { S } from './state.js';
+import { inkOn, kitOf } from './kits.js';
+import { teamLogo } from './logos.js';
 import { POWER_OF, powerColor, powerText, sidePowers, worksAt } from './powers.js';
 
 // ---------- small view helpers ----------
@@ -23,10 +25,73 @@ export function roleHtml(p) {
   const cls = p.wildcard ? 'wild' : p.flex ? 'flex' : '';
   return `<span class="role ${cls}">${esc(roleLabel(p))}</span>`;
 }
-export function teamBadge(t) { return `<span class="tbadge" style="--team:${t.color}">${esc(t.abbr)}</span>`; }
+export function teamBadge(t) {
+  const kit = kitOf(t);
+  return `<span class="tbadge" style="--team:${t.color};--team2:${kit.color2};color:${inkOn(t.color)}">${teamLogo(t)}<span class="tmark">${esc(t.abbr)}</span></span>`;
+}
 export function user() { return S.league?.teams.find((t) => t.user); }
 export function abilityText(id) { const a = ABILITIES[P(id).ability]; return a ? a.text : 'No football effect'; }
 export function bar(v) { return `<span class="bar"><span style="width:${Math.max(4, v)}%"></span></span>`; }
+
+// The attributes that actually grade this spot, heaviest first.
+// The ratings that grade this spot, heaviest first, then the player's other real ratings
+// so the card is a stack of bars rather than three bare numbers.
+export function keyAttrs(id, slot) {
+  const p = P(id);
+  if (!p) return [];
+  const w = SLOT[slot]?.w ?? SLOT[p.best[0]]?.w ?? {};
+  const ranked = Object.entries(w).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const rest = Object.keys(ATTRS).filter((k) => !ranked.includes(k)).sort((a, b) => (p.attrs[b] ?? 0) - (p.attrs[a] ?? 0));
+  const keys = [...(ranked.length ? ranked : ['spd', 'str', 'awr']), ...rest];
+  return keys.slice(0, 6);
+}
+export function attrRow(id, slot) {
+  const p = P(id);
+  if (!p) return '';
+  return keyAttrs(id, slot).map((k) => {
+    const v = Math.round(p.attrs[k] ?? 0);
+    return `<span class="abar" title="${esc(ATTRS[k] ?? k)}"><em>${ATTR_SHORT[k] ?? k}</em><span class="bar"><span style="width:${Math.max(4, Math.min(100, v))}%"></span></span><b>${v}</b></span>`;
+  }).join('');
+}
+// A player card: the real sprite, the type color, the position, the overall, and bars for
+// the ratings that player actually has. Nothing on the card is invented.
+export function monCard(id, { slot = null, size = 'lg' } = {}) {
+  const p = P(id);
+  if (!p) return '';
+  const k = slot && p.ovr[slot] != null ? slot : p.best[0];
+  return `<span class="mon ${size}" style="--tc:${TYPE_COLORS[p.types[0]]}"><span class="mon-art">${sprite(id, size === 'sm' ? 'md' : 'lg')}</span><span class="mon-body"><span class="mon-top"><b>${esc(p.name)}</b>${roleHtml(p)}</span><span class="mon-meta"><span class="slot">${esc(k)}</span>${ovr(p.ovr[k])}<span class="types">${typeChips(p.types)}</span></span><span class="mon-bars">${attrRow(id, k)}</span></span></span>`;
+}
+// One dismissible hint. The id is remembered in preferences so it does not return.
+export function coachTip(id, text) {
+  if (S.tips?.[id]) return '';
+  return `<div class="coach" role="note"><p>${esc(text)}</p><button type="button" class="btn tiny" data-act="tiptip" data-tip="${esc(id)}">Got it</button></div>`;
+}
+export function profileOverlay(id) {
+  const p = P(id);
+  if (!p) return '';
+  const slot = p.best[0];
+  const cmp = S.profileCmp != null ? P(S.profileCmp) : null;
+  const stats = S.league?.seasonStats?.[id];
+  const bits = [];
+  if (stats) {
+    if (stats.pa) bits.push(`${stats.py ?? 0} pass yds, ${stats.ptd ?? 0} TD, ${stats.pint ?? 0} INT`);
+    if (stats.ra) bits.push(`${stats.ry ?? 0} rush yds`);
+    if (stats.rc) bits.push(`${stats.rc} rec, ${stats.rcy ?? 0} yds`);
+    if ((stats.tk ?? 0) + (stats.dsk ?? 0) + (stats.dint ?? 0) > 0) bits.push(`${stats.tk ?? 0} tkl, ${stats.dsk ?? 0} sacks, ${stats.dint ?? 0} INT`);
+  }
+  const roster = S.league ? user()?.roster ?? [] : [];
+  const options = roster.filter((x) => x !== id).slice(0, 40);
+  return `<div class="modal-back" data-act="profileclose"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="profile-title" data-act="noop">
+    <button type="button" class="btn tiny ghost modal-x" id="profile-close" data-act="profileclose">Close</button>
+    <div class="modal-hero">${monCard(id, { size: 'lg' })}</div>
+    <h2 id="profile-title" class="sr">${esc(p.name)}</h2>
+    <p class="small"><b>${esc(p.ability)}.</b> ${esc(abilityText(id))}</p>
+    <div class="modal-attrs">${Object.keys(ATTRS).map((k) => `<span class="abar wide" title="${esc(ATTRS[k])}"><em>${esc(ATTRS[k])}</em>${bar(p.attrs[k])}<b>${Math.round(p.attrs[k])}</b></span>`).join('')}</div>
+    ${bits.length ? `<p class="small"><b>This season.</b> ${esc(bits.join(' · '))}</p>` : `<p class="small muted">No season stats yet.</p>`}
+    ${options.length ? `<label>Compare<select id="profile-cmp"><option value="">Pick a teammate</option>${options.map((x) => `<option value="${x}" ${S.profileCmp === x ? 'selected' : ''}>${esc(P(x).name)}</option>`).join('')}</select></label>` : ''}
+    ${cmp ? `<div class="modal-cmp">${monCard(id, { slot })}<span class="at">vs</span>${monCard(S.profileCmp, { slot: cmp.best[0] })}</div>` : ''}
+  </div></div>`;
+}
 
 // One matchup as one verdict (who has the edge), with the type effects behind it underneath,
 // rather than two effect labels to weigh against each other.

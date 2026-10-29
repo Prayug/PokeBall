@@ -3,20 +3,21 @@
 import { applyGrowth, autoDepthChart } from './ratings.js';
 import { createGame, manualSub, simUntil } from './engine.js';
 import { worldSpots } from './live.js';
-import { cry, initAudio, ui } from './audio.js';
+import { cry, initAudio, soundOn, ui } from './audio.js';
 import { applySound, clickSound, soundButtonHtml, soundInput, soundTest, syncMusic, toggleMute } from './screens/sound.js';
 import { cameraDefaults } from './camera3d.js';
 import * as LG from './league.js';
 import { S, clearTimers, deleteSlot, loadPrefs, loadSaved, migrateStorage, reduceMotion, save, savePrefs, snapshot, timers } from './state.js';
-import { download, esc, teamBadge, user } from './ui.js';
+import { download, esc, profileOverlay, teamBadge, user } from './ui.js';
 import { importSave, loadSnapshot, renderHome } from './screens/home.js';
+import { mountMenu, unmountMenu } from './screens/menu3d.js';
 import { boardRowsHtml, detailHtml, draftSkip, draftSwap, draftTick, moveQueue, queueTop, renderDraft, renderGrades, toggleQueue, userDraft } from './screens/draft.js';
-import { depthClick, renderDepth } from './screens/depth.js';
+import { depthClick, depthDrop, renderDepth } from './screens/depth.js';
 import { finishLeagueGame, recapText, renderResult, renderSeason, simPlayoffOthers } from './screens/season.js';
 import { renderOffseason } from './screens/offseason.js';
 import { initPads } from './screens/pad.js';
 import { copyShare, loadShared, openSharedText, readShareFromUrl } from './screens/share.js';
-import { renderFreeAgency } from './screens/freeagency.js';
+import { faBoardHtml, renderFreeAgency } from './screens/freeagency.js';
 import { renderRecords } from './screens/records.js';
 import { drawKitPreview, kitAct, kitInput, renderKit } from './screens/kit.js';
 import { cleanKit, inkOn, kitOf } from './kits.js';
@@ -25,7 +26,7 @@ import * as TR from './trades.js';
 import * as FA from './freeagency.js';
 import { autoAdvance, doCall, renderGame, setDifficulty, setMode, startGame, toggleTakeOver, userSide, userTimeout } from './screens/game.js';
 import { applyDifficulty } from './difficulty.js';
-import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, resetBetweenGames, setCamera, setDebug, stage, startReplay, syncOverlays, toggleDetails, userChallenge } from './screens/live3d.js';
+import { L3, clearInput, closeHelp, cycleCamera, doSnap, ensureStage, fitStage, mountStage, onKey, presnapAct, recall, resetBetweenGames, setCamera, setDebug, stage, startReplay, syncOverlays, toggleDetails, userChallenge } from './screens/live3d.js';
 import { renderLobby } from './screens/lobby.js';
 import { bindUI, create as netCreate, join as netJoin, joinFromHash, leave as netLeave, roomLink, send as netSend, setName as netSetName } from './net.js';
 import { openFilm } from './screens/film.js';
@@ -69,25 +70,69 @@ export function quickGame({ twoPlayer = false, spectate = false } = {}) {
 }
 
 // ---------- top bar ----------
+function navBtn(k, label) {
+  return `<button class="nav ${S.screen === k ? 'on' : ''}" data-act="go" data-to="${k}">${label}</button>`;
+}
+function navMenu(label, items) {
+  if (!items.length) return '';
+  const on = items.some(([k]) => S.screen === k);
+  return `<details class="navdrop ${on ? 'on' : ''}"><summary class="${on ? 'on' : ''}">${label}</summary><div class="navmenu">${items.map(([k, l]) => navBtn(k, l)).join('')}</div></details>`;
+}
 function renderTop() {
   const L = S.league;
-  const items = [];
+  const team = [['kit', 'Team studio']];
+  const league = [];
+  const manage = [];
   if (L) {
-    if (L.phase === 'draft') items.push(['draft', 'Draft room']);
-    else if (L.phase === 'offseason') items.push(['offseason', 'Offseason'], ['season', 'Last season']);
-    else if (L.phase === 'freeagency') items.push(['freeagency', 'Free agency']);
-    else items.push(['grades', 'Draft grades'], ['depth', 'Depth chart'], ['season', 'Season'], ['trades', 'Trade desk']);
-    items.push(['records', 'Records'], ['kit', 'Franchise']);
+    if (L.phase !== 'draft') team.unshift(['depth', 'Depth chart']);
+    if (L.schedule?.length) league.push(['season', L.phase === 'offseason' ? 'Last season' : 'Franchise']);
+    if (L.phase !== 'draft') league.push(['grades', 'Draft grades']);
+    if (L.phase === 'draft') manage.push(['draft', 'Draft']);
+    if (L.phase === 'offseason') manage.push(['offseason', 'Offseason']);
+    if (L.phase === 'freeagency') manage.push(['freeagency', 'Free agency']);
+    if (L.schedule?.length && L.phase !== 'draft') manage.push(['trades', 'Trades']);
   }
-  if (S.game && !S.game.final) items.push(['game', 'Live game']);
   const me = L && user();
+  const next = L && (L.phase === 'season' || L.phase === 'playoffs') && S.screen !== 'season' && S.screen !== 'game';
   return `<header class="top">
     <button class="brand" data-act="home" aria-label="Home"><span class="ball" aria-hidden="true"></span>PokeBall</button>
-    <nav>${items.map(([k, label]) => `<button class="nav ${S.screen === k ? 'on' : ''}" data-act="go" data-to="${k}">${label}</button>`).join('')}</nav>
+    <nav class="gnav" aria-label="Game">
+      <button class="nav ${S.screen === 'home' ? 'on' : ''}" data-act="home">Home</button>
+      ${S.game && !S.game.final ? `<button class="nav play ${S.screen === 'game' ? 'on' : ''}" data-act="go" data-to="game">Play</button>` : ''}
+      ${navMenu('Team', team)}
+      ${navMenu('League', league)}
+      ${navMenu('Manage', manage)}
+      ${L ? navBtn('records', 'Records') : ''}
+    </nav>
+    ${next ? '<button class="btn tiny primary" data-act="go" data-to="season">Next game</button>' : ''}
     ${me ? `<span class="top-team">${teamBadge(me)}<span><b>${esc(me.name)}</b><small>Season ${L.season ?? 1}</small></span></span>` : ''}
     ${S.online && S.net?.code ? `<span class="top-team"><b>#${S.net.mode === 'league' ? 'online' : 'play'}=${esc(S.net.code)}</b><small id="net-ping">${S.netDown ? 'reconnecting…' : S.net.ping != null ? `${S.net.ping} ms` : '…'}</small></span>` : ''}
     ${soundButtonHtml()}
   </header>`;
+}
+function readSetupForm() {
+  const f = document.getElementById('setup-form');
+  if (!f) return;
+  const name = f.querySelector('#f-name')?.value.trim();
+  const abbr = f.querySelector('#f-abbr')?.value.trim();
+  if (name) S.setup.name = name;
+  if (abbr) S.setup.abbr = abbr.toUpperCase().slice(0, 3);
+  const rounds = f.querySelector('input[name="rounds"]:checked');
+  const teams = f.querySelector('input[name="teams"]:checked');
+  const scheme = f.querySelector('input[name="scheme"]:checked');
+  if (rounds) S.setup.rounds = Number(rounds.value);
+  if (teams) S.setup.teams = Number(teams.value);
+  if (scheme) S.setup.scheme = scheme.value;
+  const typeCap = f.querySelector('#f-typecap');
+  const legend = f.querySelector('#f-legend');
+  const clock = f.querySelector('#f-clock');
+  if (typeCap) S.setup.typeCap = typeCap.checked;
+  if (legend) S.setup.legendaries = legend.checked;
+  if (clock) S.setup.clock = clock.checked;
+  const pick = f.querySelector('#f-pick');
+  if (pick) S.setup.pick = pick.value ? Number(pick.value) : null;
+  const slot = f.querySelector('#f-slot');
+  if (slot) S.slot = Number(slot.value);
 }
 
 // ---------- events ----------
@@ -95,6 +140,8 @@ function onClick(e) {
   const el = e.target.closest('[data-act]');
   if (!el || el.disabled) return;
   const act = el.dataset.act;
+  if (act === 'noop') { e.stopPropagation(); return; }
+  if (document.getElementById('setup-form')) readSetupForm();
   const L = S.league;
   clickSound(act);
   // A click anywhere else closes the sound panel.
@@ -204,8 +251,8 @@ function onClick(e) {
       S.draft.sel = Number(el.dataset.id);
       const card = document.getElementById('detail');
       card.innerHTML = detailHtml();
-      document.querySelectorAll('#board-body tr.sel').forEach((r) => r.classList.remove('sel'));
-      document.querySelector(`#board-body tr[data-id="${S.draft.sel}"]`)?.classList.add('sel');
+      document.querySelectorAll('#board-body .prospect.sel').forEach((r) => r.classList.remove('sel'));
+      document.querySelector(`#board-body .prospect[data-id="${S.draft.sel}"]`)?.classList.add('sel');
       // Bring the card out from under the sticky top bar (scroll-margin-top keeps it clear).
       const bar = document.querySelector('.top')?.getBoundingClientRect().bottom ?? 0;
       if (card.getBoundingClientRect().top < bar) card.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -214,6 +261,7 @@ function onClick(e) {
     case 'draftbtn': { const id = Number(el.dataset.id); const n = L?.pickIndex; userDraft(id, null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
     case 'draftsel': { const id = S.draft.sel, n = L?.pickIndex; userDraft(id, document.getElementById('d-slot')?.value ?? null); if (L?.pickIndex !== n) { ui('pick'); cry(id); } break; }
     case 'sort': S.draft.sort = el.dataset.key; render(); break;
+    case 'draftsheet': S.draft.sheet = !S.draft.sheet; render(); break;
     case 'draftskip': draftSkip(); break;
     case 'queue': toggleQueue(Number(el.dataset.id)); render(); if (S.draft.queueAuto) draftTick(); break;
     case 'queueup': case 'queuedown': moveQueue(Number(el.dataset.id), act === 'queueup' ? -1 : 1); render(); break;
@@ -223,6 +271,22 @@ function onClick(e) {
     case 'autodraft': S.draft.autoAll = !S.draft.autoAll; render(); draftTick(); break;
     case 'startseason': if (S.online) { netSend({ t: 'startseason' }); break; } L.phase = 'season'; setScreen('season'); break;
     case 'dslot': case 'dbench': depthClick(el); break;
+    case 'dunit': S.depthUnit = el.dataset.unit; render(); break;
+    case 'wizopen': S.wizOpen = true; S.wiz = 0; render(); break;
+    case 'wizclose': S.wizOpen = false; render(); break;
+    case 'wizgo': S.wiz = Number(el.dataset.step); render(); break;
+    case 'wiznext': S.wiz = Math.min(4, (S.wiz ?? 0) + 1); render(); break;
+    case 'wizback': S.wiz = Math.max(0, (S.wiz ?? 0) - 1); render(); break;
+    case 'wizcolor': S.setup.color = el.dataset.v; render(); break;
+    case 'plan': if (['balanced', 'pass', 'run'].includes(el.dataset.v)) { S.plan = el.dataset.v; savePrefs(); render(); } break;
+    case 'tiptip': S.tips = { ...S.tips, [el.dataset.tip]: true }; savePrefs(); render(); break;
+    case 'hubtab': S.hubTab = el.dataset.tab; render(); break;
+    case 'hubopp': S.hubOpp = Number(el.dataset.opp); S.hubTab = 'prepare'; render(); break;
+    case 'gradeteam': { const id = Number(el.dataset.team); S.gradeTeam = S.gradeTeam === id ? null : id; render(); break; }
+    case 'profile': S.profile = Number(el.dataset.id); S.profileCmp = null; render(); break;
+    case 'profileclose': S.profile = null; S.profileCmp = null; render(); break;
+    case 'desktoggle': deskToggle(el.dataset.side, Number(el.dataset.id), el.getAttribute('aria-pressed') !== 'true'); break;
+    case 'camcycle': cycleCamera(); break;
     case 'autodepth': {
       const me = user();
       const { lineup, bench } = autoDepthChart(me.roster);
@@ -270,6 +334,7 @@ function onClick(e) {
     case 'call': doCall(el.dataset.call); break;
     case 'timeout': userTimeout(); break;
     case 'cstab': S.csTab = el.dataset.tab; S.csPage = 0; S.csAll = false; render(); break;
+    case 'csrec': S.csTab = null; S.csAll = false; S.csFold = false; render(); break;
     case 'calshot': S.calShot = el.dataset.k; render(); break;
     case 'calreset': S.cal = cameraDefaults(); stage?.rig.setCalibration(S.cal); savePrefs(); render(); break;
     case 'snap': doSnap(); break;
@@ -287,7 +352,7 @@ function onClick(e) {
     case 'csscout': S.csScout = !S.csScout; render(); break;
     case 'ps': presnapAct(el.dataset.ps, el.dataset.arg); break;
     case 'csfold': S.csFold = !S.csFold; savePrefs(); render(); break;
-    case 'csall': S.csAll = !S.csAll; S.csFold = false; render(); break;
+    case 'csall': S.csAll = !S.csAll; if (!S.csAll) S.csTab = null; S.csFold = false; render(); break;
     case 'csflip': S.runFlip = !S.runFlip; render(); break;
     case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
     case 'quality': S.quality = el.dataset.q; stage?.setQuality(S.quality); savePrefs(); render(); break;
@@ -310,6 +375,7 @@ function onInput(e) {
   const t = e.target;
   if (t.type === 'range' && t.id?.startsWith('snd-')) { soundInput(t); return; }
   if (t.id === 'k-word') { kitInput(t); return; }
+  if (t.id === 'fa-q') { S.faQ = t.value; const board = document.getElementById('fa-board'); if (board) board.innerHTML = faBoardHtml(); }
   if (t.id === 'fa-amount') {
     S.faAmount = Math.round(Number(t.value));
     const pos = t.selectionStart;
@@ -318,6 +384,7 @@ function onInput(e) {
     try { el?.setSelectionRange(pos, pos); } catch { /* number inputs have no selection */ }
   }
   if (t.id === 'd-search') { S.draft.search = t.value; document.getElementById('board-body').innerHTML = boardRowsHtml(); }
+  if (t.id === 'desk-q') { S.deskQ = t.value; render(); }
   if (t.id?.startsWith('cal-')) {
     const k = t.id.slice(4);
     S.cal[S.calShot][k] = Number(t.value);
@@ -350,6 +417,7 @@ function onChange(e) {
   if (soundInput(t)) return;
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
   if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }
+  if (t.id === 'profile-cmp') { S.profileCmp = t.value ? Number(t.value) : null; render(); }
   if (t.id === 'g-pips') { S.pips = t.checked; if (stage) stage.showPips = S.pips; savePrefs(); }
   if (t.id === 'g-debug') setDebug(t.checked);
   if (t.id === 'import-file' && t.files?.[0]) { const n = importSlot(); t.files[0].text().then((text) => importSave(text, n)); }
@@ -365,6 +433,8 @@ const importSlot = () => Number(document.getElementById('i-slot')?.value ?? S.sl
 function onSubmit(e) {
   if (e.target.id !== 'setup-form') return;
   e.preventDefault();
+  readSetupForm();
+  if ((S.wiz ?? 0) < 4) { S.wiz = Math.min(4, (S.wiz ?? 0) + 1); S.wizOpen = true; render(); return; }
   const f = e.target;
   S.setup = {
     name: f.querySelector('#f-name').value.trim() || 'Pallet Starters',
@@ -382,7 +452,7 @@ function onSubmit(e) {
   S.league = LG.createLeague({ teamName: S.setup.name, abbr: S.setup.abbr, rounds: S.setup.rounds, legendaries: S.setup.legendaries,
     typeCap: S.setup.typeCap, scheme: S.setup.scheme, numTeams: S.setup.teams, userPick: S.setup.pick ?? null, seed: Math.floor(Math.random() * 2 ** 31), ...(S.setup.color ? { userColor: S.setup.color } : {}) });
   if (S.setup.kit) S.league.teams[0].kit = cleanKit(S.setup.kit, S.league.teams[0]);
-  S.game = null; S.gameMeta = null; S.desk = null;
+  S.game = null; S.gameMeta = null; S.desk = null; S.wizOpen = false;
   S.draft = { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false, queueAuto: false };
   setScreen('draft');
 }
@@ -409,6 +479,7 @@ export function render() {
     default: body = renderHome();
   }
   const y = window.scrollY;
+  unmountMenu();
   const boardScroll = document.querySelector('.board .tablewrap')?.scrollTop;
   const focusId = document.activeElement?.id;
   // A box being typed in keeps its text and caret through a re-render (an online pick, a ping).
@@ -421,10 +492,12 @@ export function render() {
   // A new screen slides in; a re-render of the same screen (a draft pick, a toggle) does not.
   const enter = S.screen !== lastScreen && S.screen !== 'game';
   lastScreen = S.screen;
-  app.innerHTML = renderTop() + `<main class="scr-${S.screen}${enter ? ' enter' : ''}">${body}</main>`;
+  app.innerHTML = renderTop() + `<main class="scr-${S.screen}${enter ? ' enter' : ''}">${body}</main>` + (S.screen !== 'game' && S.profile != null ? profileOverlay(S.profile) : '');
   document.body.classList.toggle('g3d-on', S.screen === 'game' && !!stage);
+  document.body.classList.toggle('menu-on', S.screen === 'home');
   syncMusic();
   if (S.screen === 'game') mountStage();
+  if (S.screen === 'home') mountMenu(document.getElementById('menu-stage'));
   if (S.screen === 'kit') drawKitPreview();
   if (S.screen === 'draft') document.documentElement.style.setProperty('--top-h', `${document.querySelector('.top')?.offsetHeight ?? 0}px`);
   if (S.screen === 'draft' && boardScroll != null) { const b = document.querySelector('.board .tablewrap'); if (b) b.scrollTop = boardScroll; }
@@ -440,6 +513,15 @@ export function render() {
     if (t.left < r.left || t.right > r.right) row.scrollLeft += t.left - r.left - 8;
   }
   window.scrollTo(0, y);
+}
+
+let menuSoundAt = 0;
+function menuHover(e) {
+  const item = e.target.closest?.('.menu-item');
+  if (!item || S.screen !== 'home') return;
+  const blurb = document.getElementById('menu-blurb');
+  if (blurb && item.dataset.blurb) blurb.textContent = item.dataset.blurb;
+  if (e.type === 'pointerover' && soundOn() && performance.now() - menuSoundAt > 180) { menuSoundAt = performance.now(); ui('tab'); }
 }
 
 function start(data) {
@@ -458,13 +540,49 @@ function start(data) {
   }
   document.addEventListener('toggle', (e) => { if (e.target.classList?.contains('presnap')) S.presnapClosed = !e.target.open; }, true);
   document.addEventListener('click', onClick);
+  document.addEventListener('dragstart', (e) => {
+    const el = e.target.closest('[data-drag]');
+    if (!el) return;
+    e.dataTransfer.setData('text/plain', el.dataset.drag);
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  document.addEventListener('dragover', (e) => {
+    if (e.target.closest('[data-drop]')) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+  });
+  document.addEventListener('drop', (e) => {
+    const slot = e.target.closest('[data-drop]')?.dataset.drop;
+    const from = e.dataTransfer.getData('text/plain');
+    if (!slot || !from) return;
+    e.preventDefault();
+    S.justDragged = true;
+    depthDrop(from, slot);
+  });
+  document.addEventListener('click', (e) => {
+    if (!S.justDragged) return;
+    S.justDragged = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
   document.addEventListener('input', onInput);
   document.addEventListener('change', onChange);
   window.addEventListener('resize', () => { if (S.screen === 'game' && stage) fitStage(); });
+  document.addEventListener('pointerover', menuHover);
+  document.addEventListener('focusin', menuHover);
   document.addEventListener('submit', onSubmit);
   window.addEventListener('keydown', (e) => {
     // U mutes and unmutes the game on any screen.
+    if (e.code === 'Escape' && S.profile != null && S.screen !== 'game') { S.profile = null; S.profileCmp = null; render(); return; }
     if (e.code === 'KeyU' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.target.closest?.('input, select, textarea')) { e.preventDefault(); toggleMute(); return; }
+    if (S.screen === 'home' && !e.repeat && !e.target.closest?.('input, select, textarea') && (e.code === 'ArrowDown' || e.code === 'ArrowUp')) {
+      const items = [...document.querySelectorAll('.menu-console .menu-item, .menu-feature .menu-item')];
+      if (items.length) {
+        e.preventDefault();
+        const i = items.indexOf(document.activeElement);
+        const n = e.code === 'ArrowDown' ? (i + 1) % items.length : (i <= 0 ? items.length - 1 : i - 1);
+        items[n].focus();
+        return;
+      }
+    }
     onKey(e, true);
   });
   window.addEventListener('keyup', (e) => onKey(e, false));

@@ -5,7 +5,7 @@ import * as LG from '../league.js';
 import { SCHEMES, coachLabel } from '../coach.js';
 import { render, setScreen } from '../app.js';
 import { S, clearTimers, save, timers } from '../state.js';
-import { ATTR_SHORT, P, abilityText, bar, esc, ovr, powerHtml, roleHtml, sprite, teamBadge, typeChips, user } from '../ui.js';
+import { ATTR_SHORT, P, abilityText, bar, coachTip, esc, monCard, ovr, powerHtml, roleHtml, sprite, teamBadge, typeChips, user } from '../ui.js';
 import { shareCardHtml } from './share.js';
 import { send as netSend } from '../net.js';
 import * as TR from '../trades.js';
@@ -134,21 +134,27 @@ export function boardRowsHtml() {
   const L = S.league, me = user();
   const myTurn = LG.currentPick(L)?.team === me.id;
   const rows = boardIds();
-  if (!rows.length) return `<tr><td colspan="17" class="empty">No Pokémon match. Clear the search, type, generation or open-spots filter.</td></tr>`;
+  if (!rows.length) return `<p class="empty">No Pokémon match. Clear the search, type, generation or open-spots filter.</p>`;
   const rank = rankerFor(L, me);
   const queued = new Set(draftQueue(L, me));
   const canQueue = !S.online;
   return rows.map(({ id, fit }) => {
-    const p = P(id);
     const block = LG.blockReason(L, me, id);
     const why = fitShort(fit, rank(id, fit.slot));
-    return `<tr class="${S.draft.sel === id ? 'sel' : ''}" data-act="select" data-id="${id}">
-      <td class="pk">${sprite(id, 'sm')}<span><b>${esc(p.name)}</b>${p.legendary ? '<i class="leg">Legendary</i>' : ''}${roleHtml(p)}<span class="types">${typeChips(p.types)}</span></span></td>
-      <td class="fit" title="${esc(why)}"><div class="fitcell"><b class="fitnum">${fitNum(fit)}</b><span class="fitsub"><span class="slot">${fit.slot}</span>${fit.rated ? '' : ovr(fit.v)}</span><span class="fitwhy">${esc(why)}</span></div></td>
-      ${Object.keys(ATTRS).map((k) => `<td class="num a-${k}">${p.attrs[k]}</td>`).join('')}
-      <td class="acts">${canQueue ? `<button class="btn tiny ghost star ${queued.has(id) ? 'on' : ''}" data-act="queue" data-id="${id}" aria-pressed="${queued.has(id)}" title="${queued.has(id) ? 'Take off your queue' : 'Add to your queue'}">${queued.has(id) ? '★' : '☆'}</button>` : ''}<button class="btn tiny ${myTurn && !block ? 'primary' : ''}" data-act="draftbtn" data-id="${id}" ${myTurn && !block ? '' : 'disabled'} title="${block ? esc(block) : ''}">${block ? 'Blocked' : 'Draft'}</button></td>
-    </tr>`;
+    return `<article class="prospect ${S.draft.sel === id ? 'sel' : ''}" data-act="select" data-id="${id}">
+      ${monCard(id, { slot: fit.slot, size: 'lg' })}
+      <span class="fit" title="${esc(why)}"><b class="fitnum">${fitNum(fit)}</b><span class="fitwhy">${esc(why)}</span></span>
+      <span class="acts">${canQueue ? `<button class="btn tiny ghost star ${queued.has(id) ? 'on' : ''}" data-act="queue" data-id="${id}" aria-pressed="${queued.has(id)}" title="${queued.has(id) ? 'Take off your queue' : 'Add to your queue'}">${queued.has(id) ? '★' : '☆'}</button>` : ''}<button class="btn tiny ${myTurn && !block ? 'primary' : ''}" data-act="draftbtn" data-id="${id}" ${myTurn && !block ? '' : 'disabled'} title="${block ? esc(block) : ''}">${block ? 'Blocked' : 'Draft'}</button></span>
+    </article>`;
   }).join('');
+}
+function sheetHtml() {
+  const rows = boardIds();
+  const keys = Object.keys(ATTRS);
+  return `<div class="tablewrap draft-sheet"><table class="board-table"><thead><tr><th>Pokémon</th><th>Pos</th><th>OVR</th>${keys.map((k) => `<th title="${esc(ATTRS[k])}">${ATTR_SHORT[k]}</th>`).join('')}</tr></thead><tbody>${rows.map(({ id, fit }) => {
+    const p = P(id);
+    return `<tr class="${S.draft.sel === id ? 'sel' : ''}" data-act="select" data-id="${id}"><td>${esc(p.name)}</td><td>${fit.slot}</td><td class="num">${fit.v}</td>${keys.map((k) => `<td class="num">${Math.round(p.attrs[k] ?? 0)}</td>`).join('')}</tr>`;
+  }).join('')}</tbody></table></div>`;
 }
 
 // Pinned over the board: the slots still open, each a filter.
@@ -168,7 +174,7 @@ function queueHtml(L, team, myTurn) {
     ${q.length ? `<ol class="qlist">${q.map((id, i) => {
     const block = LG.blockReason(L, team, id);
     const f = draftFit(team, id, { ...d, rate: 'fit', needs: false });
-    return `<li class="${block ? 'blocked' : ''}">${sprite(id, 'xs')}<button class="qname" data-act="select" data-id="${id}">${esc(P(id).name)}</button><span class="slot">${f.slot}</span>${ovr(f.v)}
+    return `<li class="${block ? 'blocked' : ''}" data-act="select" data-id="${id}">${monCard(id, { slot: f.slot, size: 'sm' })}
       <span class="qbtns"><button class="btn tiny ghost" data-act="queueup" data-id="${id}" ${i ? '' : 'disabled'} aria-label="Move ${esc(P(id).name)} up">↑</button><button class="btn tiny ghost" data-act="queuedown" data-id="${id}" ${i < q.length - 1 ? '' : 'disabled'} aria-label="Move ${esc(P(id).name)} down">↓</button><button class="btn tiny ghost" data-act="queue" data-id="${id}" aria-label="Take ${esc(P(id).name)} off your queue">✕</button></span></li>`;
   }).join('')}</ol>` : '<p class="small muted">Star Pokémon on the board (☆) to line them up. When the pick clock runs out, or auto-draft picks for you, it takes the top of your queue first.</p>'}
     ${q.length ? `<div class="actions"><button class="btn primary" data-act="draftqueue" ${myTurn && top != null ? '' : 'disabled'}>${top != null ? `Draft ${esc(P(top).name)}` : 'Nobody you can draft'}</button>
@@ -207,15 +213,18 @@ export function renderDraft() {
   const onClock = pk ? L.teams[pk.team] : null;
   const myTurn = onClock?.id === me.id;
   const types = Object.keys(TYPE_COLORS);
-  const head = (k, label) => `<th class="num a-${k}"><button class="sort ${d.sort === k ? 'on' : ''}" data-act="sort" data-key="${k}" title="${ATTRS[k] ?? ''}">${label}</button></th>`;
   const recent = L.picks.slice(0, L.pickIndex).slice(-10).reverse();
   return `<section class="draft">
     <div class="draft-head">
-      <div>
-        <p class="eyebrow">${(L.season ?? 1) > 1 ? `Season ${L.season} rookie draft · ` : ''}Round ${pk?.round ?? '-'} of ${L.picks[L.picks.length - 1].round} · Pick ${L.pickIndex + 1} of ${L.picks.length}${pk?.from != null ? ` · ${esc(L.teams[pk.from].abbr)}'s pick, traded` : ''}</p>
-        <h1>${myTurn ? 'You are on the clock' : `${esc(onClock?.name ?? '')} are picking`}</h1>
+      <div class="onclock" style="--team:${onClock?.color ?? '#e5402b'}">
+        ${onClock ? teamBadge(onClock) : ''}
+        <div>
+        <p class="eyebrow">On the clock · ${(L.season ?? 1) > 1 ? `Season ${L.season} rookie draft · ` : ''}Round ${pk?.round ?? '-'} of ${L.picks[L.picks.length - 1].round} · Pick ${L.pickIndex + 1} of ${L.picks.length}${pk?.from != null ? ` · ${esc(L.teams[pk.from].abbr)}'s pick, traded` : ''}</p>
+        <h1>${myTurn ? 'Your pick' : esc(onClock?.name ?? '')}</h1>
+        ${coachTip('draft', 'The rating is for a position. Open a prospect to see the card, then draft into a spot.')}
         ${S.online && !myTurn && onClock ? `<p class="small muted">${onClock.human ? `${esc(onClock.coachName)} is on the clock` : 'The AI picks for this team'}</p>` : ''}
         ${me.coach !== 'balanced' && SCHEMES[me.coach] ? `<p class="small muted">${esc(SCHEMES[me.coach].name)}: auto-picks reach for ${schemeGroups(me.coach)}.</p>` : ''}
+        </div>
       </div>
       <div class="clockbox ${myTurn ? 'live' : ''}">
         ${S.online ? onlineClockHtml(myTurn, onClock)
@@ -236,14 +245,16 @@ export function renderDraft() {
           <select id="d-rate" aria-label="Rate at position"><option value="fit" ${d.rate === 'fit' ? 'selected' : ''}>Fit: value to your roster</option>${SLOT_KEYS.map((k) => `<option value="${k}" ${d.rate === k ? 'selected' : ''}>Rate at ${k}</option>`).join('')}</select>
         </div>
         ${needsHtml(me)}
-        <div class="tablewrap">
-          <table class="board-table">
-            <thead><tr><th><button class="sort ${d.sort === 'name' ? 'on' : ''}" data-act="sort" data-key="name">Pokémon</button></th>
-            <th><button class="sort ${d.sort === 'fit' ? 'on' : ''}" data-act="sort" data-key="fit" title="${d.rate === 'fit' ? 'Value to your roster: the slot weight times the rating over a typical starter, at your best open slot' : `Rating at ${d.rate}`}">${d.rate === 'fit' ? 'Fit' : d.rate}</button></th>
-            ${Object.keys(ATTRS).map((k) => head(k, ATTR_SHORT[k])).join('')}<th></th></tr></thead>
-            <tbody id="board-body">${boardRowsHtml()}</tbody>
-          </table>
+        <div class="board-sort">
+          <button class="btn tiny ${d.sort === 'name' ? 'primary' : ''}" data-act="sort" data-key="name">Name</button>
+          <button class="btn tiny ${d.sort === 'fit' ? 'primary' : ''}" data-act="sort" data-key="fit">Fit</button>
+          <button class="btn tiny ${d.sheet ? 'primary' : ''}" data-act="draftsheet" aria-pressed="${!!d.sheet}">${d.sheet ? 'Hide the ratings table' : 'Ratings table'}</button>
+          <details><summary>Sort by a rating</summary>
+            <span class="board-sort">${Object.keys(ATTRS).map((k) => `<button class="btn tiny ${d.sort === k ? 'primary' : ''}" data-act="sort" data-key="${k}" title="${esc(ATTRS[k] ?? '')}">${ATTR_SHORT[k]}</button>`).join('')}</span>
+          </details>
         </div>
+        <div class="prospects" id="board-body">${boardRowsHtml()}</div>
+        ${d.sheet ? sheetHtml() : ''}
       </div>
       <aside class="draft-side">
         <div class="card detail" id="detail">${detailHtml()}</div>
@@ -290,17 +301,19 @@ export function detailHtml() {
   const bestOpen = LG.bestOpenSlot(me, id);
   const edge = LG.rivalEdge(L, id);
   const s = p.stats;
-  return `<div class="dhead">${sprite(id, 'lg')}<div><h3>${esc(p.name)}</h3>${roleHtml(p)}<div class="types">${typeChips(p.types)}</div>
-      <p class="small muted">Gen ${p.gen} · ${(p.height / 10).toFixed(1)} m · ${(p.weight / 10).toFixed(1)} kg</p></div></div>
+  return `<div class="dhead">${monCard(id, { size: 'lg' })}<p class="small muted">Gen ${p.gen} · ${(p.height / 10).toFixed(1)} m · ${(p.weight / 10).toFixed(1)} kg</p></div>
     ${taken ? '' : whyHtml(L, me, id)}
     ${typeCapHtml(L, me, p)}
     <p class="small"><b>${esc(p.ability)}.</b> ${esc(abilityText(id))}</p>
-    ${p.types.map((t) => `<p class="small"><b>${t} trait.</b> ${TYPE_TRAITS[t].text}</p>`).join('')}
     ${powerHtml(id)}
     ${rivalEdgeHtml(edge)}
     <h4>Best positions</h4>
     <ul class="best">${p.best.slice(0, 3).map((k) => `<li><span class="slot">${k}</span>${bar(p.ovr[k])}${ovr(p.ovr[k])}</li>`).join('')}</ul>
-    <p class="small muted mono">HP ${s.hp} · Atk ${s.atk} · Def ${s.def} · SpA ${s.spa} · SpD ${s.spd} · Spe ${s.spe}</p>
+    <div class="modal-attrs">${Object.keys(ATTRS).map((k) => `<span class="abar wide" title="${esc(ATTRS[k] ?? '')}"><em>${esc(ATTRS[k])}</em>${bar(p.attrs[k])}<b>${Math.round(p.attrs[k])}</b></span>`).join('')}</div>
+    <details><summary>Type notes and base stats</summary>
+      ${p.types.map((t) => `<p class="small"><b>${t}.</b> ${TYPE_TRAITS[t].text}</p>`).join('')}
+      <p class="small muted mono">HP ${s.hp} · Atk ${s.atk} · Def ${s.def} · SpA ${s.spa} · SpD ${s.spd} · Spe ${s.spe}</p>
+    </details>
     ${taken ? '<p class="muted">Already drafted.</p>' : `<div class="draftto">
       <select id="d-slot" aria-label="Draft into slot">${open.map((k) => `<option value="${k}" ${k === bestOpen ? 'selected' : ''}>${k} · ${p.ovr[k]}</option>`).join('')}${open.length === 0 ? '<option value="BENCH">Bench</option>' : ''}</select>
       <button class="btn primary" data-act="draftsel" ${myTurn && !block ? '' : 'disabled'}>${block ? esc(block) : myTurn ? `Draft ${esc(p.name)}` : 'Wait for your pick'}</button>
@@ -329,6 +342,26 @@ function onlineClockHtml(myTurn, onClock) {
   return `<span class="clocknum" id="pick-clock">${secs}</span><span>${myTurn ? 'seconds, then auto-pick' : 'seconds left on the clock'}</span>`;
 }
 
+// The pick the clock or the AI timer was armed for. A Draft click takes that pick first and
+// clears the timer; if the timer wakes up afterwards, the ticket no longer matches and it does not pick.
+function armTicket(L) {
+  const pk = LG.currentPick(L);
+  return pk ? { index: L.pickIndex, team: pk.team } : null;
+}
+function ticketOpen(ticket) {
+  const L = S.league;
+  if (!ticket || !L || L.phase !== 'draft') return false;
+  const pk = LG.currentPick(L);
+  return !!pk && L.pickIndex === ticket.index && pk.team === ticket.team;
+}
+function takeByTimer(L, ticket) {
+  if (!ticketOpen(ticket)) return;
+  const c = autoChoice(L, ticket.team);
+  S.draft.lastTake = { by: 'timer', id: c.id, index: ticket.index };
+  LG.makePick(L, c.id, c.slot);
+  afterPick();
+}
+
 export function draftTick() {
   if (S.online) {
     clearInterval(timers.clock);
@@ -344,26 +377,22 @@ export function draftTick() {
   if (!L || L.phase !== 'draft' || S.screen !== 'draft') return;
   const pk = LG.currentPick(L);
   const mine = L.teams[pk.team].user;
+  const ticket = armTicket(L);
   if (!mine || S.draft.autoAll || (S.draft.queueAuto && queueTop(L) != null)) {
     // AI picks come quicker in a bigger league, so the wait between your picks stays about the same.
-    timers.draft = setTimeout(() => {
-      const c = autoChoice(L, pk.team);
-      LG.makePick(L, c.id, c.slot);
-      afterPick();
-    }, mine ? (S.draft.autoAll ? 120 : 700) : Math.max(90, Math.round(260 * 8 / L.teams.length)));
+    timers.draft = setTimeout(() => takeByTimer(S.league, ticket), mine ? (S.draft.autoAll ? 120 : 700) : Math.max(90, Math.round(260 * 8 / L.teams.length)));
     return;
   }
   S.draft.clock = 60;
   if (S.setup.clock) {
     timers.clock = setInterval(() => {
+      if (!ticketOpen(ticket)) { clearInterval(timers.clock); return; }
       S.draft.clock--;
       const el = document.getElementById('pick-clock');
       if (el) el.textContent = S.draft.clock;
       if (S.draft.clock <= 0) {
         clearInterval(timers.clock);
-        const c = autoChoice(L, pk.team);
-        LG.makePick(L, c.id, c.slot);
-        afterPick();
+        takeByTimer(S.league, ticket);
       }
     }, 1000);
   }
@@ -390,20 +419,42 @@ function afterPick() {
 }
 
 // ---------- grades ----------
+function gradeCard(L, t, g) {
+  const units = [['passOff', 'Pass'], ['runOff', 'Run'], ['passRush', 'Rush'], ['coverage', 'Coverage'], ['runDef', 'Run D']];
+  const bestU = units.slice().sort((a, b) => g[b[0]].value - g[a[0]].value)[0];
+  const weakU = units.slice().sort((a, b) => g[a[0]].value - g[b[0]].value)[0];
+  const slots = Object.entries(t.lineup).filter(([, id]) => id != null);
+  const star = slots.slice().sort((a, b) => P(b[1]).ovr[b[0]] - P(a[1]).ovr[a[0]])[0];
+  const hole = slots.slice().sort((a, b) => P(a[1]).ovr[a[0]] - P(b[1]).ovr[b[0]])[0];
+  const avg = Math.round(units.reduce((s, [k]) => s + g[k].value, 0) / units.length);
+  const open = S.gradeTeam === t.id;
+  return `<article class="gcard ${t.user ? 'me' : ''} ${open ? 'open' : ''}" style="--team:${t.color}">
+    <button class="gcard-hit" data-act="gradeteam" data-team="${t.id}" aria-expanded="${open}">
+      <span class="gcard-mark">${teamBadge(t)}</span>
+      <span class="gcard-body"><b>${esc(t.name)}</b><span class="small muted">${esc(coachLabel(t))}</span></span>
+      <span class="gcard-grade">${avg}</span>
+    </button>
+    <p class="gcard-id"><span>Strength <b>${bestU[1]} ${g[bestU[0]].grade}</b></span><span>Soft spot <b>${weakU[1]} ${g[weakU[0]].grade}</b></span></p>
+    ${star ? `<p class="gcard-star">${sprite(star[1], 'md')}<span>Best starter <b>${esc(P(star[1]).name)}</b> ${star[0]} ${P(star[1]).ovr[star[0]]}${hole ? ` · Lowest ${esc(P(hole[1]).name)} ${hole[0]} ${P(hole[1]).ovr[hole[0]]}` : ''}</span></p>` : ''}
+    ${open ? `<div class="gcard-roster">${slots.map(([k, id]) => `<button class="gmini" data-act="profile" data-id="${id}">${monCard(id, { slot: k, size: 'sm' })}</button>`).join('')}</div>` : ''}
+  </article>`;
+}
 export function renderGrades() {
   const L = S.league;
   const grades = LG.draftGrades(L);
   const units = [['passOff', 'Pass offense'], ['runOff', 'Run offense'], ['passRush', 'Pass rush'], ['coverage', 'Coverage'], ['runDef', 'Run defense']];
-  const order = L.teams.map((t, i) => ({ t, g: grades[i] }));
+  const order = L.teams.map((t, i) => ({ t, g: grades[i], avg: units.reduce((s, [k]) => s + grades[i][k].value, 0) })).sort((a, b) => b.avg - a.avg);
   return `<section class="grades">
     <p class="eyebrow">Draft complete</p>
-    <h1>Draft grades</h1>
-    <p class="lede">Each unit is graded against the other ${L.teams.length - 1} teams. Starters only; your bench subs in as starters tire.</p>
-    <div class="tablewrap card"><table class="gtable">
+    <h1>Draft board</h1>
+    ${coachTip('grades', 'Cards are ordered by starter ratings. Open a club to see every position, or the table for every unit grade.')}
+    <div class="gcards">${order.map(({ t, g }) => gradeCard(L, t, g)).join('')}</div>
+    <details class="card"><summary>Unit grades table</summary>
+    <div class="tablewrap"><table class="gtable">
       <thead><tr><th>Team</th><th>Coach</th>${units.map(([, l]) => `<th>${l}</th>`).join('')}</tr></thead>
       <tbody>${order.map(({ t, g }) => `<tr class="${t.user ? 'me' : ''}"><td>${teamBadge(t)} ${esc(t.name)}</td><td class="muted">${esc(coachLabel(t))}${t.favTypes ? ` (${t.favTypes.join(', ')})` : ''}</td>
         ${units.map(([k]) => `<td><span class="grade g-${g[k].grade[0]}">${g[k].grade}</span><span class="muted small"> ${g[k].value}</span></td>`).join('')}</tr>`).join('')}</tbody>
-    </table></div>
+    </table></div></details>
     ${tradeCardHtml(L)}
     ${S.online ? '' : `<div class="card share"><h3>Share this league</h3>${shareCardHtml(L)}</div>`}
     <div class="actions">
@@ -486,7 +537,11 @@ export function userDraft(id, slot) {
   const pk = LG.currentPick(L);
   const me = user();
   if (pk.team !== me.id || LG.blockReason(L, me, id) || !LG.available(L).includes(id)) return;
+  // The button owns this pick. The clock and the AI timer are cleared before the pick is written,
+  // and a timer that was already armed for this index does not write a second one.
   clearTimers();
+  const index = L.pickIndex;
+  S.draft.lastTake = { by: 'button', id, index, team: me.id };
   LG.makePick(L, id, slot && slot !== 'BENCH' && me.slots[slot] == null ? slot : null);
   afterPick();
 }

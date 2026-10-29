@@ -10,25 +10,47 @@ import { openFreeAgency } from './freeagency.js';
 import { buildSchedule, firstRound, isFinalRound, makeDivisions, pairSeeds, playoffRounds, playoffSeeds, roundLabel } from './geometry.js';
 import { makeTradeOffer, migrateTrades, pickOwner, weeklyTradeOffer } from './trades.js';
 
+// `club` is the stable identity. The league slot (`id`) is assigned when the league is shuffled
+// and is never the club. `accent` is the second kit color. A display name can change; `club` does not.
 export const AI_TEAMS = [
-  { name: 'Cerulean Surf', abbr: 'CER', color: '#2F6FD6', coach: 'speed', coachName: 'Speed Kills' },
-  { name: 'Pewter Boulders', abbr: 'PEW', color: '#8A7A5C', coach: 'trench', coachName: 'Trench Builder' },
-  { name: 'Saffron Seers', abbr: 'SAF', color: '#D9A21B', coach: 'balanced', coachName: 'Best Available' },
-  { name: 'Vermilion Volts', abbr: 'VER', color: '#D8452F', coach: 'types', coachName: 'Type Stacker' },
-  { name: 'Celadon Bloom', abbr: 'CEL', color: '#3E9B5A', coach: 'balanced', coachName: 'Best Available' },
-  { name: 'Fuchsia Shadows', abbr: 'FUC', color: '#B03A8C', coach: 'speed', coachName: 'Speed Kills' },
-  { name: 'Cinnabar Blaze', abbr: 'CIN', color: '#E0702A', coach: 'trench', coachName: 'Trench Builder' },
-  { name: 'Lavender Haunts', abbr: 'LAV', color: '#7D5BB5', coach: 'types', coachName: 'Type Stacker' },
-  { name: 'Viridian Rangers', abbr: 'VIR', color: '#2E7D6B', coach: 'balanced', coachName: 'Best Available' },
+  { club: 'cerulean', name: 'Cerulean Maelstrom', abbr: 'CER', color: '#1B6CA8', accent: '#E8F4FF', mark: 'wave', coach: 'speed', coachName: 'Speed Kills' },
+  { club: 'pewter', name: 'Pewter Crags', abbr: 'PEW', color: '#6E6558', accent: '#D9D2C5', mark: 'mountain', coach: 'trench', coachName: 'Trench Builder' },
+  { club: 'saffron', name: 'Saffron Oracles', abbr: 'SAF', color: '#C9A227', accent: '#5B3A8C', mark: 'eye', coach: 'balanced', coachName: 'Best Available' },
+  { club: 'vermilion', name: 'Vermilion Storm', abbr: 'VER', color: '#F0C400', accent: '#1A2744', mark: 'bolt', coach: 'types', coachName: 'Type Stacker' },
+  { club: 'celadon', name: 'Celadon Thicket', abbr: 'CEL', color: '#2F8F4E', accent: '#D7F5C8', mark: 'leaf', coach: 'balanced', coachName: 'Best Available' },
+  { club: 'fuchsia', name: 'Fuchsia Nightshade', abbr: 'FUC', color: '#6A1848', accent: '#F2A0C8', mark: 'shuriken', coach: 'speed', coachName: 'Speed Kills' },
+  { club: 'cinnabar', name: 'Cinnabar Caldera', abbr: 'CIN', color: '#D23A1A', accent: '#FFD0A8', mark: 'flame', coach: 'trench', coachName: 'Trench Builder' },
+  { club: 'lavender', name: 'Lavender Specters', abbr: 'LAV', color: '#140C1C', accent: '#9B5CFF', mark: 'ghost', coach: 'types', coachName: 'Type Stacker' },
+  { club: 'viridian', name: 'Viridian Wildwood', abbr: 'VIR', color: '#1E6B38', accent: '#C8E6B0', mark: 'pine', coach: 'balanced', coachName: 'Best Available' },
   // Bigger leagues (12 and 16 teams) draw from these too; an 8-team league only from the nine
   // above, so a seed (and a shared league code) builds the same league it always did.
-  { name: 'Goldenrod Gears', abbr: 'GLD', color: '#C9A227', coach: 'trench', coachName: 'Trench Builder' },
-  { name: 'Ecruteak Embers', abbr: 'ECR', color: '#B5482D', coach: 'types', coachName: 'Type Stacker' },
-  { name: 'Olivine Tides', abbr: 'OLV', color: '#2A8FA8', coach: 'speed', coachName: 'Speed Kills' },
-  { name: 'Mahogany Frost', abbr: 'MAH', color: '#6FA8C9', coach: 'balanced', coachName: 'Best Available' },
-  { name: 'Blackthorn Wyverns', abbr: 'BLK', color: '#3B4A8F', coach: 'speed', coachName: 'Speed Kills' },
-  { name: 'Azalea Swarm', abbr: 'AZA', color: '#7FA332', coach: 'trench', coachName: 'Trench Builder' },
+  { club: 'goldenrod', name: 'Goldenrod Foundry', abbr: 'GLD', color: '#C8961A', accent: '#3A3A40', mark: 'gear', coach: 'trench', coachName: 'Trench Builder' },
+  { club: 'ecruteak', name: 'Ecruteak Belfry', abbr: 'ECR', color: '#8C2E2A', accent: '#E8C56B', mark: 'tower', coach: 'types', coachName: 'Type Stacker' },
+  { club: 'olivine', name: 'Olivine Beacon', abbr: 'OLV', color: '#1E7A96', accent: '#D6F3F8', mark: 'beacon', coach: 'speed', coachName: 'Speed Kills' },
+  { club: 'mahogany', name: 'Mahogany Glacier', abbr: 'MAH', color: '#2E5F86', accent: '#E7F6FF', mark: 'flake', coach: 'balanced', coachName: 'Best Available' },
+  { club: 'blackthorn', name: 'Blackthorn Drakes', abbr: 'BLK', color: '#1A2148', accent: '#6AA0FF', mark: 'wing', coach: 'speed', coachName: 'Speed Kills' },
+  { club: 'azalea', name: 'Azalea Hive', abbr: 'AZA', color: '#6B8E23', accent: '#F4E27A', mark: 'bug', coach: 'trench', coachName: 'Trench Builder' },
 ];
+const BY_CLUB = Object.fromEntries(AI_TEAMS.map((t) => [t.club, t]));
+const BY_ABBR = Object.fromEntries(AI_TEAMS.map((t) => [t.abbr, t]));
+// Names a save may still be holding. Used only when the save has no club id and no known abbreviation.
+const LEGACY_NAME = {
+  'Cerulean Surf': 'cerulean', 'Cerulean Maelstrom': 'cerulean',
+  'Pewter Boulders': 'pewter', 'Pewter Crags': 'pewter',
+  'Saffron Seers': 'saffron', 'Saffron Oracles': 'saffron',
+  'Vermilion Volts': 'vermilion', 'Vermilion Storm': 'vermilion',
+  'Celadon Bloom': 'celadon', 'Celadon Thicket': 'celadon',
+  'Fuchsia Shadows': 'fuchsia', 'Fuchsia Nightshade': 'fuchsia',
+  'Cinnabar Blaze': 'cinnabar', 'Cinnabar Caldera': 'cinnabar',
+  'Lavender Haunts': 'lavender', 'Lavender Specters': 'lavender',
+  'Viridian Rangers': 'viridian', 'Viridian Wildwood': 'viridian',
+  'Goldenrod Gears': 'goldenrod', 'Goldenrod Foundry': 'goldenrod',
+  'Ecruteak Embers': 'ecruteak', 'Ecruteak Belfry': 'ecruteak',
+  'Olivine Tides': 'olivine', 'Olivine Beacon': 'olivine',
+  'Mahogany Frost': 'mahogany', 'Mahogany Glacier': 'mahogany',
+  'Blackthorn Wyverns': 'blackthorn', 'Blackthorn Drakes': 'blackthorn',
+  'Azalea Swarm': 'azalea', 'Azalea Hive': 'azalea',
+};
 const CLASSIC_TEAMS = 9;
 export const MAX_TEAMS = AI_TEAMS.length + 1;
 
@@ -57,7 +79,7 @@ export function createLeague({ teamName = 'Pallet Starters', abbr = 'PAL', round
   while (ai.length < numTeams - 1) ai.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   const teams = [
     { id: 0, name: teamName, abbr, color: userColor, coach: SCHEMES[scheme] ? scheme : 'balanced', coachName: 'You', user: true },
-    ...ai.map((t, i) => ({ id: i + 1, ...t, user: false })),
+    ...ai.map((t, i) => cpuTeam(t, i + 1)),
   ];
   for (const t of teams) {
     t.roster = []; t.slots = {}; t.lineup = {}; t.bench = [];
@@ -111,7 +133,39 @@ export function migrateLeague(L) {
   migrateTrades(L);
   ensureRecords(L);
   replaceRetired(L);
+  applyTeamIdentity(L);
   return L;
+}
+
+// A CPU club keeps its league slot. Its name and colors come from `club`. A franchise the
+// player named is left alone, even when the abbreviation matches a CPU club.
+function cpuTeam(t, id) {
+  const { accent, mark, ...rest } = t;
+  const team = { id, ...rest, user: false };
+  if (accent) team.kit = { color2: accent };
+  return team;
+}
+// The catalog entry for a CPU club. Club id, then abbreviation. A save that stored only a
+// display name still resolves through the old names. The player's own franchise never matches.
+export function clubOf(t = {}) {
+  if (!t || t.user) return null;
+  if (t.club && BY_CLUB[t.club]) return BY_CLUB[t.club];
+  const abbr = String(t.abbr ?? '').toUpperCase();
+  if (BY_ABBR[abbr]) return BY_ABBR[abbr];
+  const club = LEGACY_NAME[t.name];
+  return club ? BY_CLUB[club] : null;
+}
+function applyTeamIdentity(L) {
+  for (const t of L.teams ?? []) {
+    if (t.user) continue;
+    const canon = clubOf(t);
+    if (!canon) continue;
+    t.club = canon.club;
+    t.name = canon.name;
+    t.abbr = canon.abbr;
+    t.color = canon.color;
+    t.kit = { ...(t.kit ?? {}), color2: canon.accent };
+  }
 }
 
 // Pokémon without a 3D model left the game. A saved league that has one on a roster gets the
@@ -152,6 +206,14 @@ export function replaceRetired(L) {
 // its league team took in its place, or else (a quick game) the closest Pokémon on neither side.
 export function replaceRetiredInGame(g, L = null) {
   if (!g?.teams) return g;
+  if (L?.teams) {
+    for (const side of g.teams) {
+      const src = L.teams.find((t) => t.id === side.id);
+      if (!src?.club || src.user) continue;
+      side.club = src.club; side.name = src.name; side.abbr = src.abbr; side.color = src.color;
+      if (src.kit) side.kit = { ...(side.kit ?? {}), color2: src.kit.color2 };
+    }
+  }
   const inGame = new Set(g.teams.flatMap((s) => s.roster ?? []));
   for (const side of g.teams) {
     for (const old of (side.roster ?? []).filter((id) => RETIRED.has(id))) {
@@ -335,7 +397,7 @@ function letter(z) {
 // a starter from the other side of the ball plays both ways), players who are out sore sit
 // when the bench can cover them, and sore players start below full energy.
 export function teamForGame(t, L = null) {
-  const side = { id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach, kit: t.kit ?? null, lineup: { ...t.lineup }, bench: [...t.bench] };
+  const side = { id: t.id, name: t.name, abbr: t.abbr, color: t.color, coach: t.coach, kit: t.kit ?? null, club: t.club ?? null, lineup: { ...t.lineup }, bench: [...t.bench] };
   const cond = L?.condition;
   if (!cond) return side;
   const hurt = (id) => !!L.injuries?.[id];

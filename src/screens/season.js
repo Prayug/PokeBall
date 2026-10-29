@@ -1,15 +1,15 @@
 // Season hub: matchup and scouting report, standings, leaders, playoffs, awards, history,
 // the stored box score of a finished game, and finishing a league game.
 import { DIFFICULTY } from '../difficulty.js';
-import { DEF_SLOTS, OFF_SLOTS, ST_SLOTS } from '../ratings.js';
+import { DEF_SLOTS, OFF_SLOTS, ST_SLOTS, unitRatings } from '../ratings.js';
 import { WEATHER } from '../types.js';
 import { clockText, quarterText, simUntil } from '../engine.js';
 import * as LG from '../league.js';
 import { setScreen } from '../app.js';
 import { S } from '../state.js';
-import { P, edgeRow, esc, kickerHtml, punterHtml, rangeLine, sprite, teamBadge, user } from '../ui.js';
+import { P, coachTip, edgeWhy, esc, kickerHtml, punterHtml, rangeLine, sprite, teamBadge, user } from '../ui.js';
+import { STADIUMS, postcard, venueFor } from '../kits.js';
 import { tradeCardHtml } from './draft.js';
-import { SCHEMES } from '../coach.js';
 import { injuryReport } from '../injuries.js';
 import { powerRanking } from '../weekly.js';
 import { rivalryCardHtml } from './records.js';
@@ -29,12 +29,15 @@ export function renderSeason() {
   if (L.phase === 'season') {
     const gm = LG.userGame(L);
     const opp = L.teams[gm.home === me.id ? gm.away : gm.home];
-    main = `<div class="card matchup">
-      <p class="eyebrow">Season ${L.season ?? 1} · Week ${L.week + 1} of ${L.schedule.length}</p>
-      <div class="vs">${teamBlock(L.teams[gm.away])}<span class="at">at</span>${teamBlock(L.teams[gm.home])}</div>
-      <p class="muted">${esc(opp.name)} coach: ${esc(opp.coachName)}${SCHEMES[me.coach] && me.coach !== 'balanced' ? ` · You: ${esc(SCHEMES[me.coach].name)}` : ''}</p>
-      ${weekActions(L, 'Play the game')}
-    </div>${reviewHtml(L)}${tradeCardHtml(L)}${deskLinkHtml(L)}${scoutHtml(L, me.id, opp.id)}`;
+    const home = L.teams[gm.home];
+    const venue = venueFor(home, { seed: L.seed ?? L.results.length, playoff: false });
+    const R = LG.scoutReport(L, me.id, opp.id);
+    main = `<header class="hub-next">
+      <p class="eyebrow">Next matchup · Week ${L.week + 1} of ${L.schedule.length}</p>
+      <div class="hub-vs">${clubBlock(L.teams[gm.away], st)}<span class="hub-at">AT</span>${clubBlock(L.teams[gm.home], st)}</div>
+      <div class="hub-venue">${postcard(venue.stadium, venue.time, `hub-${venue.stadium}`)}<div><b>${esc(venue.name)}</b><span>${esc(STADIUMS[venue.stadium]?.name ?? '')} · ${esc(venue.time)}</span><p>${esc(R.lean)}</p></div></div>
+      ${weekActions(L, 'Play game')}
+    </header>${tradeCardHtml(L)}`;
   } else if (L.phase === 'playoffs') {
     const P_ = L.playoffs;
     const mine = P_.games.find((g) => g.home === me.id || g.away === me.id);
@@ -42,8 +45,7 @@ export function renderSeason() {
       ${bracketHtml(L)}
       <div class="actions">${mine ? weekActions(L, 'Play your playoff game', false)
         : `<p class="muted">${P_.round === 0 && P_.byes?.includes(me.id) ? 'You have a bye this round: rest up and watch who you get.' : 'You missed this round. Watch it play out.'}</p>${S.online ? onlineWeekActions(L, '') : '<button class="btn primary" data-act="simweek">Simulate the round</button>'}`}</div></div>
-      ${P_.games.map((g) => (g === mine || (!mine && isFinalRound(L, P_.round)) ? rivalryCardHtml(L, g.home, g.away, P_.round) : '')).join('')}
-      ${mine ? scoutHtml(L, me.id, mine.home === me.id ? mine.away : mine.home) : ''}`;
+      ${P_.games.map((g) => (g === mine || (!mine && isFinalRound(L, P_.round)) ? rivalryCardHtml(L, g.home, g.away, P_.round) : '')).join('')}`;
   } else if (L.phase === 'done') {
     main = championHtml(L, st);
   } else if (L.phase === 'grades') {
@@ -54,28 +56,62 @@ export function renderSeason() {
     main = `<div class="card matchup"><p class="eyebrow">Season ${L.season} offseason</p><h2>Training camp is open</h2>
       <div class="actions"><button class="btn primary" data-act="go" data-to="offseason">Make your cuts</button></div></div>`;
   }
-  const results = L.results.map((r, i) => ({ r, i })).reverse();
-  return `<section class="season">
-    <h1>${esc(me.name)} · ${record(st.find((r) => r.id === me.id))}</h1>
-    <div class="season-grid">
-      <div class="col">${main}
-        ${challengeCardHtml(L)}
-        ${L.phase === 'season' ? '' : reviewHtml(L)}
-        <div class="card"><h3>Results ${results.length ? '<span class="muted small">Open a game for its box score</span>' : ''}</h3>${results.length ? `<ul class="results scroll">${results.map(({ r, i }) => resultLine(r, i)).join('')}</ul>` : '<p class="muted">No games played yet.</p>'}</div>
-        ${historyHtml(L)}
-        ${L.fa?.log?.length && L.phase !== 'offseason' ? signingsHtml(L, `Season ${L.season} free agency`) : ''}
-      </div>
-      <div class="col">
-        ${standingsHtml(L, st)}
-        ${powerHtml(L)}
-        ${injuryHtml(L)}
-        <div class="card"><h3>League leaders</h3><div class="leaders">${Object.entries(lead).map(([k, rows]) => `<div><h4>${k}</h4><ol>${rows.slice(0, 3).map((r) => `<li>${sprite(r.id, 'xs')}<span>${esc(P(r.id).name)}</span><em>${L.teams[r.team].abbr}</em><b>${statFor(k, r)}</b></li>`).join('') || '<li class="muted">None yet</li>'}</ol></div>`).join('')}</div></div>
-        <div class="card"><h3>Your save</h3><p class="small muted">Download the league to keep it safe or move it to another browser. Import it from the home screen.</p>
-          <div class="actions"><button class="btn" data-act="exportsave">Export save</button><button class="btn" data-act="recap">Download recap</button></div>
-          ${shareCardHtml(L)}</div>
-      </div>
+  const tab = S.hubTab || 'prepare';
+  const mine = st.find((r) => r.id === me.id);
+  return `<section class="hub">
+    <header class="hub-id"><h1>${esc(me.name)}</h1><p class="hub-rec">${record(mine)} · Season ${L.season ?? 1}</p></header>
+    ${coachTip('season', 'The next game is the big matchup. Open a finished game for its box score.')}
+    ${main || `<div class="card"><h2>${esc(me.name)}</h2></div>`}
+    <div class="hub-tabs" role="tablist">
+      ${[['prepare', 'Prepare'], ['board', 'Standings'], ['wire', 'League wire'], ['more', 'More']].map(([k, l]) => `<button class="btn ${tab === k ? 'on' : ''}" data-act="hubtab" data-tab="${k}" role="tab" aria-selected="${tab === k}">${l}</button>`).join('')}
+    </div>
+    <div class="hub-panel">
+      ${tab === 'board' ? `${standingsHtml(L, st)}${scheduleHtml(L, me)}` : ''}
+      ${tab === 'wire' ? `${newsHtml(L)}${reviewHtml(L)}<div class="card"><h3>Results</h3>${L.results.length ? `<ul class="results scroll">${L.results.map((r, i) => ({ r, i })).reverse().map(({ r, i }) => resultLine(r, i)).join('')}</ul>` : '<p class="muted">No games played yet.</p>'}</div>` : ''}
+      ${tab === 'more' ? `${powerHtml(L)}<div class="card"><h3>League leaders</h3><div class="leaders">${Object.entries(lead).map(([k, rows]) => `<div><h4>${k}</h4><ol>${rows.slice(0, 3).map((r) => `<li>${sprite(r.id, 'xs')}<span>${esc(P(r.id).name)}</span><em>${L.teams[r.team].abbr}</em><b>${statFor(k, r)}</b></li>`).join('') || '<li class="muted">None yet</li>'}</ol></div>`).join('')}</div></div>${injuryHtml(L)}${historyHtml(L)}${L.fa?.log?.length && L.phase !== 'offseason' ? signingsHtml(L, `Season ${L.season} free agency`) : ''}${challengeCardHtml(L)}<div class="card"><h3>Your save</h3><div class="actions"><button class="btn" data-act="exportsave">Export save</button><button class="btn" data-act="recap">Download recap</button></div>${shareCardHtml(L)}</div>` : ''}
+      ${tab === 'prepare' ? prepareHtml(L, me) : ''}
     </div>
   </section>`;
+}
+function prepareHtml(L, me) {
+  if (L.phase !== 'season' && L.phase !== 'playoffs') return '<div class="card"><p class="muted">Scouting opens with the next game.</p></div>';
+  let oppId = S.hubOpp;
+  const gm = L.phase === 'playoffs' ? L.playoffs.games.find((g) => g.home === me.id || g.away === me.id) : LG.userGame(L);
+  const scheduled = gm && (gm.home === me.id || gm.away === me.id);
+  if (!scheduled || (oppId !== gm.home && oppId !== gm.away)) oppId = gm ? (gm.home === me.id ? gm.away : gm.home) : null;
+  if (oppId == null) return scheduleHtml(L, me);
+  return `${scoutHtml(L, me.id, oppId)}${scheduleHtml(L, me)}`;
+}
+function scheduleHtml(L, me) {
+  if (!L.schedule?.length) return '';
+  const cards = L.schedule.map((week, wi) => {
+    const gm = week.find((g) => g.home === me.id || g.away === me.id);
+    if (!gm) return '';
+    const opp = L.teams[gm.home === me.id ? gm.away : gm.home];
+    const played = L.results.find((r) => !r.playoff && r.week === wi && r.home === gm.home && r.away === gm.away);
+    const home = gm.home === me.id;
+    if (played) {
+      const win = played.winner === me.id;
+      const score = `${played.score[played.home === me.id ? 0 : 1]}–${played.score[played.home === me.id ? 1 : 0]}`;
+      return `<li>${played.box ? `<button class="sch ${win ? 'win' : played.winner == null ? 'tie' : 'loss'}" data-act="openresult" data-i="${L.results.indexOf(played)}">` : `<span class="sch">`}<b>Wk ${wi + 1}</b>${teamBadge(opp)}<span>${home ? 'vs' : 'at'} ${esc(opp.abbr)}</span><em>${score}</em>${played.box ? '</button>' : '</span>'}</li>`;
+    }
+    const now = L.phase === 'season' && wi === L.week;
+    return `<li><button class="sch ${now ? 'now' : 'soon'}" data-act="hubopp" data-opp="${opp.id}"><b>Wk ${wi + 1}</b>${teamBadge(opp)}<span>${home ? 'vs' : 'at'} ${esc(opp.abbr)}</span><em>${now ? 'Next' : 'Upcoming'}</em></button></li>`;
+  }).join('');
+  return `<div class="card hub-sch"><h3>Your schedule</h3><ul class="schedule">${cards}</ul></div>`;
+}
+function newsHtml(L) {
+  const items = [];
+  for (const e of (L.tradeLog ?? []).slice(-6).reverse()) {
+    const names = (ids) => ids.map((id) => P(id)?.name).filter(Boolean).join(', ');
+    items.push(`Trade with ${L.teams[e.team]?.abbr ?? 'a club'}: ${names(e.get) || 'picks'} in, ${names(e.send) || 'picks'} out.`);
+  }
+  for (const h of injuryReport(L).slice(0, 5)) items.push(`${P(h.id).name} (${L.teams[h.team].abbr}) is out ${h.weeks} ${h.weeks === 1 ? 'week' : 'weeks'}.`);
+  const W = L.weekly?.[L.weekly.length - 1];
+  if (W) for (const i of W.games ?? []) if (L.results[i]?.headline) items.push(L.results[i].headline);
+  if (L.phase === 'playoffs') items.unshift(`${roundLabel(L, L.playoffs.round, true)} is set.`);
+  if (!items.length) return '<div class="card"><h3>League wire</h3><p class="muted">Nothing on the wire yet. Trades, injuries, and game headlines show up here once they happen.</p></div>';
+  return `<div class="card"><h3>League wire</h3><ul class="wire">${items.slice(0, 8).map((t) => `<li>${esc(t)}</li>`).join('')}</ul></div>`;
 }
 
 // Play or sim this week's game. A game already under way is resumed (or simmed from where it
@@ -121,27 +157,48 @@ function onlineWeekActions(L, label) {
   return parts.join('');
 }
 
+function clubBlock(t, st) {
+  const r = st.find((x) => x.id === t.id);
+  return `<div class="club" style="--team:${t.color}"><span class="club-mark">${esc(t.abbr)}</span><span><b>${esc(t.name)}</b><small>${record(r)}</small></span></div>`;
+}
+function cmpBar(label, you, them) {
+  const max = Math.max(you, them, 1);
+  const edge = you - them;
+  return `<div class="cmp"><span>${label}</span><span class="cmp-track" aria-hidden="true"><i class="you" style="width:${(you / max) * 100}%"></i><i class="them" style="width:${(them / max) * 100}%"></i></span><b class="${edge > 2 ? 'good' : edge < -2 ? 'bad' : ''}">${Math.round(you)}–${Math.round(them)}</b></div>`;
+}
+function matchCard(e) {
+  const mine = e.mine === 'off' ? [e.oId, e.oSlot] : [e.dId, e.dSlot];
+  const theirs = e.mine === 'off' ? [e.dId, e.dSlot] : [e.oId, e.oSlot];
+  const [myMult, thMult] = e.mine === 'off' ? [e.oMult, e.dMult] : [e.dMult, e.oMult];
+  const tone = e.edge > 0 ? 'good' : 'bad';
+  const word = e.edge > 0 ? 'Your edge' : 'Their edge';
+  return `<article class="mu ${tone}"><button class="mu-face" data-act="profile" data-id="${mine[0]}">${sprite(mine[0], 'md')}<span><b>${esc(P(mine[0]).name)}</b><em>${mine[1]}</em></span></button><span class="mu-vs">${word}</span><button class="mu-face" data-act="profile" data-id="${theirs[0]}">${sprite(theirs[0], 'md')}<span><b>${esc(P(theirs[0]).name)}</b><em>${theirs[1]}</em></span></button><p>${edgeWhy(mine[0], theirs[0], myMult, thMult)}</p></article>`;
+}
 function scoutHtml(L, myId, oppId) {
   const R = LG.scoutReport(L, myId, oppId);
   const opp = L.teams[oppId];
-  const lineupRow = (slots) => slots.map((k) => `<span class="sl" title="${esc(P(R.opp.lineup[k]).name)} (${k})">${sprite(R.opp.lineup[k], 'sm')}<em>${k}</em></span>`).join('');
+  const mu = unitRatings(R.me.lineup), ou = unitRatings(R.opp.lineup);
   const W = WEATHER;
-  const weather = R.weather.length ? R.weather.map((w) => `<li>${sprite(w.id, 'xs')} ${esc(P(w.id).name)} (${w.side === 'you' ? 'yours' : 'theirs'}) brings ${W[w.weather].name.toLowerCase()} most games: ${esc(W[w.weather].text)}.</li>`).join('')
-    : '<li class="muted">No weather setters in either lineup. Expect clear skies most weeks.</li>';
-  const tag = (h) => (h.injury ? `<span class="cond hurt">Injured, out ${weeksText(h.injury.weeks)}</span>` : h.out ? '<span class="cond out">Out this week</span>' : `<span class="cond sore">Starts at ${h.energy}%</span>`);
-  const health = R.health.length ? `<h4>Your health</h4><ul class="health">${R.health.map((h) => `<li>${sprite(h.id, 'xs')} ${esc(P(h.id).name)} ${tag(h)}</li>`).join('')}</ul>` : '';
-  const theirs = R.theirHurt.length ? `<h4>Their injuries</h4><ul class="health">${R.theirHurt.map((h) => `<li>${sprite(h.id, 'xs')} ${esc(P(h.id).name)} <span class="cond hurt">Out ${weeksText(h.weeks)}</span></li>`).join('')}</ul>` : '';
-  return `<div class="card scout"><h3>Scouting report <span class="muted">${teamBadge(opp)} ${esc(opp.name)}</span></h3>
-    <p class="plan"><b>Game plan.</b> ${esc(R.plan)} ${esc(R.lean)}</p>
-    <p class="small muted">${esc(R.coachNote)}</p>
-    <div class="opprow"><span class="muted small">Their offense</span>${lineupRow(OFF_SLOTS)}</div>
-    <div class="opprow"><span class="muted small">Their defense</span>${lineupRow(DEF_SLOTS)}</div>
-    <div class="opprow"><span class="muted small">Their kickers</span>${lineupRow(ST_SLOTS)}</div>
+  const weather = R.weather.length ? R.weather.map((w) => `<li>${sprite(w.id, 'sm')} <span><b>${esc(P(w.id).name)}</b> ${w.side === 'you' ? 'on your side' : 'on theirs'} · ${esc(W[w.weather].name)}</span></li>`).join('')
+    : '<li class="muted">No weather setters. Expect clear skies.</li>';
+  const tag = (h) => (h.injury ? `<span class="cond hurt">Out ${weeksText(h.injury.weeks)}</span>` : h.out ? '<span class="cond out">Out</span>' : `<span class="cond sore">${h.energy}%</span>`);
+  const plan = S.plan ?? 'balanced';
+  return `<div class="card scout"><h3>Matchup · ${teamBadge(opp)} ${esc(opp.name)}</h3>
+    <p class="plan">${esc(R.plan)} ${esc(R.lean)}</p>
+    <div class="plan-picks" role="group" aria-label="Which plays to offer first">${[['balanced', 'Balanced'], ['pass', 'Throwing'], ['run', 'Running']].map(([k, l]) => `<button class="btn tiny ${plan === k ? 'on' : ''}" data-act="plan" data-v="${k}" aria-pressed="${plan === k}">${l}</button>`).join('')}</div>
+    <p class="small muted">This only changes which plays are offered first. It does not change ratings or the simulation. ${esc(R.coachNote)}</p>
+    <div class="cmp-list">${cmpBar('Pass game vs their coverage', mu.passOff, ou.coverage)}${cmpBar('Run game vs their run defense', mu.runOff, ou.runDef)}${cmpBar('Your rush vs their pass offense', mu.passRush, ou.passOff)}${cmpBar('Your coverage vs their pass offense', mu.coverage, ou.passOff)}${cmpBar('Your run defense vs their run game', mu.runDef, ou.runOff)}</div>
+    <h4>Edges and risks</h4>
+    <div class="mu-grid">${[...R.best, ...R.worst].map(matchCard).join('') || '<p class="muted small">No type edge either way.</p>'}</div>
+    <h4>Weather</h4><ul class="weather chips">${weather}</ul>
     ${kickingHtml(R.kicking)}
-    <div class="edges"><div><h4>Your best type edges</h4>${R.best.length ? `<ul>${R.best.map(edgeRow).join('')}</ul>` : '<p class="muted small">None this week.</p>'}</div>
-    <div><h4>Where they have the edge</h4>${R.worst.length ? `<ul>${R.worst.map(edgeRow).join('')}</ul>` : '<p class="muted small">Nothing to worry about.</p>'}</div></div>
-    <h4>Weather</h4><ul class="weather">${weather}</ul>
-    ${health}${theirs}
+    ${R.health.length ? `<h4>Your health</h4><ul class="health">${R.health.map((h) => `<li>${sprite(h.id, 'sm')} ${esc(P(h.id).name)} ${tag(h)}</li>`).join('')}</ul>` : ''}
+    ${R.theirHurt.length ? `<h4>Their injuries</h4><ul class="health">${R.theirHurt.map((h) => `<li>${sprite(h.id, 'sm')} ${esc(P(h.id).name)} <span class="cond hurt">Out ${weeksText(h.weeks)}</span></li>`).join('')}</ul>` : ''}
+    <details><summary>Full lineups</summary>
+      <div class="opprow"><span class="muted small">Offense</span>${OFF_SLOTS.map((k) => `<span class="sl">${sprite(R.opp.lineup[k], 'sm')}<em>${k}</em></span>`).join('')}</div>
+      <div class="opprow"><span class="muted small">Defense</span>${DEF_SLOTS.map((k) => `<span class="sl">${sprite(R.opp.lineup[k], 'sm')}<em>${k}</em></span>`).join('')}</div>
+      <div class="opprow"><span class="muted small">Kickers</span>${ST_SLOTS.map((k) => `<span class="sl">${sprite(R.opp.lineup[k], 'sm')}<em>${k}</em></span>`).join('')}</div>
+    </details>
   </div>`;
 }
 

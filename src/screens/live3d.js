@@ -1,7 +1,7 @@
 // The live 3D game: the stage, the play flow state machine, the frame loop, keyboard and touch
 // input, the result banner, pause, replay, the controls card and the debug HUD.
-import { DEF_PLAYS, OFF_PLAYS, clockText, downText, nm, runLivePlay, spotText } from '../engine.js';
-import { DT, createLivePlay, hurry, playSeconds, playState, returnPrompt, snap, step as stepLive, swapPads, worldSpots } from '../live.js';
+import { DEF_PLAYS, OFF_PLAYS, clockText, downText, eff, nm, runLivePlay, spotText } from '../engine.js';
+import { DT, RECEIVERS, createLivePlay, hurry, playSeconds, playState, returnPrompt, snap, step as stepLive, swapPads, worldSpots } from '../live.js';
 import { measureVersion } from '../body.js';
 import { RATES } from '../penalties.js';
 import { Stage, webglAvailable } from '../field3d.js';
@@ -12,7 +12,7 @@ import { P, esc } from '../ui.js';
 import { sfx } from '../audio.js';
 import { POWER_OF, powerLine } from '../powers.js';
 import { autoAdvance, doCall, needsUser, playClockOut, setMode, spectating, toggleTakeOver, twoPlayer, userSide, userTimeout } from './game.js';
-import { KICK_KEYS, clockShortcuts, csMove, csTabs, cycleForm, psOptions, quickCalls } from './callsheet.js';
+import { KICK_KEYS, clockShortcuts, csMove, csTabs, cycleForm, formFor, frontFor, psOptions, quickCalls } from './callsheet.js';
 import { SHADES, audibles, cycleShade, flipRun, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
 import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
@@ -136,10 +136,11 @@ export function ensureStage() {
   if (S.quality !== 'auto') stage.setQuality(S.quality);
   stageWrap = document.createElement('div');
   stageWrap.className = 'stagewrap';
-  stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
+  stageWrap.innerHTML = `<div class="hud"><div class="hud-call" id="hud-call"></div><div class="hud-dir" id="hud-dir" hidden></div><button type="button" class="hud-cam" id="hud-cam" data-act="camcycle">Camera</button><div class="hud-flash" id="hud-flash"></div><div class="hud-tip" id="hud-tip"></div></div>
     <div class="lower3" id="lower3" aria-live="polite"></div>${captionHtml()}
     <div class="throwchart" id="throwchart" hidden></div>
     <div class="kickprompt" id="kickprompt" hidden></div>
+    <div class="glance-line" id="glance-line" hidden></div>
     ${layersHtml()}
     <div class="ov-badge" id="replay-badge" hidden>Replay</div>
     <div class="hud-acts"><button class="hud-replay" id="chal-btn" data-act="challenge" hidden>Challenge <kbd>G</kbd></button>
@@ -157,6 +158,7 @@ export function ensureStage() {
   stageWrap.prepend(stage.el);
   // Click (or tap) one of your defenders on the field to take him over, like Q does.
   stage.el.addEventListener('pointerdown', (e) => { if (e.button === 0 && clickSwitch(e.clientX, e.clientY)) e.preventDefault(); });
+  bindGlance();
   hudActs = stageWrap.querySelector('.hud-acts');
   bindTouch(stageWrap);
   if (!L3.raf) L3.raf = requestAnimationFrame(loop);
@@ -543,6 +545,9 @@ function tipText(lp) {
 }
 // Has this player used a gamepad in the last few seconds (its buttons go in the tips)?
 function padRecent(n) { return performance.now() - ((n === 0 ? L3 : L3.p2in).padAt ?? 0) < 8000; }
+function tipKeys(t) {
+  return esc(t).replace(/\b(Space|Enter|Shift|WASD|arrows|Esc|number keys|1-5)\b/g, '<kbd>$1</kbd>');
+}
 function hudTip(lp) {
   const f = L3.flow;
   if (!lp) {
@@ -555,12 +560,12 @@ function hudTip(lp) {
   if (lp.p2 && lp.phase === 'pre' && lp.user === lp.d) return lp.kick ? (c && c === lp.kick.returner ? 'You are back to return it' : '') : 'Q pick a defender · the offense snaps';
   if (f === 'FORMATION_SETUP') return 'Lining up…';
   if (lp.kick) {
-    if (lp.phase === 'pre') return lp.user === lp.o ? `Space ${lp.kick.ko ? 'kick off' : 'snap'} · the kick goes on its own · Esc change call` : lp.kick.returner && c === lp.kick.returner ? 'Space start · you are back to return it' : 'Space start';
+    if (lp.phase === 'pre') return lp.user === lp.o ? `Space ${lp.kick.ko ? 'kick' : 'snap'}` : 'Space';
     if (lp.phase === 'dead') return '';
-    const ring = lp.kick.F && !lp.kick.onside && (lp.kick.ko || lp.kick.punt) && lp.ball.state === 'air';
-    if (c && c === lp.kick.returner && !c.carrier) return `${ring ? 'The ring is where the ball comes down' : 'Get under it'} · arrows move · Shift sprint${lp.kick.ko ? '' : ' · F fair catch'}`;
-    if (c && !c.carrier && c.side === 'off') return `${ring ? 'The ring is where the ball comes down' : 'Cover the kick'} · arrows move · Shift sprint · Space dive`;
-    if (!c) return lp.kick.kickedAt != null ? (ring ? 'The ring is where the ball comes down' : 'Kick away') : lp.kick.ko ? 'The kicker runs up…' : 'The long snap…';
+    if (c && c === lp.kick.returner) return '';
+    if (c?.carrier) return 'arrows · Shift · Space';
+    if (c && c.side === 'off') return 'arrows · Shift · Space';
+    return '';
   }
   if (lp.phase === 'pre') {
     if (!c) return 'Coach mode · Space to snap now · Esc to change the call';
@@ -612,23 +617,178 @@ function throwChart(lp) {
   return rows ? `<ol>${rows}</ol>` : '';
 }
 
-// The returner's prompt, up before the ball comes down: where it lands, how close the coverage
-// will be when it gets there, and the call (fair catch on a punt, let it go or take a knee in the
-// end zone on a kickoff).
+// The play under the pointer, or the recommended one, drawn on the field before it is called.
+function lineupKey(g) {
+  return `${Object.values(g.teams[0].lineup).join(',')}|${Object.values(g.teams[1].lineup).join(',')}`;
+}
+function oneLine(text) {
+  const s = String(text || '').trim().replace(/\.$/, '');
+  return s ? `${s}.` : '';
+}
+function primarySlot(play, lp) {
+  const t = play?.targets;
+  if (!t || !lp) return null;
+  let best = null, w = -1;
+  for (const k of RECEIVERS) {
+    const v = t[k], p = lp.off[k];
+    if (v == null || !p || (p.role !== 'route' && p.role !== 'stalk')) continue;
+    if (v > w) { w = v; best = k; }
+  }
+  return best;
+}
+function glanceSentence(g, call, onOff, lp, slot) {
+  const play = (onOff ? OFF_PLAYS : DEF_PLAYS)[call];
+  if (!play) return '';
+  const blurb = play.blurb || play.name;
+  if (!onOff) return oneLine(blurb);
+  if (play.kind === 'pass' && slot) {
+    const id = g.teams[g.poss].lineup[slot];
+    if (id == null) return oneLine(blurb);
+    return `${nm(id)} is the primary target: ${blurb.endsWith('.') ? blurb : `${blurb}.`}`;
+  }
+  if (play.kind === 'run') {
+    const carrier = lp?.carrier?.slot ?? (play.qb ? 'QB' : 'RB');
+    const id = lp?.off?.[carrier]?.id ?? g.teams[g.poss].lineup[carrier];
+    if (id == null) return oneLine(blurb);
+    return `${nm(id)} carries it: ${blurb.endsWith('.') ? blurb : `${blurb}.`}`;
+  }
+  return oneLine(blurb);
+}
+function designedLanding(lp) {
+  const K = lp?.kick;
+  if (!K || K.fake) return null;
+  const pw = lp.kicker?.id != null ? eff(lp.g, lp.o, lp.kicker.id, 'kpw') : 70;
+  const goal = lp.goalX ?? 65;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  if (K.onside) return { x: 12, y: (K.side || 1) * 8, r: 3.2 };
+  if (K.ko) return { x: clamp(63 + (pw - 60) * 0.25, 40, goal + 9), y: 0, r: 6 };
+  if (K.punt) {
+    if (K.aim === 'coffin' && goal < 55) return { x: clamp(goal - 6, 15, goal), y: 20, r: 3.5 };
+    if (goal < 52) return { x: clamp(goal - 8, 15, goal + 8), y: 0, r: 4.5 };
+    return { x: clamp(44 + (pw - 60) * 0.2, 18, 75), y: 0, r: 6 };
+  }
+  if (lp.kind === 'fg' || lp.kind === 'xp') return { x: goal + 8, y: 0, r: 1.6 };
+  return null;
+}
+const GLANCE_KINDS = new Set(['run', 'pass', 'punt', 'fg', 'xp', 'kickoff']);
+function buildGlance(g, call, onOff) {
+  const play = (onOff ? OFF_PLAYS : DEF_PLAYS)[call];
+  if (!play) return null;
+  if (!GLANCE_KINDS.has(play.kind)) return { key: `text:${call}`, lp: null, sentence: oneLine(play.blurb || play.name), side: onOff ? 'off' : 'def' };
+  const form = onOff ? formFor(call) : null;
+  const front = onOff ? null : frontFor(call);
+  const flip = !!(onOff && play.kind === 'run' && S.runFlip);
+  const key = `${onOff ? 'o' : 'd'}:${call}:${form ?? ''}:${front ?? ''}:${flip ? 1 : 0}:${g.poss}:${g.spot}:${lineupKey(g)}`;
+  const cache = L3.glanceCache ??= new Map();
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const saved = g.rng, call0 = g.call;
+  let lp = null;
+  try {
+    lp = onOff
+      ? createLivePlay(g, call, 'base', { userSide: userSide(), formation: form, aiSide: false, flip, flags: false })
+      : createLivePlay(g, 'slant', call, { userSide: userSide(), defFormation: front, flags: false });
+  } catch (e) {
+    console.warn('glance', e);
+  } finally {
+    g.rng = saved;
+    g.call = call0;
+  }
+  const slot = onOff && play.kind === 'pass' ? primarySlot(play, lp) : null;
+  const spec = { key, lp, side: onOff ? 'off' : 'def', primary: slot, landing: lp ? designedLanding(lp) : null, sentence: glanceSentence(g, call, onOff, lp, slot) };
+  if (cache.size > 24) cache.clear();
+  cache.set(key, spec);
+  return spec;
+}
+function showGlance(spec) {
+  L3.glanceSentence = spec?.sentence || '';
+  if (!stage) return;
+  if (!spec?.lp) {
+    if (stage.glanceSpec) stage.setGlance(null);
+    stage.glanceKey = spec?.key || '';
+    return;
+  }
+  if (stage.glanceKey === spec.key && stage.glanceSpec) return;
+  stage.glanceKey = spec.key;
+  stage.setGlance(spec);
+}
+function ensureGlance() {
+  const g = S.game;
+  if (!stage || !g || g.final || L3.lp || L3.replay || FILM.open || L3.flow !== 'PLAY_SELECTION' || g.phase === 'penalty') {
+    if (stage?.glanceSpec || stage?.glanceKey) { stage.glanceKey = ''; stage.setGlance(null); }
+    L3.glanceSentence = '';
+    if (L3.glanceShown) {
+      L3.glanceShown = '';
+      document.querySelectorAll('.callsheet [data-act="call"].glancing').forEach((el) => el.classList.remove('glancing'));
+    }
+    return;
+  }
+  if (L3.glanceGame !== g) { L3.glanceGame = g; L3.glanceCache = new Map(); L3.glanceCall = null; stage.glanceKey = ''; }
+  let sheet;
+  try { sheet = csTabs(g); } catch { L3.glanceSentence = ''; return; }
+  const book = sheet.onOff ? OFF_PLAYS : DEF_PLAYS;
+  let call = L3.glanceCall;
+  if (call && !book[call]) call = null;
+  if (!call) call = sheet.fit || sheet.tabs?.[0]?.[2]?.[0]?.call;
+  if (!call) { showGlance(null); return; }
+  showGlance(buildGlance(g, call, sheet.onOff));
+  const marked = document.querySelector('.callsheet [data-act="call"].glancing');
+  if (L3.glanceShown !== call || !marked || marked.dataset.call !== call) {
+    L3.glanceShown = call;
+    document.querySelectorAll('.callsheet [data-act="call"]').forEach((el) => el.classList.toggle('glancing', el.dataset.call === call));
+  }
+}
+function bindGlance() {
+  if (L3.glanceBound) return;
+  L3.glanceBound = true;
+  const cardOf = (t) => t?.closest?.('[data-act="call"][data-call]');
+  document.addEventListener('pointerover', (e) => {
+    const card = cardOf(e.target);
+    if (!card || L3.lp) return;
+    L3.glanceCall = card.dataset.call;
+  });
+  document.addEventListener('pointerout', (e) => {
+    const card = cardOf(e.target);
+    if (!card || card.contains(e.relatedTarget) || cardOf(e.relatedTarget)) return;
+    const focused = cardOf(document.activeElement);
+    L3.glanceCall = focused ? focused.dataset.call : null;
+  });
+  document.addEventListener('focusin', (e) => {
+    const card = cardOf(e.target);
+    if (!card || L3.lp) return;
+    L3.glanceCall = card.dataset.call;
+  });
+  document.addEventListener('focusout', (e) => {
+    const card = cardOf(e.target);
+    if (!card || card.contains(e.relatedTarget)) return;
+    const next = cardOf(e.relatedTarget);
+    L3.glanceCall = next ? next.dataset.call : null;
+  });
+}
+
+// Controls for the returner only, for the state he is in. The ring on the field is where the
+// ball comes down. Nothing here explains the down.
+function kpChip(key, label) {
+  return `<span class="kp-act">${key ? `<kbd>${esc(key)}</kbd>` : ''}${esc(label)}</span>`;
+}
 function kickPrompt(lp) {
   const pad = lp?.user === lp?.d ? lp : lp?.p2?.user === lp?.d ? lp.p2 : null;
-  if (!lp?.kick || !pad?.control || pad.control !== lp.kick.returner) return '';
+  if (!lp?.kick || lp.phase !== 'live' || !pad?.control || pad.control !== lp.kick.returner) return '';
+  const fairKey = padRecent(0) ? 'Y' : 'F';
   const P = returnPrompt(lp);
-  if (!P) return '';
-  const key = padRecent(0) ? 'Y' : 'F';
-  if (P.stage === 'endzone') return `<b>In the end zone</b><span><kbd>${key}</kbd> take a knee for a touchback, or bring it out</span>`;
-  const yd = (x) => { const s = 100 - (lp.spot + x); return s <= 0 ? 'the end zone' : s === 50 ? 'midfield' : s > 50 ? `your ${100 - s}` : `the ${s}`; };
-  const where = P.out ? 'out of bounds' : P.endZone ? 'in the end zone' : `at ${yd(Math.round(P.landX))}`;
-  const heat = P.cov < 4 ? 'hot' : P.cov < 9 ? 'warm' : 'cool';
-  const cov = `<em class="${heat}">Coverage ${P.cov < 1 ? 'on top of it' : `${Math.round(P.cov)} yds away`} when it lands</em>`;
-  if (P.fair) return `<b>Fair catch called</b>${cov}`;
-  if (P.ko) return `<b>Kickoff coming down ${where}</b>${cov}<span>${P.endZone ? 'Let it go for a touchback, or catch it and decide' : 'Get under it and bring it back'}</span>`;
-  return `<b>Punt coming down ${where}</b>${cov}<span>${P.endZone || P.out ? 'Let it go' : `<kbd>${key}</kbd> fair catch${heat === 'hot' ? ' (they will be on you)' : ''}`}</span>`;
+  const sprint = kpChip('Shift', 'Sprint');
+  const inEnd = pad.control.carrier && pad.control.x >= lp.goalX && !lp.tackle;
+  if (P?.stage === 'endzone' || inEnd) return kpChip('←→', 'Return') + kpChip(fairKey, 'Knee');
+  if (lp.kick.stage === 'return' && pad.control.carrier) return kpChip('←→', 'Return') + sprint + kpChip('Space', 'Juke');
+  if (P?.stage === 'air') {
+    if (P.fair) return kpChip('←→', 'Spot');
+    let s = kpChip('←→', P.endZone ? 'Catch' : 'Under it') + sprint;
+    if (P.canFair && !P.endZone && !P.out) s += kpChip(fairKey, 'Fair catch');
+    if (P.endZone || P.out) s += kpChip('', P.ko ? 'Stay for touchback' : 'Let it go');
+    return s;
+  }
+  if (lp.kick.stage === 'loose') return kpChip('←→', 'Ball') + sprint;
+  return kpChip('←→', 'Move') + sprint;
 }
 
 function flowNow(now) {
@@ -955,9 +1115,28 @@ function loop(now) {
     const html = kickPrompt(L3.lp);
     if (kp.dataset.html !== html) { kp.dataset.html = html; kp.innerHTML = html; kp.hidden = !html; }
   }
+  ensureGlance();
+  const gl = document.getElementById('glance-line');
+  if (gl) {
+    const text = L3.glanceSentence || '';
+    if (gl.dataset.raw !== text) { gl.dataset.raw = text; gl.textContent = text; gl.hidden = !text; }
+  }
   const tip = document.getElementById('hud-tip');
   const t = tipText(L3.lp);
-  if (tip && tip.textContent !== t) tip.textContent = t;
+  if (tip && tip.dataset.raw !== t) { tip.dataset.raw = t; tip.innerHTML = tipKeys(t); }
+  const dir = document.getElementById('hud-dir');
+  if (dir && stage && g && !g.final && stage.dir != null) {
+    const upfield = (stage.view ?? stage.dir) === stage.dir;
+    const key = upfield ? 'up' : 'down';
+    if (dir.dataset.k !== key) {
+      dir.dataset.k = key; dir.hidden = false;
+      dir.className = `hud-dir ${key}`;
+      dir.innerHTML = upfield ? '<span aria-hidden="true">▲</span> Upfield' : '<span aria-hidden="true">▼</span> Toward you';
+    }
+  } else if (dir && !dir.hidden) dir.hidden = true;
+  const cam = document.getElementById('hud-cam');
+  const camName = CAMERA_MODES.find(([k]) => k === S.cam)?.[1] ?? 'Camera';
+  if (cam && cam.textContent !== camName) cam.textContent = camName;
   const pad = document.getElementById('touch'), mode = touchMode(L3.lp);
   if (pad && pad.dataset.mode !== mode) { pad.dataset.mode = mode; if (mode !== 'pass') pad.classList.remove('lob'); }
   const call = document.getElementById('hud-call');
@@ -1252,7 +1431,7 @@ export function onKey(e, down) {
     // Only while the call sheet is up: a T mashed to throw the ball away as the whistle blows
     // must not burn a timeout.
     if (code === 'KeyT' && !L3.lp && !L3.replay) { e.preventDefault(); if (L3.flow === 'PLAY_SELECTION') userTimeout(); return; }
-    if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; S.csFold = false; render(); return; }
+    if (code === 'KeyX' && !L3.lp) { e.preventDefault(); S.csAll = !S.csAll; if (!S.csAll) S.csTab = null; S.csFold = false; render(); return; }
     if (code === 'KeyB' && !L3.lp) { e.preventDefault(); S.runFlip = !S.runFlip; render(); return; }
     if (code === 'Escape') {
       if (S.menuOpen || S.detailsOpen) { S.menuOpen = false; S.detailsOpen = false; render(); return; }

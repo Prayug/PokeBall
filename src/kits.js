@@ -54,6 +54,13 @@ const DEFAULT_KITS = {
   LAV: { stadium: 'haunted', chant: 'howl', style: 'outline' },
   VIR: { stadium: 'classic', chant: 'stomp', style: 'stripes' },
   PAL: { stadium: 'classic', chant: 'letsgo', style: 'block' },
+  // Johto clubs, pinned so a display-name change does not move their venue.
+  GLD: { stadium: 'classic', chant: 'stomp', style: 'outline' },
+  ECR: { stadium: 'classic', chant: 'charge', style: 'outline' },
+  OLV: { stadium: 'dome', chant: 'letsgo' },
+  MAH: { stadium: 'classic', chant: 'letsgo', style: 'block' },
+  BLK: { stadium: 'seaside', chant: 'letsgo' },
+  AZA: { stadium: 'classic', chant: 'letsgo', style: 'script' },
 };
 
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -129,4 +136,19 @@ export function venueFor(home, { seed = 0, playoff = false, neutral = false } = 
 export function venueOf(g) {
   if (!g.venue) g.venue = venueFor(g.teams[0], { seed: g.seed, playoff: g.playoff, neutral: g.neutral });
   return g.venue;
+}
+
+// A small postcard of a stadium: its sky at the given kickoff and its skyline.
+export function postcard(st, time = 'day', uid = st) {
+  const sky = { day: ['#4f8fd6', '#cfe5f5'], dusk: ['#2b2f6e', '#f39a5f'], night: ['#05070f', '#1b2440'] }[st === 'haunted' && time === 'day' ? 'dusk' : time];
+  const land = {
+    classic: '<rect x="0" y="40" width="120" height="20" fill="#3f6b3c"/><path d="M6 40 v-9 h6 v9 M16 40 v-14 h7 v14 M88 40 v-11 h6 v11 M97 40 v-17 h8 v17 M108 40 v-8 h6 v8" fill="#5f6b7a"/>',
+    dome: '<rect x="0" y="40" width="120" height="20" fill="#3a3f47"/><path d="M14 44 Q60 4 106 44 Z" fill="#c9ced6"/><path d="M14 44 Q60 4 106 44" fill="none" stroke="#8b939f" stroke-width="1.5"/><path d="M36 28 L36 44 M60 21 L60 44 M84 28 L84 44" stroke="#8b939f"/>',
+    mountain: '<path d="M0 44 L22 14 L38 30 L58 6 L80 32 L96 18 L120 44 Z" fill="#59626e"/><path d="M52 14 L58 6 L64 14 Z M18 20 L22 14 L26 20 Z M92 23 L96 18 L100 23 Z" fill="#eef3f7"/><rect x="0" y="42" width="120" height="18" fill="#3c5541"/>',
+    seaside: '<rect x="0" y="38" width="120" height="22" fill="#1d5f86"/><path d="M0 46 Q20 42 40 46 T80 46 T120 46 V60 H0 Z" fill="#d8c79b"/><rect x="92" y="14" width="5" height="24" fill="#f4f2ec"/><rect x="92" y="20" width="5" height="4" fill="#c8352b"/><rect x="92" y="30" width="5" height="4" fill="#c8352b"/><path d="M20 36 l0 -9 l7 9 z" fill="#fff"/>',
+    haunted: '<rect x="0" y="40" width="120" height="20" fill="#2b2633"/><path d="M14 40 V24 M14 30 L8 24 M14 28 L20 21 M100 40 V20 M100 27 L93 21 M100 25 L107 18" stroke="#241d29" stroke-width="2.5"/><path d="M40 40 v-6 a3 3 0 0 1 6 0 v6 M56 40 v-8 a3 3 0 0 1 6 0 v8 M72 40 v-5 a3 3 0 0 1 6 0 v5" fill="#6d6a75"/><circle cx="30" cy="20" r="2.5" fill="#9d7bff"/><circle cx="84" cy="14" r="2" fill="#5ef0ff"/>',
+  }[st];
+  const stars = time === 'night' || st === 'haunted' ? '<circle cx="12" cy="8" r=".8" fill="#fff"/><circle cx="48" cy="5" r=".7" fill="#fff"/><circle cx="76" cy="10" r=".8" fill="#fff"/><circle cx="110" cy="6" r=".7" fill="#fff"/><circle cx="96" cy="12" r="4" fill="#f3f1e6"/>' : '';
+  return `<svg viewBox="0 0 120 60" class="postcard" aria-hidden="true"><defs><linearGradient id="sky-${uid}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${sky[0]}"/><stop offset="1" stop-color="${sky[1]}"/></linearGradient></defs>
+    <rect width="120" height="60" fill="url(#sky-${uid})"/>${st === 'dome' ? '' : stars}${land ?? ''}</svg>`;
 }

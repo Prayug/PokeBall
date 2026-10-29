@@ -20,6 +20,7 @@ export const S = {
   names: true, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
   sound: true, vol: { master: 0.8, booth: 0.9, crowd: 0.8, fx: 0.8, music: 0.45 }, booth: true, boothVoice: true, captions: true, realCries: true, music: true, soundOpen: false,
   seenHelp: false, snapped: false, helpOpen: false, csFold: true, difficulty: 'pro', slot: 1, confirmDelete: null,
+  plan: 'balanced', tips: {}, wizOpen: false, wiz: 0, depthUnit: 'all', profile: null, profileCmp: null, hubTab: null, hubOpp: null, gradeTeam: null, deskQ: '',
   online: false, net: null, netMsg: '',
 };
 export const timers = { draft: null, clock: null, auto: null, banner: null };
@@ -111,6 +112,8 @@ export function loadPrefs() {
       // opens the way it was left.
       S.csFold = p.csFold ?? !S.seenHelp;
       if (['rookie', 'pro', 'legend'].includes(p.difficulty)) S.difficulty = p.difficulty;
+      if (['balanced', 'pass', 'run'].includes(p.plan)) S.plan = p.plan;
+      if (p.tips && typeof p.tips === 'object') S.tips = p.tips;
       if (p.slot >= 1 && p.slot <= SAVE_SLOTS) S.slot = p.slot;
       // Lens settings saved before version 5 belong to the older framing and are dropped.
       if (p.camShots && p.camV === 5) for (const [k] of CAMERA_SHOTS) Object.assign(S.cal[k], p.camShots[k]);
@@ -118,7 +121,7 @@ export function loadPrefs() {
   } catch { /* ignore */ }
 }
 export function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, spectate: !!S.spectate, setup: S.setup, cam: S.cam, camV: 5, weatherFx: S.weatherFx, quality: S.quality, names: S.names, namesV: 2, pips: !!S.pips, sound: S.sound, vol: S.vol, booth: S.booth, boothVoice: S.boothVoice, captions: S.captions, realCries: S.realCries, music: S.music, seenHelp: S.seenHelp, snapped: !!S.snapped, csFold: !!S.csFold, difficulty: S.difficulty, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, spectate: !!S.spectate, setup: S.setup, cam: S.cam, camV: 5, weatherFx: S.weatherFx, quality: S.quality, names: S.names, namesV: 2, pips: !!S.pips, sound: S.sound, vol: S.vol, booth: S.booth, boothVoice: S.boothVoice, captions: S.captions, realCries: S.realCries, music: S.music, seenHelp: S.seenHelp, snapped: !!S.snapped, csFold: !!S.csFold, difficulty: S.difficulty, plan: S.plan, tips: S.tips, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
 }
 export function clearTimers() {
   for (const k of Object.keys(timers)) { clearTimeout(timers[k]); clearInterval(timers[k]); timers[k] = null; }

@@ -586,7 +586,9 @@ function convert(g, offCall, defCall, live = null, kickLive = null) {
   } else {
     const r = live ?? (play.kind === 'run' ? doRun(g, simOff(offCall), simDef(defCall), play.qb === true || (play.qb > 0 && chance(g, play.qb)))
       : doPass(g, simOff(offCall), simDef(defCall)));
-    good = !r.turnover && g.spot + (r.yards ?? 0) >= 100;
+    // A live try is good only when the ball actually crossed. Rounded yards from a spot
+    // just short of the goal line are not two points.
+    good = !r.turnover && (typeof r.td === 'boolean' ? r.td : g.spot + (r.yards ?? 0) >= 100);
     pts = 2;
     base.carrier = r.carrier; base.yards = r.yards ?? 0;
     text = `Two-point try: ${r.text.replace(/ (Tackled by [^.]*\.|TOUCHDOWN!)/, '')} ${good ? 'The conversion is GOOD!' : 'No good.'}`;

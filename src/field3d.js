@@ -110,9 +110,9 @@ export class Stage {
     this.ballSpin = 0;
     S.add(this.ball);
     // Selection ring under your player and a halo under the ball carrier.
-    this.selRing = new THREE.Mesh(new THREE.RingGeometry(0.84, 1.12, 48), new THREE.MeshBasicMaterial({ color: '#ffe14d', transparent: true, opacity: 0.95, depthWrite: false, fog: false }));
+    this.selRing = new THREE.Mesh(new THREE.RingGeometry(0.7, 1.22, 48), new THREE.MeshBasicMaterial({ color: '#ffe14d', transparent: true, opacity: 1, depthWrite: false, fog: false }));
     this.selRing.rotation.x = -Math.PI / 2; this.selRing.renderOrder = 3; S.add(this.selRing);
-    this.selArrow = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 3), new THREE.MeshBasicMaterial({ color: '#ffe14d', fog: false }));
+    this.selArrow = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.78, 4), new THREE.MeshBasicMaterial({ color: '#ffe14d', fog: false }));
     this.selArrow.rotation.x = Math.PI; S.add(this.selArrow);
     // Player two's marker in a two-player game, in a second color.
     this.selRing2 = new THREE.Mesh(this.selRing.geometry, new THREE.MeshBasicMaterial({ color: '#5fd4ff', transparent: true, opacity: 0.95, depthWrite: false, fog: false }));
@@ -155,6 +155,11 @@ export class Stage {
     S.add(this.label);
     this.art = new THREE.Group();
     S.add(this.art);
+    // Routes for the play under the pointer, drawn before it is called. Separate from `art`,
+    // which stays empty while the teams are only walking up to the line.
+    this.glance = new THREE.Group();
+    this.glance.visible = false;
+    S.add(this.glance);
     // Developer overlay (debug mode only): collision circles, velocity, assignments, routes
     // and the ball's flight, all in one preallocated line buffer.
     this.dbgMax = 6000;
@@ -267,7 +272,192 @@ export class Stage {
     for (const [k, a] of this.actors) if (a.seen !== stamp) this.removeActor(k);
     for (const a of this.actors.values()) { a.act = null; if (this.gameState !== 'PLAY_RESULT') a.fallWant = 0; a.flash = 0; }
     this.prevPhase = lp.phase;
+    if (!lp.preview) this.setGlance(null);
     this.drawArt();
+  }
+
+  // The play under the pointer (or the recommended one), drawn on this field before anyone
+  // calls it. `spec.lp` is a lineup built for that call; the strokes are shifted onto the
+  // players actually standing here so the routes start at their feet.
+  setGlance(spec) {
+    this.glanceSpec = spec;
+    this.glanceSig = '';
+    if (!spec) this.clearGlance();
+  }
+
+  clearGlance() {
+    const G = this.glance;
+    if (!G) return;
+    while (G.children.length) {
+      const c = G.children.pop();
+      c.geometry?.dispose();
+      c.material?.dispose();
+    }
+    G.visible = false;
+    this.glanceMarks = null;
+  }
+
+  syncGlance() {
+    const spec = this.glanceSpec, stand = this.lp, src = spec?.lp;
+    if (!spec || !stand?.preview) { if (this.glance?.visible) this.clearGlance(); return; }
+    const G = this.glance;
+    G.visible = true;
+    const bits = [spec.key];
+    for (const p of stand.players) bits.push(p.slot, Math.round((p.x ?? 0) * 2), Math.round((p.y ?? 0) * 2));
+    const sig = bits.join(',');
+    if (sig === this.glanceSig) { this.placeGlanceMarks(); return; }
+    this.glanceSig = sig;
+    this.clearGlance();
+    G.visible = true;
+    const W = (x, y) => this.world(x, y, 0.05);
+    const add = (pts, width, color, opacity, end) => {
+      if (!pts || pts.length < 2) return;
+      G.add(ribbon(pts, width + 0.16, '#06140c', opacity * 0.55, end, 0.04));
+      G.add(ribbon(pts, width, color, opacity, end));
+    };
+    const sideOf = (side) => (side === 'off' ? 'off' : 'def');
+    const srcSide = (side) => src?.[sideOf(side)] ?? {};
+    const origin = (side, slot) => {
+      const live = stand[sideOf(side)]?.[slot];
+      if (live && live.x != null && live.y != null) return { x: live.x, y: live.y };
+      const home = srcSide(side)[slot]?.home;
+      return home?.x != null ? { x: home.x, y: home.y } : null;
+    };
+    const at = (side, slot, pt) => {
+      if (!pt || pt.x == null) return null;
+      const o = origin(side, slot), home = srcSide(side)[slot]?.home;
+      if (!o || !home || home.x == null) return { x: pt.x, y: pt.y };
+      return { x: pt.x + o.x - home.x, y: pt.y + o.y - home.y };
+    };
+    const poly = (side, slot, pts) => {
+      const out = [];
+      for (const p of pts) { const q = at(side, slot, p); if (q) out.push(W(q.x, q.y)); }
+      return out;
+    };
+    const marks = [];
+    const mark = (side, slot, primary) => { if (slot && !marks.some((m) => m.side === side && m.slot === slot)) marks.push({ side, slot, primary: !!primary }); };
+    if (src?.kick) {
+      const land = spec.landing;
+      if (land && land.x != null) {
+        const from = { x: 0, y: 0 };
+        const a = W(from.x, from.y), b = W(land.x, land.y);
+        this.addGlanceDash(G, a, b);
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.82, 1, 40), new THREE.MeshBasicMaterial({ color: '#ffd23f', transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false, fog: false }));
+        ring.rotation.x = -Math.PI / 2; ring.position.copy(W(land.x, land.y)); ring.position.y = 0.06;
+        const s = Math.max(1.2, land.r ?? 4);
+        ring.scale.set(s, s, 1);
+        G.add(ring);
+      }
+      const kid = src.kicker?.id;
+      const who = kid != null ? stand.players.find((p) => p.id === kid) : null;
+      if (who) mark(who.side, who.slot, true);
+    } else if (spec.side === 'off' && src?.kind === 'pass') {
+      RECEIVER_KEYS.forEach((k, i) => {
+        const p = src.off[k];
+        if (!p) return;
+        mark('off', k, k === spec.primary);
+        const o = origin('off', k);
+        if (!o) return;
+        if (p.role === 'stalk' && p.assign?.home) {
+          const mid = at('off', k, { x: (p.home.x + p.assign.home.x) / 2, y: (p.home.y + p.assign.home.y) / 2 });
+          if (mid) add([W(o.x, o.y), W(mid.x, mid.y)], 0.16, '#cfd8e3', 0.8, 'bar');
+          return;
+        }
+        if (p.role === 'passblock' || !p.route) { add([W(o.x, o.y), W(o.x - 1.4, o.y * 0.8)], 0.16, '#cfd8e3', 0.75, 'bar'); return; }
+        const pts = poly('off', k, [p.home, ...p.route.filter((w) => w?.x != null)]);
+        if (pts.length > 1) add(pts, 0.3, ART_COLORS[i], 0.92, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow');
+      });
+      if (src.off.QB) mark('off', 'QB', false);
+      const qb = origin('off', 'QB');
+      const rec = spec.primary && src.off[spec.primary];
+      let end = null;
+      if (rec?.route) { const last = [...rec.route].reverse().find((w) => w?.x != null); if (last) end = at('off', spec.primary, last); }
+      if (!end && rec?.home) end = at('off', spec.primary, rec.home);
+      if (qb && end) this.addGlanceDash(G, W(qb.x, qb.y), W(end.x, end.y));
+    } else if (spec.side === 'off' && src?.kind === 'run') {
+      const c = src.carrier ?? src.off.RB, hole = src.holeY ?? 0;
+      const track = c?.track ?? (src.play.dir === 'sneak' ? [{ x: 3, y: 0 }] : null);
+      const slot = c?.slot;
+      if (slot && track?.length) {
+        mark('off', slot, true);
+        const runPts = poly('off', slot, [c.home, ...track.filter((w) => w?.x != null)]);
+        if (runPts.length > 1) add(runPts, 0.42, '#ffd23f', 0.92, 'arrow');
+      }
+      if (src.off.QB) mark('off', 'QB', slot === 'QB');
+      const qb = origin('off', 'QB');
+      if (qb && track?.[0]?.x != null && slot && slot !== 'QB') {
+        const first = at('off', slot, track[0]);
+        if (first) this.addGlanceDash(G, W(qb.x, qb.y), W(first.x, first.y));
+      }
+      if (src.play.dir === 'read' && src.off.QB?.home) {
+        const keep = poly('off', 'QB', [src.off.QB.home, ...keepTrack(src).filter((w) => w?.x != null)]);
+        if (keep.length > 1) add(keep, 0.24, '#ffd23f', 0.6, 'arrow');
+      }
+      for (const b of Object.values(src.off)) {
+        if (!b?.home) continue;
+        if (b.pull || b.role === 'lead') mark('off', b.slot, false);
+        const toPt = b.assign?.home ? { x: Math.min(1.5, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1.5, y: hole * 0.95 };
+        const to = at('off', b.slot, toPt) ?? toPt;
+        const o = origin('off', b.slot);
+        if (!o) continue;
+        if (b.pull?.path) {
+          const pull = poly('off', b.slot, [b.home, ...b.pull.path.filter((w) => w?.x != null)]);
+          pull.push(W(to.x, to.y));
+          if (pull.length > 1) add(pull, 0.2, '#ffffff', 0.85, 'bar');
+        } else if (b.role === 'lead') add([W(o.x, o.y), W(to.x, to.y)], 0.2, '#ffffff', 0.85, 'bar');
+      }
+    } else if (spec.side === 'def' && src) {
+      for (const p of Object.values(src.def)) {
+        if (!p?.slot) continue;
+        const o = origin('def', p.slot);
+        if (p.zone && o) {
+          mark('def', p.slot, false);
+          const z = at('def', p.slot, p.zone) ?? p.zone;
+          const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshBasicMaterial({ color: p.zone.x >= 15 ? '#4fc3f7' : '#ffd23f', transparent: true, opacity: 0.2, depthWrite: false, fog: false }));
+          disc.rotation.x = -Math.PI / 2; disc.position.copy(W(z.x, z.y)); disc.scale.set(p.zone.r * 0.85, p.zone.r * 0.6, 1); disc.position.y = 0.035;
+          G.add(disc);
+          add([W(o.x, o.y), W(z.x, z.y)], 0.16, p.zone.x >= 15 ? '#4fc3f7' : '#ffd23f', 0.85, 'bar');
+        } else if (p.man?.home && o) {
+          mark('def', p.slot, false);
+          const man = origin(p.man.side, p.man.slot) ?? at('def', p.slot, p.man.home);
+          if (man) add([W(o.x, o.y), W(man.x + 0.5, man.y)], 0.14, '#ff9d7a', 0.85, 'bar');
+        } else if (p.role === 'rush' && o) {
+          mark('def', p.slot, false);
+          const blitz = !LINE_SLOTS.has(p.slot);
+          add([W(o.x, o.y), W(o.x - 2.5, o.y * 0.5)], blitz ? 0.3 : 0.18, blitz ? '#ff5a4f' : '#f0c4bd', blitz ? 0.95 : 0.75, 'arrow');
+        }
+      }
+    }
+    this.glanceMarks = marks.map((m) => {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.72, 1, 28), new THREE.MeshBasicMaterial({ color: m.primary ? '#ffd23f' : '#ffffff', transparent: true, opacity: m.primary ? 0.95 : 0.55, side: THREE.DoubleSide, depthWrite: false, fog: false }));
+      ring.rotation.x = -Math.PI / 2; ring.position.y = 0.08; ring.renderOrder = 3;
+      G.add(ring);
+      return { ...m, ring };
+    });
+    this.placeGlanceMarks();
+  }
+
+  placeGlanceMarks() {
+    const stand = this.lp;
+    if (!stand || !this.glanceMarks) return;
+    for (const m of this.glanceMarks) {
+      const p = stand[m.side === 'off' ? 'off' : 'def']?.[m.slot];
+      const a = p ? this.actorOf(p) : null;
+      m.ring.visible = !!a?.root.visible;
+      if (!a) continue;
+      m.ring.position.x = a.pos.x; m.ring.position.z = a.pos.z;
+      const s = Math.max(0.7, (a.body?.r ?? 0.45) * (m.primary ? 2.8 : 2.2));
+      m.ring.scale.set(s, s, 1);
+    }
+  }
+
+  addGlanceDash(G, a, b) {
+    if (!a || !b || ![a.x, a.y, a.z, b.x, b.y, b.z].every(Number.isFinite)) return;
+    const g = new THREE.BufferGeometry().setFromPoints([a.clone(), b.clone()]);
+    const m = new THREE.Line(g, new THREE.LineDashedMaterial({ color: '#ffffff', dashSize: 0.7, gapSize: 0.45, transparent: true, opacity: 0.95, depthWrite: false, fog: false }));
+    m.computeLineDistances();
+    m.position.y = 0.04;
+    G.add(m);
   }
 
   world(x, y, h = 0, out = new THREE.Vector3()) { return out.set(this.los + this.dir * x, h, y * this.dir); }
@@ -456,11 +646,11 @@ export class Stage {
       if (lp.kind === 'pass') {
         RECEIVER_KEYS.forEach((k, i) => {
           const p = lp.off[k];
-          if (!p) return;
-          if (p.role === 'stalk' && p.assign) { add([W(p.home.x, p.home.y), W((p.home.x + p.assign.home.x) / 2, (p.home.y + p.assign.home.y) / 2)], 0.16, '#cfd8e3', 0.8, 'bar'); return; }
+          if (!p?.home) return;
+          if (p.role === 'stalk' && p.assign?.home) { add([W(p.home.x, p.home.y), W((p.home.x + p.assign.home.x) / 2, (p.home.y + p.assign.home.y) / 2)], 0.16, '#cfd8e3', 0.8, 'bar'); return; }
           if (p.role === 'passblock' || !p.route) { add([W(p.home.x, p.home.y), W(p.home.x - 1.4, p.home.y * 0.8)], 0.16, '#cfd8e3', 0.75, 'bar'); return; }
           const pts = [W(p.home.x, p.home.y)];
-          for (const w of p.route) if (w.x != null) pts.push(W(w.x, w.y));
+          for (const w of p.route) if (w?.x != null) pts.push(W(w.x, w.y));
           if (pts.length > 1) add(pts, 0.3, ART_COLORS[i], 0.92, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow');
         });
       } else {
@@ -468,16 +658,29 @@ export class Stage {
         // lead blockers'.
         const c = lp.carrier ?? lp.off.RB, hole = lp.holeY ?? 0;
         const track = c?.track ?? (lp.play.dir === 'sneak' ? [{ x: 3, y: 0 }] : null);
-        if (c && track) add([W(c.home.x, c.home.y), ...track.map((w) => W(w.x, w.y))], 0.42, '#ffd23f', 0.92, 'arrow');
-        if (lp.play.dir === 'read' && lp.off.QB) add([W(lp.off.QB.home.x, lp.off.QB.home.y), ...keepTrack(lp).map((w) => W(w.x, w.y))], 0.24, '#ffd23f', 0.6, 'arrow');
+        if (c?.home && track?.length) {
+          const runPts = [W(c.home.x, c.home.y)];
+          for (const w of track) if (w?.x != null) runPts.push(W(w.x, w.y));
+          if (runPts.length > 1) add(runPts, 0.42, '#ffd23f', 0.92, 'arrow');
+        }
+        if (lp.play.dir === 'read' && lp.off.QB?.home) {
+          const keep = [W(lp.off.QB.home.x, lp.off.QB.home.y)];
+          for (const w of keepTrack(lp)) if (w?.x != null) keep.push(W(w.x, w.y));
+          if (keep.length > 1) add(keep, 0.24, '#ffd23f', 0.6, 'arrow');
+        }
         for (const b of Object.values(lp.off)) {
-          const to = b.assign ? W(Math.min(1.5, b.assign.home.x - 0.6), b.assign.home.y) : W(1.5, hole * 0.95);
-          if (b.pull) add([W(b.home.x, b.home.y), ...b.pull.path.map((w) => W(w.x, w.y)), to], 0.2, '#ffffff', 0.85, 'bar');
-          else if (b.role === 'lead') add([W(b.home.x, b.home.y), to], 0.2, '#ffffff', 0.85, 'bar');
+          if (!b?.home) continue;
+          const to = b.assign?.home ? W(Math.min(1.5, b.assign.home.x - 0.6), b.assign.home.y) : W(1.5, hole * 0.95);
+          if (b.pull?.path) {
+            const pull = [W(b.home.x, b.home.y)];
+            for (const w of b.pull.path) if (w?.x != null) pull.push(W(w.x, w.y));
+            pull.push(to);
+            if (pull.length > 1) add(pull, 0.2, '#ffffff', 0.85, 'bar');
+          } else if (b.role === 'lead') add([W(b.home.x, b.home.y), to], 0.2, '#ffffff', 0.85, 'bar');
         }
         for (const k of ['LT', 'LG', 'C', 'RG', 'RT', 'TE']) {
           const b = lp.off[k];
-          if (!b?.assign || b.pull) continue;
+          if (!b?.assign?.home || b.pull || !b.home) continue;
           const d = b.assign;
           const to = { x: (b.home.x + d.home.x) / 2 + 0.3, y: (b.home.y + d.home.y) / 2 };
           add([W(b.home.x, b.home.y), W(to.x, to.y)], 0.16, '#cfd8e3', 0.8, 'bar');
@@ -486,13 +689,14 @@ export class Stage {
     } else {
       // Defense: zones as soft discs, man assignments as thin lines, rushers as arrows.
       for (const p of Object.values(lp.def)) {
-        if (p.zone) {
+        if (!p?.home) continue;
+        if (p.zone && p.zone.x != null) {
           const z = p.zone;
           const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshBasicMaterial({ color: z.x >= 15 ? '#4fc3f7' : '#ffd23f', transparent: true, opacity: 0.2, depthWrite: false, fog: false }));
           disc.rotation.x = -Math.PI / 2; disc.position.copy(W(z.x, z.y)); disc.scale.set(z.r * 0.85, z.r * 0.6, 1); disc.position.y = 0.035;
           G.add(disc);
           add([W(p.home.x, p.home.y), W(z.x, z.y)], 0.16, z.x >= 15 ? '#4fc3f7' : '#ffd23f', 0.85, 'bar');
-        } else if (p.man) {
+        } else if (p.man?.home && p.home) {
           add([W(p.home.x, p.home.y), W(p.man.home.x + 0.5, p.man.home.y)], 0.14, '#ff9d7a', 0.85, 'bar');
         } else if (p.role === 'rush') {
           const blitz = !LINE_SLOTS.has(p.slot);
@@ -608,7 +812,7 @@ export class Stage {
     this.updateFx(t, dt);
     tickAudio(dt);
     if (lp) this.stadium.setBoard(lp.g, now);
-    if (!lp) { this.kickRing.visible = false; this.stadium.update(t, dt, this.rig.look); if (this.blimp) this.blimpShot(now); this.renderer.render(this.scene, this.camera); return; }
+    if (!lp) { this.kickRing.visible = false; if (this.glance?.visible) this.clearGlance(); this.stadium.update(t, dt, this.rig.look); if (this.blimp) this.blimpShot(now); this.renderer.render(this.scene, this.camera); return; }
     const pre = lp.phase === 'pre';
     this.art.visible = pre;
     this.readEvents(lp, t);
@@ -672,7 +876,7 @@ export class Stage {
       const lift = a.fig ? a.anim.lift : 0;
       const top = (a.fig?.template.height ?? a.body.height) * fit + Math.max(0, lift);
       a.ring.position.set(a.pos.x, top + 0.45, a.pos.z);
-      const ps = clampN(this.camera.position.distanceTo(a.ring.position) * 0.011, 0.26, 0.6);
+      const ps = clampN(this.camera.position.distanceTo(a.ring.position) * 0.015, 0.36, 0.82);
       a.ring.scale.set(ps, ps, 1);
       // Position labels: in the tactical view (where they read like a coaching diagram) and
       // in the debug view, named by what the formation has the player doing.
@@ -686,7 +890,7 @@ export class Stage {
         a.tag.scale.set(ts * 2.3, ts, 1);
       }
       // Team rings on the turf: before the snap, in the tactical view, or always if chosen.
-      a.base.visible = !!a.fig && (pre || tactical || this.showPips) && !(lp.phase === 'dead' && a.fallWant) && lp.control !== p && lp.p2?.control !== p;
+      a.base.visible = !!a.fig && (pre || tactical || this.showPips || lp.phase === 'live') && !(lp.phase === 'dead' && a.fallWant) && lp.control !== p && lp.p2?.control !== p;
       if (a.base.visible) {
         // Its size on screen is capped: a disc on the turf right under the lens (the safety
         // nearest a camera behind the defense) would otherwise fill the bottom of the frame.
@@ -719,6 +923,7 @@ export class Stage {
     this.stadium.follow(this.rig.look.x, this.rig.look.z * 0.5);
     this.stadium.update(t, dt, this.rig.look);
     this.prevPhase = lp.phase;
+    if (this.glanceSpec) this.syncGlance();
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -969,7 +1174,7 @@ export class Stage {
     if (sel) {
       const k = 1 + Math.sin(now / 220) * 0.05;
       this.selRing.position.set(sel.pos.x, 0.045, sel.pos.z);
-      this.selRing.scale.setScalar(sel.body.r * 1.75 * k);
+      this.selRing.scale.setScalar(sel.body.r * 2.45 * k);
       const h = (sel.fig?.template.height ?? 2) + (sel.fig ? sel.anim.lift : 0);
       this.selArrow.position.set(sel.pos.x, h + 0.75 + Math.sin(now / 180) * 0.1, sel.pos.z);
       this.selArrow.rotation.y += dt * 2.5;
@@ -1579,6 +1784,11 @@ function labelTexture(name, slot) {
 
 // A flat ribbon along points on the turf, with an arrowhead or a block at the end.
 function ribbon(pts, width, color, opacity, end, below = 0) {
+  if (!pts || pts.length < 2 || pts.some((p) => !p || p.x == null || p.z == null)) {
+    const m = new THREE.Mesh();
+    m.visible = false;
+    return m;
+  }
   const pos = [];
   const push = (a, b, c) => pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
   const side = (a, b) => { const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1; return { x: -dz / l, z: dx / l }; };

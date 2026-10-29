@@ -10,6 +10,7 @@
 // Exits non-zero on any failure.
 // Usage: node test/league.mjs [seasons, default 2] [seed, default 11]
 import * as LG from '../src/league.js';
+import { teamLogo } from '../src/logos.js';
 import { PLAYERS, RETIRED, SLOT, SLOT_KEYS, applyGrowth } from '../src/ratings.js';
 import { MODEL_INDEX } from '../src/models3d.js';
 import { createGame as newGame } from '../src/engine.js';
@@ -838,6 +839,29 @@ check(injuryOdds(479, 143) > 3 * injuryOdds(143, 479), 'injuries: the small body
   }
   // Labels.
   check(TR.draftPickLabel(L, 0) === 'Round 1, pick 1 (1st overall)' && TR.draftPickLabel(L, 12, true) === '2.5' && TR.draftPickLabel(L, 12).endsWith('(13th overall)'), 'draft swap: pick labels');
+}
+
+// A saved CPU club keeps its league slot. The club id, then the abbreviation, supplies the
+// new name. A save that only has the old display name still resolves. The player's name stays.
+{
+  const L = LG.createLeague({ seed: 9, numTeams: 16, teamName: 'My Club' });
+  const lav = L.teams.find((t) => t.abbr === 'LAV');
+  const slot = lav.id;
+  lav.name = 'Lavender Haunts';
+  delete lav.club;
+  const namedOnly = { id: 40, name: 'Celadon Bloom', user: false, roster: [] };
+  L.teams.push(namedOnly);
+  const mine = L.teams.find((t) => t.user);
+  mine.name = 'Lavender Haunts';
+  mine.abbr = 'LAV';
+  LG.migrateLeague(L);
+  check(lav.id === slot && lav.club === 'lavender' && lav.name === 'Lavender Specters' && lav.color === '#140C1C' && lav.kit.color2 === '#9B5CFF', 'identity: Lavender keeps its slot and takes the ghost name from its abbreviation');
+  check(namedOnly.id === 40 && namedOnly.club === 'celadon' && namedOnly.name === 'Celadon Thicket', 'identity: a save that stored only a name still resolves');
+  check(mine.user && mine.name === 'Lavender Haunts', 'identity: a franchise the player named stays named');
+  const mark = teamLogo(lav);
+  check(!/<rect/i.test(mark) && /<path/i.test(mark) && !/>LAV</.test(mark), 'identity: the Lavender emblem is a shape, not a box of initials');
+  const leaf = teamLogo(namedOnly);
+  check(!/<rect/i.test(leaf) && leaf !== mark, 'identity: Celadon has its own emblem');
 }
 
 applyGrowth({});

@@ -499,7 +499,7 @@ export function buildResult(lp, end) {
   if (end.how === 'incomplete') {
     st(g, o, qb.id).pa++;
     if (stats.target) st(g, o, stats.target.id).tg++;
-    return { kind: 'pass', yards: 0, carrier: qb.id, qb: qb.id, text: end.text, clockStop: true, incomplete: true,
+    return { kind: 'pass', yards: 0, td: false, carrier: qb.id, qb: qb.id, text: end.text, clockStop: true, incomplete: true,
       cov: stats.cov?.id ?? null, air: Math.round(lp.thrown?.air ?? 8) };
   }
   // Whoever actually has the ball is the runner the play is scored from.
@@ -514,7 +514,7 @@ export function buildResult(lp, end) {
     const endX = lp.spotX ?? c.x;
     let returnSpot = Math.round(100 - lp.spot - endX);
     if (lp.catchX >= lp.goalX && endX >= lp.goalX) returnSpot = 0; // downed in the end zone: touchback
-    return { kind: 'pass', yards: 0, carrier: c.id, qb: qb.id, returner: c.id, highlight: 'turnover', clockStop: true, turnover: 'int', returnSpot,
+    return { kind: 'pass', yards: 0, td: false, carrier: c.id, qb: qb.id, returner: c.id, highlight: 'turnover', clockStop: true, turnover: 'int', returnSpot,
       text: `${nm(qb.id)} throws for ${nm(stats.target.id)}... INTERCEPTED by ${nm(c.id)}${returnSpot >= 100 ? ' and he takes it all the way back' : ''}!` };
   }
   // The dead-ball spot: forward progress for a tackle or a push out of bounds.
@@ -531,7 +531,7 @@ export function buildResult(lp, end) {
     qs.sk++; st(g, d, tackler.id).dsk++; st(g, d, tackler.id).tk++; g.teams[o].team.sacks++;
     // (A strip is played out on the field: see the live fumbles in live.js.)
     const text = `${nm(tackler.id)} sacks ${nm(qb.id)} for a loss of ${Math.max(0, -yards)}.${se ? " It's super effective!" : ''}`;
-    return { kind: 'sack', yards, carrier: qb.id, text, highlight: 'sack', se };
+    return { kind: 'sack', yards, td: false, carrier: qb.id, text, highlight: 'sack', se };
   }
 
   const isPass = lp.caught;
@@ -541,7 +541,7 @@ export function buildResult(lp, end) {
     qs.pa++; qs.pc++; qs.py += counted; rs.tg++; rs.rc++; rs.rcy += counted; rs.rclong = Math.max(rs.rclong, yards);
     let text = `${nm(qb.id)} finds ${nm(c.id)}${extras} for ${yardsWord(yards)}.${tk}`;
     if (se) text += " It's super effective!";
-    const r = { kind: 'pass', yards, carrier: c.id, scorer: c.id, qb: qb.id, text, clockStop: stop, oob: end.how === 'out', highlight, se };
+    const r = { kind: 'pass', yards, td: end.how === 'td', carrier: c.id, scorer: c.id, qb: qb.id, text, clockStop: stop, oob: end.how === 'out', highlight, se };
     if (tackler && end.how === 'tackle') st(g, d, tackler.id).tk++;
     return r;
   }
@@ -551,7 +551,7 @@ export function buildResult(lp, end) {
   const how = lp.scramble ? 'scrambles' : { inside: 'runs up the middle', outside: c.y < 0 ? 'runs around the left end' : 'runs around the right end', draw: 'runs the draw', sneak: 'sneaks ahead', qbdraw: 'takes off on the QB draw', qbpower: 'keeps it on QB power', read: c.slot === 'QB' ? 'pulls it on the read and runs' : 'takes the give on the read' }[lp.play.dir] ?? 'runs';
   let text = `${nm(c.id)} ${how}${extras} for ${yardsWord(yards)}.${tk}`;
   if (se) text += " It's super effective!";
-  const r = { kind: 'run', yards, carrier: c.id, scorer: c.id, text, clockStop: stop, oob: end.how === 'out', highlight: yards >= 20 ? 'big' : yards < 0 ? 'loss' : null, se };
+  const r = { kind: 'run', yards, td: end.how === 'td', carrier: c.id, scorer: c.id, text, clockStop: stop, oob: end.how === 'out', highlight: yards >= 20 ? 'big' : yards < 0 ? 'loss' : null, se };
   if (tackler && end.how === 'tackle') st(g, d, tackler.id).tk++;
   return r;
 }
@@ -575,12 +575,12 @@ function fumbleResult(lp, end) {
   if (rec?.side === 'def') {
     const returnSpot = end.how === 'td' ? 100 : Math.round(100 - lp.spot - endX);
     const ran = scoop ? (returnSpot >= 100 ? ' and takes it all the way back' : ` and returns it ${Math.max(0, Math.round(F.at.x - endX))} yards`) : '';
-    return { ...base, kind: base.kind, yards: base.yards, returner: rec.id, turnover: 'fumble', returnSpot, highlight: 'turnover', clockStop: true,
+    return { ...base, kind: base.kind, yards: base.yards, td: false, returner: rec.id, turnover: 'fumble', returnSpot, highlight: 'turnover', clockStop: true,
       text: `${text} FUMBLE! ${nm(rec.id)} recovers for ${g.teams[d].name}${ran}!` };
   }
   // The offense keeps it (it fell on it, ran with it, or the ball went out).
   const yards = Math.max(-lp.spot, Math.round(endX)) || 0;
   const how = !rec ? (end.how === 'fumbleOut' ? ' It rolls out of bounds.' : ' The officials give it back to the offense at the spot.') : scoop ? ` ${nm(rec.id)} picks it up and runs.` : ` ${nm(rec.id)} falls on it.`;
-  return { ...base, yards, carrier: rec?.id ?? c.id, scorer: rec?.id ?? c.id, clockStop: true, highlight: yards >= lp.goalX ? 'td' : base.highlight,
+  return { ...base, yards, td: end.how === 'td', carrier: rec?.id ?? c.id, scorer: rec?.id ?? c.id, clockStop: true, highlight: yards >= lp.goalX ? 'td' : base.highlight,
     text: `${text} FUMBLE!${how} ${g.teams[o].name} keep it.` };
 }

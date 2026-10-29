@@ -58,9 +58,9 @@ export function diagram(g, call, side, form = null, flip = false) {
       RECEIVERS.forEach((k, i) => {
         const p = O[k];
         if (!p) return;
-        if (p.role === 'stalk' && p.assign) { parts.push(path([p.home, { x: (p.home.x + p.assign.home.x) / 2, y: (p.home.y + p.assign.home.y) / 2 }], '#cfd8e3', 0.55, 'bar')); return; }
+        if (p.role === 'stalk' && p.assign?.home && p.home) { parts.push(path([p.home, { x: (p.home.x + p.assign.home.x) / 2, y: (p.home.y + p.assign.home.y) / 2 }], '#cfd8e3', 0.55, 'bar')); return; }
         if (!p.route) { parts.push(path([p.home, { x: p.home.x - 1.6, y: p.home.y * 0.85 }], '#9fb3c8', 0.55, 'bar')); return; }
-        const pts = [p.home, ...p.route.filter((w) => w.x != null)];
+        const pts = [p.home, ...p.route.filter((w) => w && w.x != null)];
         parts.push(path(pts, ART_COLORS[i], 1, p.route[p.route.length - 1]?.stop ? 'bar' : 'arrow'));
       });
       if (O.QB) parts.push(path(lp.play.boot ? [O.QB.home, { x: lp.dropX, y: 1 }, { x: lp.dropX + 2.5, y: (O.TE ? -Math.sign(O.TE.home.y) : 1) * 8 }] : [O.QB.home, { x: lp.dropX, y: O.QB.home.y }], '#ffffff', 0.45, lp.play.boot ? 'arrow' : '', '0.8 0.6'));
@@ -78,12 +78,12 @@ export function diagram(g, call, side, form = null, flip = false) {
       }
       // Pullers run flat behind the line, then up to their man; lead blockers go through the hole.
       for (const b of Object.values(O)) {
-        if (b.pull) parts.push(path([b.home, ...b.pull.path, b.assign ? { x: Math.min(1.5, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1.5, y: hole }], '#ffffff', 0.6, 'bar'));
-        else if (b.role === 'lead') parts.push(path([b.home, b.assign ? { x: Math.min(2, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1, y: hole * 0.85 }], '#ffffff', 0.6, 'bar'));
+        if (b.pull?.path && b.home) parts.push(path([b.home, ...b.pull.path.filter((w) => w && w.x != null), b.assign?.home ? { x: Math.min(1.5, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1.5, y: hole }], '#ffffff', 0.6, 'bar'));
+        else if (b.role === 'lead' && b.home) parts.push(path([b.home, b.assign?.home ? { x: Math.min(2, b.assign.home.x - 0.6), y: b.assign.home.y } : { x: 1, y: hole * 0.85 }], '#ffffff', 0.6, 'bar'));
       }
       for (const k of ['LT', 'LG', 'C', 'RG', 'RT', 'TE', 'WR1', 'WR2', 'WR3']) {
         const b = O[k];
-        if (!b?.assign || b.pull) continue;
+        if (!b?.assign?.home || b.pull || !b.home) continue;
         const d = b.assign;
         parts.push(path([b.home, { x: (b.home.x + d.home.x) / 2 + 0.6, y: (b.home.y + d.home.y) / 2 }], '#cfd8e3', 0.5, 'bar'));
       }
@@ -94,7 +94,7 @@ export function diagram(g, call, side, form = null, flip = false) {
         const z = p.zone, deep = z.x >= 15;
         parts.push(`<ellipse cx="${z.y.toFixed(2)}" cy="${(-z.x).toFixed(2)}" rx="${(z.r * 0.8).toFixed(2)}" ry="${(z.r * 0.55).toFixed(2)}" fill="${deep ? '#4fc3f7' : '#ffd23f'}" fill-opacity="0.22" stroke="${deep ? '#4fc3f7' : '#ffd23f'}" stroke-opacity="0.7" stroke-width="0.3"/>`);
         parts.push(path([p.home, z], deep ? '#4fc3f7' : '#ffd23f', 0.4, ''));
-      } else if (p.man) parts.push(path([p.home, { x: p.man.home.x + 0.8, y: p.man.home.y }], '#ff9d7a', 0.45, '', '0.9 0.6'));
+      } else if (p.man?.home && p.home) parts.push(path([p.home, { x: p.man.home.x + 0.8, y: p.man.home.y }], '#ff9d7a', 0.45, '', '0.9 0.6'));
       else if (p.role === 'rush') {
         const blitz = !['LE', 'DE', 'DT1', 'DT2'].includes(p.slot);
         parts.push(path([p.home, { x: -3, y: p.home.y * 0.45 }], blitz ? '#ff5a4f' : '#e7b7b0', blitz ? 0.8 : 0.5, 'arrow'));

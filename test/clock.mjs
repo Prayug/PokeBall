@@ -3,6 +3,7 @@
 // both sides with the rules checked after every snap. Exits non-zero on any failure.
 // Usage: node test/clock.mjs [games, default 300]
 import { createLeague, aiChoosePick, makePick, teamForGame } from '../src/league.js';
+import { afterLines, createBooth } from '../src/commentary.js';
 import * as E from '../src/engine.js';
 
 const GAMES = Number(process.argv[2] ?? 300);
@@ -114,6 +115,23 @@ const statsOf = (g) => JSON.stringify(g.teams.map((t) => [t.stats, t.team]));
   }
   check(tries > 50 && made / tries > 0.3 && made / tries < 0.75, `two-point tries succeed about half the time (${made}/${tries})`);
   check(xps > 50, `extra points get kicked (${xps})`);
+  // A spot that rounds to the goal line is still a miss. The booth must not call it good.
+  const short = situation(9, { poss: 0, spot: 98, score: [6, 0], manual: [true, true] });
+  short.phase = 'pat';
+  const beforeShort = { score: [6, 0], poss: 0, down: 1 };
+  const miss = E.runLivePlay(short, 'inside_run', 'goal_line', { kind: 'run', yards: 2, td: false, text: 'He is stopped a yard short for 2 yards.', carrier: short.teams[0].lineup.RB }, 4);
+  check(short.score.join() === '6,0', `a two-point try stopped short adds nothing (${short.score})`);
+  check(miss?.head === 'Two-point try fails' && !/GOOD!/.test(miss.text ?? ''), `a miss is called a miss (${miss?.head} ${miss?.text})`);
+  const missSaid = afterLines(createBooth(3), short, miss, beforeShort).map((l) => l.text).join(' ');
+  check(/short|No good/i.test(missSaid) && !/try is good|In for two|They get it/i.test(missSaid), `the booth calls the miss (${missSaid})`);
+  const madeTry = situation(10, { poss: 0, spot: 98, score: [6, 0], manual: [true, true] });
+  madeTry.phase = 'pat';
+  const beforeMade = { score: [6, 0], poss: 0, down: 1 };
+  const make = E.runLivePlay(madeTry, 'inside_run', 'goal_line', { kind: 'run', yards: 2, td: true, text: 'He walks in. TOUCHDOWN!', carrier: madeTry.teams[0].lineup.RB }, 4);
+  check(madeTry.score.join() === '8,0', `a made two-point try adds two once (${madeTry.score})`);
+  check(make?.head === 'Two-point conversion', `a make is a conversion (${make?.head})`);
+  const makeSaid = afterLines(createBooth(4), madeTry, make, beforeMade).map((l) => l.text).join(' ');
+  check(/good|In for two|They get it/i.test(makeSaid) && !/no good|come up short/i.test(makeSaid), `the booth calls the make (${makeSaid})`);
 }
 
 // ---------- onside kicks ----------

@@ -10,7 +10,9 @@ ESB="${ESBUILD:-npx --yes esbuild@0.24.0}"
 $ESB src/app.js --bundle --format=iife --minify --target=es2020 --charset=utf8 --outfile=dist/app.js --log-level=warning
 node -e '
 const fs = require("fs");
-const html = fs.readFileSync("src/index.html", "utf8");
+const html0 = fs.readFileSync("src/index.html", "utf8");
+const theme = fs.existsSync("src/theme.css") ? fs.readFileSync("src/theme.css", "utf8") : "";
+const html = theme ? html0.replace("</style>", () => theme + "\n</style>") : html0;
 const js = fs.readFileSync("dist/app.js", "utf8").replace(/<\/script/gi, "<\\/script");
 const server = process.env.POKEBALL_SERVER || "";
 const prelude = "<script>globalThis.POKEBALL_SERVER=" + JSON.stringify(server) + ";</script>";
