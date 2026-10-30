@@ -1814,6 +1814,15 @@ tr.me .wmeter i { background: var(--good); }
   .pcard.q { grid-template-columns: 76px 1fr; } .pcard.q .pc-art svg { width: 76px; }
   .callsheet.lvl-0 { max-height: 44%; }
 }
+
+/* Wide tables keep who each row is in view while the numbers scroll sideways. */
+.board-table, .gtable, .stand, .pstats { --stick: #12301f; }
+.board-table :is(th, td):first-child, .gtable :is(th, td):first-child, .stand :is(th, td):first-child, .pstats :is(th, td):first-child {
+  position: sticky; left: 0; z-index: 1; background: var(--stick); box-shadow: 1px 0 0 rgba(255, 255, 255, 0.08); }
+.board-table thead th:first-child { z-index: 3; }
+.board-table tbody tr:hover td:first-child { background: color-mix(in srgb, var(--turf-3) 100%, var(--stick)); }
+.board-table tr.sel td:first-child { background: color-mix(in srgb, var(--red) 18%, var(--stick)); }
+.gtable tr.me td:first-child, .stand tr.me td:first-child { background: color-mix(in srgb, var(--me, var(--red)) 20%, var(--stick)); }
 </style>
 <div id="app"></div>
 <!--APP-->
