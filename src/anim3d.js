@@ -96,7 +96,21 @@ export class Animator {
     // Stride: one full cycle every two steps, a step about half the body height (longer in a
     // sprint, so the legs reach out instead of only spinning faster).
     const stride = Math.max(0.45, H * (0.55 + 0.15 * spr));
-    this.gait += dt * (moving ? s.speed / stride : s.engaged ? 3.2 : 0) * Math.PI * 0.5;
+    let rate = (moving ? s.speed / stride : s.engaged ? 3.2 : 0) * Math.PI * 0.5;
+    // A real model's legs cycle at the rate their length needs to keep up with the ground:
+    // a planted foot sweeps back about leg length x swing angle per half stride, so short legs
+    // step quickly and long ones stride out (the swing angle is the one model3d.driveLimbs
+    // uses). Tied to the height of the hips, not the body: a tall body on stubby legs
+    // (Snorlax, Tyranitar) scurries, it does not glide.
+    // (legSweep: yards a foot travels per radian of swing, measured on the model; model3d
+    // stride() sweeps the planted foot back at about 0.71 x amplitude x rate.)
+    const leg = this.fig?.feet ? this.fig.legSweep : 0;
+    if (moving && leg > 0.05) {
+      const amp = Math.max(0.25, 0.62 * (0.4 + 0.6 * Math.min(1, sf) + 0.35 * spr));
+      rate = Math.max(rate, Math.min(30, s.speed / (leg * amp * 0.71)));
+    }
+    this.gaitRate = rate;
+    this.gait += dt * rate;
     const ph = this.gait;
 
     // ----- base layers -----
@@ -132,7 +146,10 @@ export class Animator {
     p[PITCH] = runLean;
     p[bi.legL] -= runLean * 0.6; p[bi.legR] -= runLean * 0.6;
     p[bi.head] = -runLean * 0.6;
-    p[LIFT] = Math.abs(cs) * H * (0.025 + 0.035 * Math.min(1, sf) + 0.03 * spr);
+    // The bob. A model with feet is set on its lowest foot (model3d.groundFeet), so its body
+    // rises and falls with its legs by itself; it only leaves the turf in a sprint, between
+    // strides, when both legs are spread. A figure without feet bobs on the old guess.
+    p[LIFT] = this.fig?.feet ? Math.abs(sn) * H * (0.02 + 0.025 * spr) * clamp((sf - 0.3) / 0.4, 0, 1) : Math.abs(cs) * H * (0.025 + 0.035 * Math.min(1, sf) + 0.03 * spr);
     // Short-legged Pokémon waddle.
     p[ROLL] = sn * (s.shortLegs ? 0.1 : 0.035) * Math.min(1, sf + 0.3);
     // block: leaning in, arms locked out, feet churning
@@ -155,6 +172,7 @@ export class Animator {
       else { p[PITCH] += 0.22 * u; p[bi.armL] = -1.55; p[bi.armR] = -1.55; p[bi.legL] -= 0.2 * u; p[bi.legR] -= 0.2 * u; }
     }
 
+    this.hoverK = s.hover ? 1 : 0;
     const o = this.out; o.fill(0);
     for (const k of BASE) { const wk = this.w[k] / (sum || 1); if (wk < 1e-3) continue; const q = L[k]; for (let i = 0; i < N; i++) o[i] += q[i] * wk; }
 
@@ -197,6 +215,8 @@ export class Animator {
       o[bi.legR] += 0.9 * back - 2.1 * thru; o[bi.armL] -= 1.0 * thru; o[bi.armR] += 0.6 * thru; o[PITCH] -= 0.15 * thru;
     }
     if (s.jumpZ) { o[LIFT] += s.jumpZ; const k = Math.min(1, s.jumpZ * 3); o[bi.legL] += 0.5 * k; o[bi.legR] += 0.25 * k; }
+    // The jolt of a hit, through the whole body (the bones get theirs in football()).
+    if (s.hit) { o[PITCH] += (s.brace ? 0.12 : -0.22) * s.hit; o[ROLL] += Math.sin(t * 40) * 0.04 * s.hit; }
     // Juke and truck
     if (s.juke) { o[ROLL] += s.juke * 0.4; o[LIFT] += Math.abs(s.juke) * H * 0.06; }
     if (s.truck) { set(s.truck, PITCH, 0.55); set(s.truck, bi.armR, -1.5); set(s.truck, bi.armR + 2, 0.1); set(s.truck, bi.head, -0.3); }
@@ -268,6 +288,10 @@ export class Animator {
       T.lean = 0.15 + Math.sin(Math.min(1, u * 2) * Math.PI) * 0.15; T.carry = 0;
     }
     if (s.reach) { T.reach = s.reach; T.armsFwd = Math.max(T.armsFwd, s.reach * 0.5); }
+    // Coming in to tackle: arms out to wrap, hips down, chest over the knees.
+    if (s.wrap) { T.armsFwd = Math.max(T.armsFwd, 0.9 * s.wrap); T.crouch = Math.max(T.crouch, 0.35 * s.wrap); T.lean = Math.max(T.lean, 0.45 * s.wrap); }
+    // Taking a hit: the carrier is rocked back and upright, the tackler gives at the waist.
+    if (s.hit) { T.lean += (s.brace ? 0.25 : -0.4) * s.hit; T.armsFwd = Math.max(T.armsFwd, (s.brace ? 1 : 0.4) * s.hit); T.crouch = Math.max(T.crouch, 0.3 * s.hit); }
     if (s.dive) { T.lean = Math.max(T.lean, 0.7 * s.dive); T.armsFwd = Math.max(T.armsFwd, s.dive); }
     if (s.truck) { T.lean = Math.max(T.lean, 0.55 * s.truck); T.crouch = Math.max(T.crouch, 0.4 * s.truck); }
     if (s.celebrate) { T.reach = s.celebrate; T.lean = -0.1; }
@@ -293,7 +317,9 @@ export class Animator {
       const clipRun = f.cur && (f.cur === f.actions.run || f.cur === f.actions.walk);
       const legless = !f.rig?.legs && !clipRun;
       const st = this.style, run = this.w.run * (1 - hard);
-      const m = legless && st === 'hopper' ? run : 0;
+      // (A four-legged body with no legs to move, Mamoswine, rocks and bounds the same way,
+      // lower and heavier.)
+      const m = legless && st === 'hopper' ? run : legless && st === 'quad' ? run * 0.55 : 0;
       // Slithering: the body yaws in an S and rolls a touch with each wave.
       const sl = legless && st === 'serpent' ? run : 0;
       // A four-legged sprint bounds: the body rises and rocks with each gallop stride.
@@ -342,7 +368,13 @@ export class Animator {
       f.pivot.rotation.set(pitch + rock + dip * 0.07 + idle.pitch, (f.rig ? 0 : this.fb.twist * 0.8) + sl * Math.sin(ph) * 0.32 + lookY + idle.yaw, o[ROLL] * k + m * Math.sin(ph) * 0.1 + sl * Math.sin(ph + 0.8) * 0.06 + swayR + idle.roll, 'XZY');
       // A crouch lowers the hips, so the feet stay on the turf.
       const c = this.fb.crouch, drop = f.rig ? (f.hipH ?? 0) * (1 - 0.5 * (Math.cos(0.55 * c) + Math.cos(0.3 * c))) : 0;
-      f.pivot.position.y = Math.max(0, o[LIFT]) - drop + hop + toes * H * 0.025 - dip * H * 0.02 + idle.lift;
+      if (f.feet) {
+        // Feet set the height (rigdrive calls model3d.groundFeet once the bones are posed):
+        // this is how high the lowest foot should be, and how much the feet decide it.
+        this.air = Math.max(0, o[LIFT]) + hop + toes * H * 0.025 + Math.max(0, idle.lift - H * 0.01);
+        this.groundW = this.hoverK > 0.5 ? 0 : 1 - Math.max(clamp(this.fallK, 0, 1), this.diveK);
+        f.pivot.position.y = this.air;
+      } else f.pivot.position.y = Math.max(0, o[LIFT]) - drop + hop + toes * H * 0.025 - dip * H * 0.02 + idle.lift;
       // Breathing while standing (harder for a lineman in his stance, and deeper standing about
       // than set), squash and stretch while bounding.
       const breath = set === 'line' ? 0.03 : 0.018;

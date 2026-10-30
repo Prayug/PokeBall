@@ -16,8 +16,8 @@ import { absSpot } from './engine.js';
 import { Stadium, HALF_W } from './stadium3d.js';
 import { venueOf } from './kits.js';
 import { template, upgradeTemplate, makeFigure, disposeFigure, placeholder, flies } from './figure3d.js';
-import { updateBlink } from './blink.js';
-import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs, poseLimbs, hangArms, foldWings } from './model3d.js';
+import { modelTemplate, makeModelFigure, disposeModelFigure, hasModel } from './model3d.js';
+import { driveModel, bodyStyle } from './rigdrive.js';
 import { Animator } from './anim3d.js';
 import { CameraRig } from './camera3d.js';
 import { bodyOf } from './body.js';
@@ -369,23 +369,8 @@ export class Stage {
     a.version = T.version;
   }
 
-  // How a species moves, from its model: four legs, two, or none (and then whether it flies,
-  // floats, slithers or hops), and Flying types or levitating Pokémon in the air.
-  styleOf(a) {
-    const R = a.fig?.rig, T = a.fig?.template, P = PLAYERS[a.id];
-    const types = P?.types ?? [];
-    const wings = !!R?.bones?.some((e) => e.part === 'wing');
-    // Winged Pokémon built on two real legs (Charizard, Dragonite) play on their feet like any
-    // biped: hovering pitched them forward into a hunched, legs-tucked crouch.
-    if (a.flier && R?.legs >= 2 && !R?.quad) return 'biped';
-    if (a.flier && (wings || !R?.legs)) return 'flyer';
-    if (R?.quad) return 'quad';
-    if (R?.legs >= 2) return 'biped';
-    if (a.flier || types.includes('Ghost') || P?.ability === 'Levitate') return 'floater';
-    if (T && T.depth > T.height * 1.6) return 'serpent';
-    if (types.includes('Psychic') && T && T.height > T.width) return 'floater';
-    return 'hopper';
-  }
+  // How a species moves, from its model (rigdrive.bodyStyle).
+  styleOf(a) { return bodyStyle(a.id, a.fig); }
 
   dropFigure(a) {
     if (a.ph) { a.root.remove(a.ph); a.ph = null; }
@@ -395,50 +380,8 @@ export class Stage {
     a.fig = null;
   }
 
-  // Which clip a model plays: from the same situation the procedural layers read.
-  modelClip(a, s, dt) {
-    const f = a.fig;
-    let role = 'idle', speed = 1;
-    if (s.fall > 0.5) role = 'down';
-    else if (s.celebrate > 0.3) role = 'glad';
-    else if (s.stun > 0.3) role = 'damage';
-    // Blocking and throwing are posed on the skeleton (poseLimbs); a rig-less model has
-    // only its clips, so it uses its attack clip for contact.
-    else if (s.truck > 0.3 || s.dive > 0.3 || ((s.engaged || (s.throwU != null && s.throwU < 1)) && !f.rig)) role = 'attack';
-    else if (a.anim.moving) {
-      role = f.actions.run ? 'run' : 'walk';
-      // Match the clip's stride to the ground speed, within reason (a big body takes longer
-      // strides, so its clip runs slower for the same speed).
-      speed = clampN(s.speed / (role === 'run' ? 6 : 3) * (2 / Math.max(0.8, s.height)) * (1 + 0.15 * a.anim.sprK), 0.6, 2.4);
-    }
-    const played = playClip(f, role, 0.18, speed);
-    resetLimbs(f);
-    f.mixer.update(dt);
-    // Arms hang naturally unless a clip is acting something out (celebrating, falling, hit);
-    // a run or walk clip keeps some of its own arm swing.
-    const hw = played === 'idle' || !played ? 0.9 : played === 'run' || played === 'walk' ? 0.5 : 0;
-    f.hangW = (f.hangW ?? hw) + (hw - (f.hangW ?? hw)) * (1 - Math.exp(-dt * 6));
-    hangArms(f, f.hangW);
-    // A bird on its feet folds its wings, half opening them to run and fully to hover.
-    const fw = s.hover ? 0 : played === 'idle' || !played ? (a.anim.moving ? 0.45 : 0.85) : 0;
-    f.foldW = (f.foldW ?? fw) + (fw - (f.foldW ?? fw)) * (1 - Math.exp(-dt * 5));
-    foldWings(f, f.foldW);
-    // The model's own legs: full procedural stride unless its run or walk clip is playing.
-    const want = played === 'run' || played === 'walk' ? 0 : played === 'idle' || !played ? 1 : 0.4;
-    f.limbW += (want - f.limbW) * (1 - Math.exp(-dt * 8));
-    const sf = s.top > 0 ? clampN(s.speed / s.top, 0, 1.2) : 0;
-    const runWant = a.anim.moving ? 0.4 + 0.6 * Math.min(1, sf) + 0.35 * a.anim.sprK : s.engaged ? 0.35 : 0;
-    f.runK = (f.runK ?? 0) + (runWant - (f.runK ?? 0)) * (1 - Math.exp(-dt * 6));
-    // The head follows the ball (not when it is right behind, where it would whip side to side).
-    const lk = s.look == null || Math.abs(s.look) > 2.4 ? 0 : clampN(s.look, -1.1, 1.1);
-    f.look = (f.look ?? 0) + (lk - (f.look ?? 0)) * (1 - Math.exp(-dt * 5));
-    // Standing about: breathing, glances, shrugs and stretches, a wag or a ruffle of the wings.
-    const calmWant = a.anim.moving || s.engaged || s.fall > 0.5 ? 0 : s.mode === 'pre' && s.stance ? 0.35 : 1;
-    f.calm = (f.calm ?? calmWant) + (calmWant - (f.calm ?? calmWant)) * (1 - Math.exp(-dt * 4));
-    driveLimbs(f, { phase: a.anim.gait, run: f.runK, t: a.anim.t, flap: s.hover ? 1 : 0, weight: f.limbW, look: f.look, calm: f.calm, seed: a.anim.seed ?? 0 });
-    poseLimbs(f, a.anim.fb);
-    updateBlink(f, dt, !(s.fall > 0.5 || s.stun > 0.3));
-  }
+  // Which clip a model plays and how its skeleton is posed: see rigdrive.js.
+  modelClip(a, s, dt) { driveModel(a.fig, a.anim, s, dt); }
 
   // ---------- pre-snap play art ----------
   drawArt() {
@@ -536,6 +479,13 @@ export class Stage {
         case 'contact':
           // The hit itself: the carrier is driven the way the tackler was moving into him.
           if (b) { const dx = a ? b.pos.x - a.pos.x : 1, dz = a ? b.pos.z - a.pos.z : 0; b.fallDir = this.localDir(b, dx, dz, 1); b.flash = 0.35; }
+          // Both bodies take the hit, the lighter one more: a jolt back from the contact
+          // (the tackler braces and gives a little, the carrier is rocked off balance).
+          if (a && b) {
+            const ma = a.body.kg ?? 60, mb = b.body.kg ?? 60, share = ma / (ma + mb);
+            b.act = { kind: 'impact', t0: t, dur: 0.35, k: 0.5 + share };
+            a.act = { kind: 'impact', t0: t, dur: 0.3, k: 0.3 + (1 - share) * 0.9, brace: true };
+          }
           if (a && b) this.burst(b.pos.clone().lerp(a.pos, 0.4), '#ffffff', 0.8);
           this.rig.shake = Math.max(this.rig.shake, 0.12);
           sfx('hit');
@@ -782,6 +732,15 @@ export class Stage {
       if (W) s.throwU = clampN((lp.t - W.t0) / W.T, 0, 1) * 0.45;
       else if (F && lp.t - F.t0 < 0.4) s.throwU = 0.45 + ((lp.t - F.t0) / 0.4) * 0.55;
     }
+    // Closing on the ball carrier: a defender within a couple of body lengths and coming at
+    // him squares up, sinks and brings the arms out to wrap (it is the simulation's own pursuit;
+    // this only shows it).
+    const C = lp.carrier;
+    if (lp.phase === 'live' && C && p.side !== C.side && p !== C && !p.eng && lp.ball.state === 'held') {
+      const dx = C.x - p.x, dy = C.y - p.y, d = Math.hypot(dx, dy);
+      const closing = d > 0.01 ? (p.vx * dx + p.vy * dy) / d : 0;
+      if (d < 3.2 && closing > 1.5) s.wrap = clampN((3.2 - d) / 2.2, 0, 1);
+    }
     // One-shot reactions to events.
     const A = a.act;
     if (A) {
@@ -790,6 +749,7 @@ export class Stage {
       else switch (A.kind) {
         case 'secure': s.carrier = true; s.reach = Math.max(0, 1 - u * 2); break;
         case 'miss': s.stun = Math.sin(u * Math.PI) * 0.6; break;
+        case 'impact': s.hit = Math.sin(Math.min(1, u * 2.5) * Math.PI * 0.5) * (1 - u) * A.k; s.brace = !!A.brace; break;
         default: break;
       }
     }

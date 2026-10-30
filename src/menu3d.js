@@ -11,7 +11,7 @@
 // keeps the camera still and cuts between shots.
 import * as THREE from 'three';
 import { Stadium } from './stadium3d.js';
-import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs, poseLimbs, hangArms, foldWings } from './model3d.js';
+import { modelTemplate, makeModelFigure, disposeModelFigure, playClip, hasModel, resetLimbs, driveLimbs, poseLimbs, hangArms, foldWings, groundFeet } from './model3d.js';
 import { updateBlink } from './blink.js';
 import { bodyOf } from './body.js';
 import { ALL_IDS, PLAYERS } from './ratings.js';
@@ -183,6 +183,9 @@ export class MenuStage {
     a.look += (lk - a.look) * (1 - Math.exp(-dt * 3));
     driveLimbs(f, { phase: 0, run: 0, t, flap: 0, weight: 1, look: a.look, calm: idle ? 1 : 0.3, seed: a.seed });
     poseLimbs(f, a.fb);
+    // Feet on the turf in whatever crouch the pose holds (model3d.groundFeet).
+    f.pivot.rotation.set(0, 0, 0);
+    groundFeet(f, 0, 1);
     updateBlink(f, dt, true);
     if (a.ball) this.placeBall(a);
   }
