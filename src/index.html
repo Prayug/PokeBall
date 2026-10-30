@@ -1833,6 +1833,11 @@ tr.me .wmeter i { background: var(--good); }
 .tape li.up { box-shadow: inset 3px 0 0 var(--green, #4cc38a); }
 .tape li.down { box-shadow: inset -3px 0 0 var(--red); }
 .tape-key { margin: 2px 0 0; color: var(--amber); }
+
+/* Depth chart: drag a card onto another slot to swap. */
+.depth .dslot[draggable="true"] { cursor: grab; }
+.depth .dslot.dragging { opacity: 0.45; }
+.depth .dslot.over { outline: 2px dashed var(--amber); outline-offset: 2px; }
 </style>
 <div id="app"></div>
 <!--APP-->

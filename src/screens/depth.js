@@ -29,21 +29,21 @@ export function renderDepth() {
   const kick = kickingUnit(me.lineup);
   const cell = ([k, col, row]) => {
     const id = me.lineup[k];
-    if (id == null) return `<button class="dslot ${SLOT[k].side} ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}"><span class="slot">${k}</span><span class="dn muted">Open</span></button>`;
+    if (id == null) return `<button class="dslot ${SLOT[k].side} ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}" aria-pressed="${S.depthSel === k}"><span class="slot">${k}</span><span class="dn muted">Open</span></button>`;
     const p = P(id);
     const gap = p.ovr[p.best[0]] - p.ovr[k];
     const misfit = p.best[0] !== k && gap >= 6;
     const note = SLOT[k].group === p.primary
       ? `Best at ${p.best[0]} ${p.ovr[p.best[0]]}`
       : `Best at ${p.primary} · ${p.best[0]} ${p.ovr[p.best[0]]}`;
-    return `<button class="dslot ${SLOT[k].side} ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}">
+    return `<button class="dslot ${SLOT[k].side} ${S.depthSel === k ? 'sel' : ''}" style="grid-column:${col};grid-row:${row}" data-act="dslot" data-slot="${k}" draggable="true" aria-pressed="${S.depthSel === k}" aria-label="${k}: ${esc(p.name)}, ${p.ovr[k]} overall">
       <span class="slot">${k}</span>${sprite(id, 'md')}<span class="dn">${esc(p.name)}</span>${roleHtml(p)}${ovr(p.ovr[k])}
       ${misfit ? `<span class="fitnote">${note}</span>` : ''}${powerTag(id, k)}${conditionTag(id)}</button>`;
   };
   return `<section class="depth">
     <p class="eyebrow">${esc(me.name)}</p>
     <h1>Depth chart</h1>
-    <p class="lede">Tap a slot, then tap another slot or a bench Pokémon to swap them. Overalls update for the new position.</p>
+    <p class="lede">Drag a Pokémon onto another slot or off the bench to swap them, or tap (or Enter) one and then the other. Overalls update for the new position.</p>
     <div class="unitbar">${[['Pass offense', u.passOff], ['Run offense', u.runOff], ['Pass rush', u.passRush], ['Coverage', u.coverage], ['Run defense', u.runDef]]
       .map(([l, v]) => `<div><span class="muted small">${l}</span><b>${Math.round(v)}</b></div>`).join('')}
       <div><span class="muted small">Kicker</span><b>${kick.k ? kick.k.ovr : '–'}</b>${kick.k ? `<span class="muted small" title="Makes half his kicks from ${kick.k.range} yards: snaps at the opponent's ${rangeLine(kick.k.range)}">${kick.k.range}-yd range</span>` : ''}</div>
@@ -54,7 +54,7 @@ export function renderDepth() {
       <h4 class="gunit off">Offense</h4><h4 class="gunit def">Defense</h4><h4 class="gunit st">Special teams</h4>
       ${FORMATION.map(cell).join('')}
     </div></div>
-    <div class="card"><h3>Bench</h3><div class="benchrow">${me.bench.length ? me.bench.map((id) => `<button class="dslot bench" data-act="dbench" data-id="${id}">${sprite(id, 'md')}<span class="dn">${esc(P(id).name)}</span>
+    <div class="card"><h3>Bench</h3><div class="benchrow">${me.bench.length ? me.bench.map((id) => `<button class="dslot bench" data-act="dbench" data-id="${id}" draggable="true">${sprite(id, 'md')}<span class="dn">${esc(P(id).name)}</span>
       ${S.depthSel ? ovr(P(id).ovr[S.depthSel]) : `<span class="slot">${P(id).best[0]} ${P(id).ovr[P(id).best[0]]}</span>`}${roleHtml(P(id))}${conditionTag(id)}</button>`).join('') : '<p class="muted">No bench. Draft 28 rounds to carry 4 backups.</p>'}</div></div>
     ${Object.keys(S.league.injuries ?? {}).some((id) => me.roster.includes(Number(id))) ? '<p class="small muted">Injured Pokémon miss games until they heal. Leave them in the lineup and the best healthy backup covers each game; with no bench, a starter from the other side of the ball plays both ways.</p>' : ''}
     ${Object.keys(S.league.condition ?? {}).length ? '<p class="small muted">Sore Pokémon start the next game below full energy, and the bench subs in as they tire. A Pokémon who is out sits the next game when the bench can cover him; with no bench he plays hurt.</p>' : ''}
@@ -63,11 +63,44 @@ export function renderDepth() {
   </section>`;
 }
 
-export function depthClick(el) {
+// Dragging is the same swap as two taps: the picked-up card is selected, the drop target tapped.
+let dragFrom = null;
+if (typeof document !== 'undefined') {
+  const target = (e) => e.target.closest?.('.depth .dslot');
+  document.addEventListener('dragstart', (e) => {
+    const el = target(e);
+    if (!el) return;
+    dragFrom = el;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', el.dataset.slot ?? el.dataset.id ?? '');
+    el.classList.add('dragging');
+  });
+  document.addEventListener('dragover', (e) => {
+    const el = target(e);
+    if (!dragFrom || !el || el === dragFrom || (el.dataset.act === 'dbench' && dragFrom.dataset.act === 'dbench')) return;
+    e.preventDefault();
+    document.querySelectorAll('.depth .dslot.over').forEach((x) => x !== el && x.classList.remove('over'));
+    el.classList.add('over');
+  });
+  document.addEventListener('dragend', () => { dragFrom?.classList.remove('dragging'); document.querySelectorAll('.depth .dslot.over').forEach((x) => x.classList.remove('over')); dragFrom = null; });
+  document.addEventListener('drop', (e) => {
+    const el = target(e), from = dragFrom;
+    if (!from || !el || el === from) return;
+    e.preventDefault();
+    dragFrom = null;
+    // A bench card dropped on a slot is the slot tapped first, then the bench card.
+    const [a, b] = from.dataset.act === 'dbench' ? [el, from] : [from, el];
+    S.depthSel = null;
+    depthClick(a, false);
+    depthClick(b);
+  });
+}
+
+export function depthClick(el, commit = true) {
   const me = user();
   if (el.dataset.act === 'dslot') {
     const k = el.dataset.slot;
-    if (!S.depthSel) { S.depthSel = k; render(); return; }
+    if (!S.depthSel) { S.depthSel = k; if (commit) render(); return; }
     if (S.depthSel !== k) { [me.lineup[S.depthSel], me.lineup[k]] = [me.lineup[k], me.lineup[S.depthSel]]; }
     S.depthSel = null;
   } else {
