@@ -1823,6 +1823,16 @@ tr.me .wmeter i { background: var(--good); }
 .board-table tbody tr:hover td:first-child { background: color-mix(in srgb, var(--turf-3) 100%, var(--stick)); }
 .board-table tr.sel td:first-child { background: color-mix(in srgb, var(--red) 18%, var(--stick)); }
 .gtable tr.me td:first-child, .stand tr.me td:first-child { background: color-mix(in srgb, var(--me, var(--red)) 20%, var(--stick)); }
+
+/* Season hub: the tale of the tape under the matchup. */
+.matchup .tb-rec { display: block; font: 600 12px/1.2 var(--f-data); color: var(--muted, #9fb8aa); font-style: normal; letter-spacing: 0.04em; margin-top: 2px; }
+.tape { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; }
+.tape li { display: grid; grid-template-columns: 1fr auto auto auto 1fr; gap: 8px; align-items: center; padding: 5px 10px; border-radius: 8px; background: rgba(0, 0, 0, 0.18); font-size: 13px; }
+.tape li > span:first-child { text-align: right; }
+.tape li i { font: 600 10px/1 var(--f-data); color: var(--muted, #9fb8aa); font-style: normal; text-transform: uppercase; }
+.tape li.up { box-shadow: inset 3px 0 0 var(--green, #4cc38a); }
+.tape li.down { box-shadow: inset -3px 0 0 var(--red); }
+.tape-key { margin: 2px 0 0; color: var(--amber); }
 </style>
 <div id="app"></div>
 <!--APP-->

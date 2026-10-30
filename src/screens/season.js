@@ -31,8 +31,9 @@ export function renderSeason() {
     const opp = L.teams[gm.home === me.id ? gm.away : gm.home];
     main = `<div class="card matchup">
       <p class="eyebrow">Season ${L.season ?? 1} · Week ${L.week + 1} of ${L.schedule.length}</p>
-      <div class="vs">${teamBlock(L.teams[gm.away])}<span class="at">at</span>${teamBlock(L.teams[gm.home])}</div>
+      <div class="vs">${teamBlock(L.teams[gm.away], st)}<span class="at">at</span>${teamBlock(L.teams[gm.home], st)}</div>
       <p class="muted">${esc(opp.name)} coach: ${esc(opp.coachName)}${SCHEMES[me.coach] && me.coach !== 'balanced' ? ` · You: ${esc(SCHEMES[me.coach].name)}` : ''}</p>
+      ${tapeHtml(L, me.id, opp.id)}
       ${weekActions(L, 'Play the game')}
     </div>${reviewHtml(L)}${tradeCardHtml(L)}${deskLinkHtml(L)}${scoutHtml(L, me.id, opp.id)}`;
   } else if (L.phase === 'playoffs') {
@@ -350,8 +351,33 @@ function winMeter(r) {
   const gp = r.w + r.l + r.t, pct = gp ? (r.w + r.t / 2) / gp : 0;
   return `<span class="wmeter" style="--f:${Math.round(pct * 100)}%" title="${gp ? pct.toFixed(3).replace(/^0/, '') : 'No games'}"><i></i></span>`;
 }
+const ordinal = (n) => `${n}${[, 'st', 'nd', 'rd'][(n % 100 >> 3) ^ 1 && n % 10] || 'th'}`;
 function record(r) { return r ? `${r.w}-${r.l}${r.t ? `-${r.t}` : ''}` : '0-0'; }
-function teamBlock(t) { return `<div class="tblock" style="--team:${t.color}">${teamMark(t, 72, 'tb-crest')}<span>${esc(t.name)}</span></div>`; }
+function teamBlock(t, st = null) {
+  const i = st ? st.findIndex((r) => r.id === t.id) : -1, r = st?.[i];
+  const gp = r ? r.w + r.l + r.t : 0;
+  return `<div class="tblock" style="--team:${t.color}">${teamMark(t, 72, 'tb-crest')}<span>${esc(t.name)}</span>${r ? `<em class="tb-rec">${record(r)}${gp ? ` · ${ordinal(i + 1)} of ${st.length}` : ''}</em>` : ''}</div>`;
+}
+
+// Tale of the tape: each side of the ball against the unit it lines up across from, graded
+// against the league (the same grades as the draft), and where the bigger edge is.
+const TAPE = [['passOff', 'coverage', 'Your passing', 'their coverage'], ['runOff', 'runDef', 'Your run game', 'their run defense'], ['coverage', 'passOff', 'Your coverage', 'their passing'], ['passRush', 'passOff', 'Your pass rush', 'their passing']];
+function tapeHtml(L, myId, oppId) {
+  const G = LG.draftGrades(L);
+  const mine = G[myId], theirs = G[oppId];
+  if (!mine || !theirs) return '';
+  // Units are on different scales, so each is compared by where it stands in the league.
+  const z = (k, v) => {
+    const vals = G.map((g) => g[k].value), mean = vals.reduce((x, y) => x + y, 0) / vals.length;
+    return (v - mean) / (Math.sqrt(vals.reduce((x, y) => x + (y - mean) ** 2, 0) / vals.length) || 1);
+  };
+  const rows = TAPE.map(([a, b, la, lb]) => ({ la, lb, ga: mine[a].grade, gb: theirs[b].grade, d: z(a, mine[a].value) - z(b, theirs[b].value) }));
+  const best = rows.reduce((x, y) => (y.d > x.d ? y : x)), worst = rows.reduce((x, y) => (y.d < x.d ? y : x));
+  const row = (r) => `<li class="${r.d > 0.6 ? 'up' : r.d < -0.6 ? 'down' : ''}"><span>${esc(r.la)}</span><span class="grade g-${r.ga[0]}">${r.ga}</span><i aria-hidden="true">vs</i><span class="grade g-${r.gb[0]}">${r.gb}</span><span>${esc(r.lb)}</span></li>`;
+  const key = best.d > 0.6 ? `Key matchup: ${best.la.toLowerCase()} against ${best.lb} is your biggest edge.` : '';
+  const warn = worst.d < -0.6 ? ` Their edge: ${worst.lb.replace('their ', '')} against ${worst.la.toLowerCase()}.` : '';
+  return `<ul class="tape" aria-label="Tale of the tape">${rows.map(row).join('')}</ul>${key || warn ? `<p class="small tape-key">${esc((key + warn).trim())}</p>` : ''}`;
+}
 function resultLine(r, i) {
   const L = S.league, h = L.teams[r.home], a = L.teams[r.away];
   const inner = `${r.playoff ? '<em class="po">Playoffs</em>' : `<em>Wk ${r.week + 1}</em>`}${teamBadge(a)} <b class="${r.winner === a.id ? 'won' : ''}">${r.score[1]}</b> at ${teamBadge(h)} <b class="${r.winner === h.id ? 'won' : ''}">${r.score[0]}</b>`;
