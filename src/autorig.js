@@ -30,7 +30,7 @@ function floatAttr(a, size) {
 }
 
 // The body plan from the vertices (model space): see the top of the file.
-export function analyse(P, flying) {
+export function analyse(P, flying, forceQuad = false) {
   const n = P.length / 3;
   const xs = [], ys = [], zs = [];
   for (let i = 0; i < n; i++) { xs.push(P[i * 3]); ys.push(P[i * 3 + 1]); zs.push(P[i * 3 + 2]); }
@@ -66,7 +66,7 @@ export function analyse(P, flying) {
   if (legs && !zOnly) {
     let zk = 0;
     for (let k = 0; k < legK; k++) if (splitZ(sl[k], D * 0.08)) zk++;
-    quad = zk >= legK * 0.6 && D > H * 0.75;
+    quad = (zk >= legK * 0.6 && D > H * 0.75) || forceQuad;
   }
   if (!legs) legTop = H * 0.3;
   // Torso width: a low percentile of the slice widths above the legs, so arms held out and
@@ -233,7 +233,7 @@ function serpentNames(N) {
   return Array.from({ length: N }, (_, i) => (i === 0 ? 'Head' : i === 1 ? 'Neck' : i < mid ? `Spine${mid - i}` : i === mid ? 'Hips' : `Tail${i - mid}`));
 }
 
-export function autoRig(scene, flying) {
+export function autoRig(scene, flying, forceQuad = false) {
   scene.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(scene.matrixWorld).invert();
   const meshes = [];
@@ -270,7 +270,7 @@ export function autoRig(scene, flying) {
       sample.push(a.x + (b.x - a.x) * u + (c.x - a.x) * v, a.y + (b.y - a.y) * u + (c.y - a.y) * v, a.z + (b.z - a.z) * u + (c.z - a.z) * v);
     }
   });
-  let A = analyse(sample, flying);
+  let A = analyse(sample, flying, forceQuad);
   if (!A.legs) {
     // The eyes (by material name) mark the head end of a long body.
     const e = new THREE.Vector3(); let ne = 0;

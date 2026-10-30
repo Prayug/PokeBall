@@ -1,5 +1,6 @@
 // PokeBall UI entry: picks the screen to render and routes clicks, keys and form input to the
 // screens in screens/ (home, draft room and grades, depth chart, season hub, offseason, game).
+import { startLab } from './animlab.js';
 import { applyGrowth, autoDepthChart } from './ratings.js';
 import { createGame, manualSub, simUntil } from './engine.js';
 import { worldSpots } from './live.js';
@@ -29,7 +30,7 @@ import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, o
 import { renderLobby } from './screens/lobby.js';
 import { bindUI, create as netCreate, join as netJoin, joinFromHash, leave as netLeave, roomLink, send as netSend, setName as netSetName } from './net.js';
 import { openFilm } from './screens/film.js';
-import { csBack, csMove, csOpen } from './screens/callsheet.js';
+import { csBack, csBook, csMove, csOpen } from './screens/callsheet.js';
 import { beginTutorial, endTutorial, restartTutorial, skipExercise } from './screens/tutorial.js';
 
 const app = document.getElementById('app');
@@ -315,6 +316,8 @@ function onClick(e) {
     case 'csscout': S.csScout = !S.csScout; render(); break;
     case 'ps': presnapAct(el.dataset.ps, el.dataset.arg); break;
     case 'csfold': S.csFold = !S.csFold; savePrefs(); render(); break;
+    case 'csbook': csBook(true); break;
+    case 'csmore': S.csMore = !S.csMore; render(); break;
     case 'csall': S.csAll = !S.csAll; S.csFold = false; render(); break;
     case 'csflip': S.runFlip = !S.runFlip; render(); break;
     case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
@@ -376,6 +379,7 @@ function onChange(e) {
   if (t.id === 'cs-tempo') { S.tempo = t.value; t.blur(); render(); }
   if (t.id === 'cs-form') { const v = t.value || null; if (S.game?.poss === userSide()) S.formPick = v; else S.frontPick = v; t.blur(); render(); }
   if (soundInput(t)) return;
+  if (t.id === 'g-hl') { S.highlights = t.checked; savePrefs(); }
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
   if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }
   if (t.id === 'g-pips') { S.pips = t.checked; if (stage) stage.showPips = S.pips; savePrefs(); }
@@ -474,6 +478,8 @@ export function render() {
 }
 
 function start(data) {
+  // Developer only: #animlab opens the animation lab instead of the game.
+  try { if (/[?&#]animlab\b/.test(location.search + location.hash)) { startLab(document.body); return; } } catch { /* no location */ }
   loadPrefs();
   migrateStorage();
   initAudio();

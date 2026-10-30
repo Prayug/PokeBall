@@ -71,7 +71,7 @@ function prepare() {
   const us = userSide();
   Object.assign(g, { phase: 'play', kick: null, pending: null, down: 1, toGo: 10, spot: 35, poss: ex.side === 'off' ? us : 1 - us, quarter: 1, clock: 900, clockRunning: false, final: false });
   L3.preview = null; L3.spots = null; L3.pclock = 40;
-  S.csTab = null; S.csAll = false; S.csFold = false; S.psPick = null;
+  S.csTab = null; S.csBook = false; S.csAll = false; S.csFold = false; S.psPick = null;
   TUT.prepped = TUT.ex; TUT.sub = 0; TUT.ctl0 = null; TUT.holdT = 0; TUT.playNo = g.playNo;
   TUT.callAt = performance.now() + 450;
   render();

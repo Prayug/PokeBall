@@ -106,7 +106,7 @@ function finish(T, gltf) {
   // Bare meshes get a skeleton built for them (autorig.js).
   let bones = 0;
   scene.traverse((o) => { if (o.isBone) bones++; });
-  if (!bones) T.autoRig = autoRig(scene, !!PLAYERS[T.id]?.types.includes('Flying'));
+  if (!bones && FIX[T.id]?.limbs !== false) T.autoRig = autoRig(scene, !!PLAYERS[T.id]?.types.includes('Flying'), FIX[T.id]?.body === 'quad');
   const clips = {};
   if (FIX[T.id]?.clips !== false) for (const c of gltf.animations) clips[c.name] = c;
   for (const k of ['idle', 'walk', 'run']) if (clips[k]) stripRootMotion(clips[k]);
@@ -251,8 +251,130 @@ export function makeModelFigure(T) {
   fig.rig = buildRig(model, T.id);
   attachBlink(fig);
   fig.hipH = fig.rig?.legs ? Math.max(0, (fig.rig.hipY + T.offset.y) * T.scale) : 0;
+  contacts(fig);
   playClip(fig, 'idle', 0);
   return fig;
+}
+
+// ---------- the ground ----------
+// Where each foot meets the turf: the few lowest vertices of the bind pose skinned to each leg
+// (and to each front leg of a four-legged body), and a sparse sample of the whole skin. Found
+// once per species on its first figure (clones keep the mesh order, so the indices carry
+// over). groundFeet then sets the body's height each frame so the lowest foot is where the
+// animation wants it (on the turf, or in the air at the top of a stride, a jump, a hop),
+// instead of guessing from the crouch: a leg swung out or folded up no longer leaves the body
+// floating, and a leg swung through the turf no longer sinks it.
+const FOOT_K = 6;
+// Legs, and a four-legged body's front legs (the top of each arm chain).
+const footRoots = (R) => (R?.bones ?? []).filter((e) => (e.part === 'leg' && e.depth === 0) || (R.quad && e.part === 'arm' && !R.bones.some((o) => o.part === 'arm' && o.bone === e.bone.parent)));
+function contacts(fig) {
+  const T = fig.template, R = fig.rig;
+  const meshes = [];
+  fig.root.traverse((o) => { if (o.isMesh && o.visible) meshes.push(o); });
+  if (!T.contact) {
+    const limb = new Map();
+    // Legs, and a four-legged body's front legs (the top of each arm chain).
+    const roots = footRoots(R);
+    roots.forEach((e, k) => e.bone.traverse((c) => { if (c.isBone && !limb.has(c)) limb.set(c, k); }));
+    fig.root.updateMatrixWorld(true);
+    const best = roots.map(() => []), floor = [];
+    let total = 0;
+    for (const o of meshes) total += o.geometry.attributes.position.count;
+    const stride = Math.max(1, Math.floor(total / 24000)), fstride = Math.max(1, Math.floor(total / 64));
+    meshes.forEach((o, mi) => {
+      const g = o.geometry, pos = g.attributes.position, si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+      for (let i = 0; i < pos.count; i += stride) {
+        if (i % fstride === 0) floor.push([mi, i]);
+        if (!o.isSkinnedMesh || !si || !roots.length) continue;
+        let bi = 0, bw = -1;
+        for (let c = 0; c < 4; c++) { const w = sw.getComponent(i, c); if (w > bw) { bw = w; bi = si.getComponent(i, c); } }
+        const k = limb.get(o.skeleton.bones[bi]);
+        if (k == null) continue;
+        _v.fromBufferAttribute(pos, i); o.applyBoneTransform(i, _v); _v.applyMatrix4(o.matrixWorld);
+        const L = best[k];
+        if (L.length < FOOT_K || _v.y < L[L.length - 1][2]) { L.push([mi, i, _v.y]); L.sort((a, b) => a[2] - b[2]); if (L.length > FOOT_K) L.pop(); }
+      }
+    });
+    // How far a foot sweeps per radian its leg swings (in yards): the hip-to-sole distance
+    // as the leg is actually bent, measured by swinging each hind leg a little.
+    let sweep = 0, ns = 0, fsw = 0, nf = 0;
+    roots.forEach((e, k) => {
+      if (!best[k].length) return;
+      const at = () => { fig.root.updateMatrixWorld(true); let z = 0; for (const [mi, i] of best[k]) { _v.fromBufferAttribute(meshes[mi].geometry.attributes.position, i); meshes[mi].applyBoneTransform(i, _v); _v.applyMatrix4(meshes[mi].matrixWorld); z += _v.z; } return z / best[k].length; };
+      const z0 = at(), q0 = e.bone.quaternion.clone();
+      e.bone.quaternion.premultiply(_q.setFromAxisAngle(e.lat, 0.2));
+      const z1 = at();
+      e.bone.quaternion.copy(q0);
+      if (e.part === 'leg') { sweep += Math.abs(z1 - z0) / 0.2; ns++; } else { fsw += Math.abs(z1 - z0) / 0.2; nf++; }
+    });
+    fig.root.updateMatrixWorld(true);
+    T.contact = { feet: best.flat().map(([mi, i]) => [mi, i]), limbs: best.map((L) => L.length), front: roots.map((e) => e.part === 'arm'), floor, sweep: ns ? sweep / ns : 0, frontGain: ns && nf && fsw > 1e-4 ? Math.max(0.6, Math.min(1.8, (sweep / ns) / (fsw / nf))) : 1 };
+  }
+  const C = T.contact;
+  fig.feet = C.feet.length ? C.feet.map(([mi, i]) => ({ o: meshes[mi], i })).filter((p) => p.o) : null;
+  fig.footLimbs = C.limbs;
+  fig.footFront = C.front;
+  // A four-legged body's front legs swing as far as they need to keep pace with the hind ones.
+  fig.frontGain = C.frontGain ?? 1;
+  fig.legSweep = C.sweep || fig.hipH;
+  fig.floor = C.floor.map(([mi, i]) => ({ o: meshes[mi], i })).filter((p) => p.o);
+}
+
+const _gi = new THREE.Matrix4();
+function footAt(p) {
+  _v.fromBufferAttribute(p.o.geometry.attributes.position, p.i);
+  if (p.o.isSkinnedMesh) p.o.applyBoneTransform(p.i, _v);
+  return _v.applyMatrix4(p.o.matrixWorld).applyMatrix4(_gi);
+}
+function lowest(fig, pts) {
+  let y = Infinity;
+  for (const p of pts) {
+    _v.fromBufferAttribute(p.o.geometry.attributes.position, p.i);
+    if (p.o.isSkinnedMesh) p.o.applyBoneTransform(p.i, _v);
+    _v.applyMatrix4(p.o.matrixWorld).applyMatrix4(_gi);
+    if (_v.y < y) y = _v.y;
+  }
+  return y;
+}
+// air: how high the animation wants the lowest foot (yards); w: how much the feet decide the
+// body's height (0 while it hovers or lies on the turf). The whole skin is then kept above
+// the turf, so nothing, a tusk, a tail or a body lying down, goes through it.
+export function groundFeet(fig, air, w) {
+  if (!fig.floor?.length) return;
+  fig.group.updateMatrixWorld(true);
+  _gi.copy(fig.group.matrixWorld).invert();
+  const P = fig.pivot.position;
+  // Four on the floor: the body is pitched (a few degrees at most) so the hind feet reach the
+  // turf as well as the front ones, instead of hanging in the air behind.
+  if (fig.feet && w > 0.01 && fig.footFront?.some(Boolean) && fig.footFront.some((f) => !f)) {
+    let k0 = 0, fy = Infinity, hy = Infinity, fz = 0, hz = 0, nf = 0, nh = 0;
+    fig.footLimbs.forEach((n, l) => {
+      let y = Infinity, z = 0;
+      for (let k = k0; k < k0 + n; k++) { const v = footAt(fig.feet[k]); if (v.y < y) { y = v.y; z = v.z; } }
+      k0 += n;
+      if (fig.footFront[l]) { fy = Math.min(fy, y); fz += z; nf++; } else { hy = Math.min(hy, y); hz += z; nh++; }
+    });
+    const dz = fz / nf - hz / nh;
+    if (dz > 0.05 && Number.isFinite(fy + hy)) {
+      const want = Math.max(-0.25, Math.min(0.25, -(hy - fy) / dz)) * w;
+      fig.level = (fig.level ?? 0) * 0.6 + want * 0.4;
+      fig.pivot.rotation.x += fig.level;
+      fig.group.updateMatrixWorld(true);
+    }
+  }
+  if (fig.feet && w > 0.01) {
+    const y = lowest(fig, fig.feet);
+    if (Number.isFinite(y)) {
+      const d = (air - y) * w;
+      P.y += d;
+      fig.groundErr = y - air;
+      fig.group.updateMatrixWorld(true);
+    }
+  }
+  let f = lowest(fig, fig.floor);
+  if (fig.feet) f = Math.min(f, lowest(fig, fig.feet));
+  if (f < 0) { P.y -= f; }
+  fig.floorY = f;
 }
 
 // ---------- procedural limbs ----------
@@ -428,7 +550,7 @@ function buildRig(model, id) {
   // no raised blocking arms or overhead reach, the head and chest go down instead.
   // A biped's arms and legs are at the same depth; four legs stand apart front to back.
   const avgZ = (l) => l.reduce((a, e) => a + e.z, 0) / (l.length || 1);
-  const quad = legRoots.length >= 2 && armRoots.length >= 2 && avgY(armRoots) - avgY(legRoots) < top * 0.15 && Math.abs(avgZ(armRoots) - avgZ(legRoots)) > top * 0.12;
+  const quad = legRoots.length >= 2 && armRoots.length >= 2 && FIX[id]?.body === 'quad' || legRoots.length >= 2 && armRoots.length >= 2 && avgY(armRoots) - avgY(legRoots) < top * 0.15 && Math.abs(avgZ(armRoots) - avgZ(legRoots)) > top * 0.12;
   return { bones: out, legs: legRoots.length, arms: armRoots.length, quad, hipY: legRoots.length ? avgY(legRoots) : 0, hands: { R: hands.R?.bone ?? null, L: hands.L?.bone ?? null },
     maxTail: Math.max(1, ...out.filter((e) => e.part === 'tail').map((e) => e.depth + 1)) };
 }
@@ -564,10 +686,28 @@ function gestureAt(t, seed) {
   if (u > len || hash(k + seed * 7) < 0.15) return null;
   return { kind: GESTURES[Math.floor(hash(k * 3.7 + seed) * GESTURES.length)], e: Math.sin((Math.PI * u) / len) ** 2, u: u / len, side: hash(k * 9.1 + seed) < 0.5 ? 1 : -1 };
 }
+// The swing of a leg through one stride (p: gait radians; -1 reaching forward, 1 pushed back).
+// The planted half of the stride sweeps back at an even speed, so the foot can stay put while
+// the body passes over it (a sine would slow it at both ends and drag it along the turf), and
+// the other half carries it forward again; a little of the sine is kept to round the turns.
+// Animator.update sets the gait rate from the leg's length to match.
+export function stride(p) {
+  const u = strideU(p);
+  const tri = u < 1 ? -1 + 2 * u : 1 - 2 * (u - 1) * (u - 1) * (3 - 2 * (u - 1));
+  return -tri * 0.8 + Math.sin(p) * 0.2;
+}
+// How far the knee folds through the stride: up over the swing (from just before the foot
+// leaves the turf until it lands), giving a little under the weight in the middle of the stance.
+export function kneeFold(p) {
+  const u = strideU(p);
+  if (u >= 0.9) return Math.sin(Math.PI * (u - 0.9) / 1.1) * 0.95;
+  return Math.sin(Math.PI * u / 0.9) * 0.12;
+}
+const strideU = (p) => ((((p - Math.PI / 2) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) / Math.PI;
 export function driveLimbs(fig, g) {
   const R = fig.rig;
   if (!R) return;
-  const w = g.weight, A = g.run, ph = g.phase, t = g.t, calm = (g.calm ?? 0) * w, look = g.look ?? 0;
+  const w = g.weight, A = g.run, ph = g.phase, t = g.t, calm = (g.calm ?? 0) * w, look = g.look ?? 0, gal = g.gallop ?? 0;
   const rot = (e, axis, ang) => { if (Math.abs(ang) < 1e-4) return; _q.setFromAxisAngle(axis, ang); e.bone.quaternion.premultiply(_q); };
   const G = calm > 0.05 ? gestureAt(t, g.seed ?? 0) : null, ge = G ? G.e * calm : 0;
   const gk = G?.kind;
@@ -578,16 +718,21 @@ export function driveLimbs(fig, g) {
     switch (e.part) {
       case 'leg': {
         // Left and right in opposite phase; a hind leg pairs with the opposite front leg.
-        const p = ph + (left ? 0 : Math.PI) + (/front|fore/.test(e.n) ? Math.PI : 0);
+        // A gallop brings each pair together: the hind legs land almost as one, then the front.
+        const p = ph + (left ? 0 : Math.PI * (1 - 0.8 * gal)) + (/front|fore/.test(e.n) ? Math.PI : 0);
         // Weight shifting from foot to foot, and a bounce on the knees.
         const shift = Math.max(0, Math.sin(t * 0.8 + (left ? 0 : Math.PI))) * 0.07 * calm + (gk === 'bounce' ? ge * 0.22 : 0);
-        if (e.depth === 0) rot(e, e.lat, -Math.sin(p) * 0.62 * A * w - shift * 0.6);
-        else rot(e, e.lat, Math.max(0, Math.cos(p)) * 0.9 * A * w + shift);
+        // The knee folds to carry the foot through, and gives a little under the weight at
+        // the middle of the stance.
+        if (e.depth === 0) { rot(e, e.lat, -stride(p) * 0.62 * A * w - shift * 0.6); }
+        // (The fold starts just before the swing, so the foot leaves the turf as it begins, and
+        // lasts until the foot is all the way forward, so it lands instead of dragging there.)
+        else rot(e, e.lat, kneeFold(p) * A * w + shift);
         break;
       }
       case 'arm': {
-        const p = ph + (left ? Math.PI : 0);
         const quad = R.quad || (R.legs >= 2 && R.arms >= 2 && e.front);
+        const p = ph + (left ? Math.PI : quad ? Math.PI * 0.8 * gal : 0);
         const mine = G && (G.side === sd);
         if (e.seg === -1) {
           // The collar: a shrug, or a roll of one shoulder.
@@ -595,7 +740,7 @@ export function driveLimbs(fig, g) {
         } else if (e.seg === 0) {
           // Upper arm: swings against the legs; at rest it drifts and breathes out from the side.
           const drift = (Math.sin(t * 1.3 + sd * 1.7) * 0.07 + breath * 0.03) * calm;
-          let a = -Math.sin(p) * (quad ? 0.55 : 0.5) * A * w + drift;
+          let a = -(quad ? stride(p) * 0.62 * (R.quad ? fig.frontGain ?? 1 : 0.9) : Math.sin(p) * 0.5) * A * w + drift;
           if (!quad && mine && gk === 'wave') a -= ge * 0.35;
           if (!quad && gk === 'shrug') a -= ge * 0.12;
           rot(e, e.lat, a);
@@ -603,7 +748,7 @@ export function driveLimbs(fig, g) {
           if (!quad) rot(e, e.fwd, sd * (breath * 0.04 * calm + (mine && gk === 'wave' ? ge * 1.25 : 0)));
         } else if (e.seg === 1) {
           // Forearm: front legs fold on the way through; elbows pump, and rest a little bent.
-          if (quad) rot(e, e.lat, Math.max(0, Math.cos(p)) * 0.6 * A * w);
+          if (quad) rot(e, e.lat, -kneeFold(p) * 0.65 * A * w);
           else rot(e, e.lat, -(0.5 * A + 0.3 * A * Math.max(0, Math.sin(p))) * w - 0.22 * calm - (mine && gk === 'wave' ? ge * (0.7 + 0.35 * Math.sin(t * 11)) : 0) - Math.max(0, Math.sin(t * 1.1 + sd)) * 0.1 * calm);
         } else if (e.seg === 2) {
           // Hands and wrists swing loose.

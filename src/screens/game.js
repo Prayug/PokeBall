@@ -310,6 +310,7 @@ function menuHtml(g, simBtns, coachBox) {
     <h4>Camera <kbd>C</kbd></h4><div class="gm-row seg">${CAMERA_MODES.map(([k, l]) => `<button class="btn tiny ${S.cam === k ? 'on' : ''}" data-act="cam" data-cam="${k}" aria-pressed="${S.cam === k}">${l}</button>`).join('')}</div>
     <h4>Graphics</h4><div class="gm-row seg">${[['auto', 'Auto'], ['high', 'High'], ['low', 'Fast']].map(([k, l]) => `<button class="btn tiny ${S.quality === k ? 'on' : ''}" data-act="quality" data-q="${k}" aria-pressed="${S.quality === k}">${l}</button>`).join('')}</div>
     <label class="check"><input type="checkbox" id="g-wx" ${S.weatherFx ? 'checked' : ''}><span>Weather effects <span class="muted">· ${WEATHER[g.weather].name}</span></span></label>
+    <label class="check"><input type="checkbox" id="g-hl" ${S.highlights ? 'checked' : ''}><span>Instant replay of big plays <span class="muted">· Space skips${reduceMotion ? ', off with reduced motion' : ''}</span></span></label>
     <label class="check"><input type="checkbox" id="g-names" ${S.names ? 'checked' : ''}><span>Name and position over your player</span></label>
     <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}><span>Team markers under every player</span></label>
     <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}><span>Debug view <kbd>\`</kbd><small class="muted">Position labels, formation check, camera calibration</small></span></label>
@@ -524,7 +525,7 @@ export function doCall(call) {
   const off = g.poss === us ? call : aiOffenseCall(g);
   const def = g.poss === us ? aiDefenseCall(g) : call;
   S.coachDown = false; S.takeOver = false;
-  S.csTab = null; S.csPage = 0;
+  S.csTab = null; S.csPage = 0; S.csBook = false;
   const watch = !!S.watch || spectating();
   // A flipped call goes to the other side; the flip is for this call only.
   const flip = g.poss === us && !!S.runFlip;
@@ -557,7 +558,7 @@ function playCall(off, def, tempo, opts) {
 // Two players: the offense's call waits (unseen) for the defense's, then the play lines up
 // with player one on the home team and player two on the away team.
 function twoPlayerCall(g, call) {
-  S.csTab = null; S.csPage = 0;
+  S.csTab = null; S.csPage = 0; S.csBook = false;
   // A kickoff or an extra point leaves the other side nothing to call: it lines up at once.
   const solo = !S.p2Call && ['kickoff', 'xp'].includes(OFF_PLAYS[call]?.kind);
   if (!S.p2Call && !solo) {

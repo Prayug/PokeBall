@@ -236,32 +236,50 @@ export function csTabs(g) {
   }
   const single = tabs.length === 1;
   const cur = single ? tabs[0][0] : tabs.some(([k]) => k === S.csTab) ? S.csTab : null;
-  const level = S.csAll ? 'all' : cur ? 2 : 1;
+  // The first view: three suggested plays and the way into the full playbook (level 0). It is
+  // skipped when there is only one category (a kickoff, a try, a flag) or nothing to suggest.
+  const quick = quickPicks(tabs);
+  const level = S.csAll ? 'all' : cur ? 2 : quick.length >= 2 && !S.csBook ? 0 : 1;
   const calls = cur ? tabs.find(([k]) => k === cur)[2] : [];
   const pages = Math.max(1, Math.ceil(calls.length / CS_PAGE));
   const page = Math.min(Math.max(0, S.csPage ?? 0), pages - 1);
-  const pageCalls = calls.slice(page * CS_PAGE, page * CS_PAGE + CS_PAGE)
+  const pageCalls = (level === 0 ? quick : calls.slice(page * CS_PAGE, page * CS_PAGE + CS_PAGE))
     .map((c, i) => ({ ...c, code: KICK_KEYS[c.call] && onOff ? KICK_KEYS[c.call][0] : CALL_KEYS[i][0], label: KICK_KEYS[c.call] && onOff ? KICK_KEYS[c.call][1] : CALL_KEYS[i][1] }));
   const catKeys = tabs.map(([k], i) => ({ tab: k, code: CALL_KEYS[i]?.[0], label: CALL_KEYS[i]?.[1] }));
   const kicks = onOff ? [...byCall.values()].filter((c) => KICK_KEYS[c.call]).map((c) => ({ ...c, code: KICK_KEYS[c.call][0], label: KICK_KEYS[c.call][1] })) : [];
-  return { onOff, tabs, fit, why, cur, level, single, page, pages, pageCalls, catKeys, kicks };
+  return { onOff, tabs, fit, why, cur, level, single, page, pages, pageCalls, catKeys, kicks, hasQuick: quick.length >= 2 };
+}
+// The suggested plays: the Recommended category's top three, each a different kind of call
+// where it can be (a run, a pass, and the best of the rest), so the three are a real choice.
+const QUICK_N = 3;
+function quickPicks(tabs) {
+  const rec = tabs.find(([k]) => k === 'rec')?.[2] ?? [];
+  const out = [], kinds = new Set();
+  const kindOf = (c) => (OFF_PLAYS[c.call]?.kind ?? defFam(c.call));
+  for (const c of rec) if (out.length < QUICK_N && !kinds.has(kindOf(c))) { out.push(c); kinds.add(kindOf(c)); }
+  for (const c of rec) if (out.length < QUICK_N && !out.includes(c)) out.push(c);
+  return out;
 }
 // The key that does something on the call sheet right now: a category, a card, or a kick.
 export function csKey(g, code) {
   const T = csTabs(g);
   const kick = T.kicks.find((c) => c.code === code);
   if (kick) return { call: kick.call };
+  if (T.level === 0) { const c = T.pageCalls.find((k) => k.code === code); if (c) return { call: c.call }; return code === CALL_KEYS[T.pageCalls.length][0] ? { book: true } : null; }
   if (T.level === 1) { const c = T.catKeys.find((k) => k.code === code); return c ? { tab: c.tab } : null; }
   if (T.level === 2) { const c = T.pageCalls.find((k) => k.code === code); return c ? { call: c.call } : null; }
   return null;
 }
 export function csOpen(tab) { S.csTab = tab; S.csPage = 0; S.csAll = false; S.csFold = false; render(); }
+// The full playbook from the suggested plays (its category tiles), and back.
+export function csBook(on = true) { S.csBook = on; S.csTab = null; S.csPage = 0; S.csAll = false; S.csFold = false; render(); }
 // Back to the categories from a category's cards (Esc, Backspace, B on a gamepad).
 export function csBack() {
   const g = S.game;
   if (!g) return false;
   const T = csTabs(g);
   if (T.level === 'all') { S.csAll = false; render(); return true; }
+  if (T.level === 1 && T.hasQuick) { S.csBook = false; render(); return true; }
   if (T.level !== 2 || T.single) return false;
   S.csTab = null; S.csPage = 0; render();
   return true;
@@ -301,8 +319,18 @@ export function callSheetHtml(g) {
     const form = kind === 'penalty' ? '' : onOff ? formationName(call, formFor(call)) : DEF_FORMATIONS[frontFor(call)]?.short ?? '';
     // A run says which way it goes (flipped with B).
     const way = onOff && kind === 'run' ? runSideName(g, call, formFor(call), !!S.runFlip) : '';
-    const guide = big || S.csAll ? playGuide(call, onOff) : null;
+    const q = big === 'q';
+    const guide = (big && !q) || S.csAll ? playGuide(call, onOff) : null;
     const rtag = reason ?? (call === fit ? 'Fits the down' : '');
+    if (q) {
+      // A suggested play: the diagram, the name, what kind of call it is, and one line on why.
+      const risk = guide ? '' : riskOf(call, onOff);
+      return `<button class="pcard q k-${kind} ${call === fit ? 'fit' : ''}" data-act="call" data-call="${call}" aria-label="${esc(p.name)}${key ? `, key ${key}` : ''}">
+        <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call), onOff && kind === 'run' && !!S.runFlip)}${key ? `<kbd>${key}</kbd>` : ''}</span>
+        <span class="pq-txt"><span class="pname">${esc(p.name)}</span>
+        <span class="pc-top"><em class="pc-kind">${tag}${depth ? ` · ${depth}` : ''}</em>${way ? `<b class="pc-way">${way === 'Left' ? '◀' : '▶'}</b>` : ''}${risk ? `<i class="pq-risk r${risk}" title="${['Safe', 'Balanced', 'Aggressive'][risk - 1]}" aria-label="${['Safe', 'Balanced', 'Aggressive'][risk - 1]}">${'●'.repeat(risk)}${'○'.repeat(3 - risk)}</i>` : ''}</span>
+        <span class="pq-why">${esc(rtag ? rtag.split(': ').pop() : extra)}</span></span></button>`;
+    }
     return `<button class="pcard k-${kind} ${call === fit ? 'fit' : ''} ${big ? 'big' : ''}" data-act="call" data-call="${call}" aria-label="${esc(p.name)}: ${esc(extra)}${key ? `, key ${key}` : ''}">
       <span class="pc-art">${diagram(g, call, side, onOff ? formFor(call) : frontFor(call), onOff && kind === 'run' && !!S.runFlip)}${key ? `<kbd>${key}</kbd>` : ''}${rtag ? `<em class="fittag ${call === fit ? '' : 'alt'}">${esc(rtag.split(':')[0])}</em>` : ''}</span>
       <span class="pname">${esc(p.name)}</span>
@@ -314,6 +342,7 @@ export function callSheetHtml(g) {
   const us = userSide();
   const who = g.phase === 'penalty' ? (twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)}: your call` : 'Your call') : twoPlayer() ? `Player ${us + 1} · ${esc(g.teams[us].abbr)} ${onOff ? 'offense' : 'defense'}${onOff ? '' : ' (the offense has called its play)'}` : onOff ? 'Your ball' : `${esc(g.teams[g.poss].abbr)} ball`;
   const curLabel = cur ? tabs.find(([k]) => k === cur)?.[1] : '';
+  if (level === 0) return quickSheetHtml(g, T, card, who);
   const steps = `<ol class="cs-steps" aria-label="Play call steps"><li class="${level === 1 ? 'on' : 'done'}">${level === 1 || T.single ? 'Category' : `<button class="cs-crumb" data-act="csback">Category</button>`}</li><li class="${level === 2 ? 'on' : ''}">${level === 2 && curLabel ? esc(curLabel) : 'Play'}</li><li>Snap</li></ol>`;
   const head = `<div class="cs-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>
       ${level === 'all' ? '<span class="cs-steps-all">Every play</span>' : steps}
@@ -342,6 +371,40 @@ export function callSheetHtml(g) {
       <div class="cs-cards big">${T.pageCalls.map((c) => card(c, true)).join('')}</div></div>`;
   }
   return `<div class="callsheet lvl-${level}${S.csFold ? ' folded' : ''}${S.csAll ? ' all' : ''}" role="dialog" aria-label="Play call">${head}${clockRow(g, onOff, `<span class="cs-acts"></span>${quickHtml(g, onOff)}`)}${powersRow(g, us)}${body}</div>`;
+}
+// The first view of the call sheet: the down and distance, three suggested plays as cards
+// with their diagrams, and the full playbook a key away. The clock, timeouts and powers sit in
+// one slim line; formation, tempo, flips and scouting open under More. Takes a third of the
+// height the categories did, so the field stays in view while you choose.
+function quickSheetHtml(g, T, card, who) {
+  const { onOff } = T;
+  const us = userSide(), left = g.timeouts?.[us] ?? 0;
+  const bookKey = CALL_KEYS[T.pageCalls.length][1];
+  const clock = g.phase === 'play' ? `<span class="csq-clock ${g.clockRunning ? 'run' : ''}" title="${g.clockRunning ? 'The clock runs until the snap' : 'Clock stopped'}">${g.clockRunning ? `Clock running · ${clockText(g.clock)}` : 'Clock stopped'}</span>
+    <span class="tos" aria-label="${left} timeouts left">${[0, 1, 2].map((i) => `<i class="${i < left ? 'on' : ''}"></i>`).join('')}</span>` : '';
+  const more = S.csMore ? `<div class="csq-more">${clockRow(g, onOff, `<span class="cs-acts"></span>${quickHtml(g, onOff)}`)}<div class="csq-more-row">${edgesChip(g)}${g.phase === 'play' ? formSelect(onOff) : ''}${onOff ? `<button class="btn tiny cs-flip" data-act="csflip" aria-pressed="${!!S.runFlip}" title="Run the runs to the other side">Flip runs <kbd>B</kbd></button>` : ''}</div>${powersRow(g, us)}</div>` : '';
+  return `<div class="callsheet lvl-0${S.csFold ? ' folded' : ''}" role="dialog" aria-label="Play call">
+    <div class="cs-head csq-head"><b>${downText(g)}</b><span class="cs-who">${who}</span>${clock}
+      <span class="csq-sp"></span>
+      <button class="btn tiny" data-act="csmore" aria-expanded="${!!S.csMore}">${S.csMore ? 'Less' : 'More'}</button>
+      <button class="btn tiny cs-all" data-act="csall" aria-pressed="false">All plays <kbd>X</kbd></button>
+      <button class="btn tiny cs-fold" data-act="csfold" aria-expanded="${!S.csFold}">${S.csFold ? 'Show plays' : 'Hide'} <kbd>H</kbd></button></div>
+    ${S.csScout && !S.csFold ? scoutPanel(g) : ''}${more}
+    <div class="csq-row">${T.pageCalls.map((c) => card(c, 'q')).join('')}
+      <button class="csq-book" data-act="csbook" aria-label="Open the full playbook"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h7v14H4zM13 5h7v14h-7z" fill="none" stroke="currentColor" stroke-width="2"/></svg><b>Playbook</b><span>Every ${onOff ? 'run and pass' : 'coverage and blitz'}</span><kbd>${bookKey}</kbd></button></div></div>`;
+}
+
+// How much a call gambles, 1 to 3: deep shots and blitzes are aggressive, quick throws, base
+// runs and zones safe. From the play itself (its depth, or how many it sends).
+function riskOf(call, onOff) {
+  if (onOff) {
+    const p = OFF_PLAYS[call];
+    if (p?.kind === 'pass') return { screen: 1, short: 1, mid: 2, deep: 3 }[p.depth] ?? 2;
+    if (p?.kind === 'run') return /toss|sweep|counter|read_option|trap/.test(call) ? 2 : 1;
+    return 0;
+  }
+  const f = defFam(call);
+  return f === 'blitz' ? 3 : f === 'front' ? 2 : 1;
 }
 // The family a defensive call sits in, for its card color on Recommended and Recent.
 const defFam = (call) => DEF_GROUPS.find(([, , ks]) => ks.includes(call))?.[0] ?? 'front';
@@ -375,6 +438,7 @@ export function csMove(d) {
   const T = csTabs(g);
   if (T.level === 'all') return;
   const i = T.tabs.findIndex(([k]) => k === T.cur);
+  if (T.level === 0) { csBook(true); return; }
   if (T.level === 1) { csOpen(T.tabs[d > 0 ? 0 : T.tabs.length - 1][0]); return; }
   const p = T.page + d;
   if (p >= 0 && p < T.pages) { S.csPage = p; render(); return; }
