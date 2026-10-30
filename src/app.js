@@ -379,6 +379,7 @@ function onChange(e) {
   if (t.id === 'cs-tempo') { S.tempo = t.value; t.blur(); render(); }
   if (t.id === 'cs-form') { const v = t.value || null; if (S.game?.poss === userSide()) S.formPick = v; else S.frontPick = v; t.blur(); render(); }
   if (soundInput(t)) return;
+  if (t.id === 'g-hl') { S.highlights = t.checked; savePrefs(); }
   if (t.id === 'g-wx') { S.weatherFx = t.checked; stage?.setWeatherFx(S.weatherFx); savePrefs(); }
   if (t.id === 'g-names') { S.names = t.checked; if (stage) stage.showNames = S.names; savePrefs(); }
   if (t.id === 'g-pips') { S.pips = t.checked; if (stage) stage.showPips = S.pips; savePrefs(); }

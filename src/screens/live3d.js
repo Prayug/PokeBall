@@ -9,7 +9,7 @@ import { RATES } from '../penalties.js';
 import { Stage, webglAvailable } from '../field3d.js';
 import { CAMERA_MODES } from '../camera3d.js';
 import { render } from '../app.js';
-import { S, netGame, save, savePrefs, timers } from '../state.js';
+import { S, netGame, reduceMotion, save, savePrefs, timers } from '../state.js';
 import { P, esc, sprite } from '../ui.js';
 import { sfx } from '../audio.js';
 import { POWER_OF, powerLine } from '../powers.js';
@@ -338,7 +338,7 @@ function powerFlash(entry, wait = 0) {
 
 // The result hold is over: the players get up and walk to the next spot.
 function endResult() {
-  const lp = L3.lp;
+  const lp = L3.lp, entry = L3.committed;
   L3.lp = null;
   L3.spots = worldSpots(lp);
   L3.preview = null;
@@ -350,7 +350,21 @@ function endResult() {
   setFlow('RESET_FORMATION');
   render();
   if (autoReview()) return;
+  if (highlight(entry, lp)) return;
   autoAdvance();
+}
+
+// A touchdown, a takeaway or a long gain runs again once on its own, at half speed from the
+// broadcast camera, before the next call (Space, Esc, Y or the pad skips it). Not online, where
+// the next play is the server's to start, not with reduced motion, and not when it is turned off.
+function highlight(entry, lp) {
+  const r = lp?.result;
+  if (!S.highlights || reduceMotion || L3.net || tutorialOn() || !entry || !r || lp.kick || r.noPlay || r.fouls?.length) return false;
+  const big = lp.end?.how === 'td' || !!r.turnover || (entry.yards ?? r.yards ?? 0) >= 20;
+  if (!big || !startReplay()) return false;
+  L3.replay.highlight = true;
+  syncOverlays();
+  return true;
 }
 
 // For plays resolved without the live field (punts, field goals): the same result beat.
@@ -1046,7 +1060,7 @@ export function startReplay(review = null) {
 }
 export function stopReplay() {
   if (!L3.replay) return;
-  const review = L3.replay.review;
+  const review = L3.replay.review, hl = L3.replay.highlight;
   L3.replay = null;
   document.body.classList.remove('pb-replay', 'pb-review');
   stage.setCameraMode(S.cam);
@@ -1054,6 +1068,7 @@ export function stopReplay() {
   if (L3.preview?.lp) stage.setPlay(L3.preview.lp); else showPreview();
   stage.snapCamera();
   render();
+  if (hl) autoAdvance();
 }
 
 // ---------- replay review ----------
@@ -1153,7 +1168,7 @@ export function syncOverlays() {
   const set = (id, show) => { const el = document.getElementById(id); if (el && el.hidden === show) el.hidden = !show; };
   set('pause-ov', L3.paused && L3.lp?.phase !== 'dead' && !!S.game && !S.game.final);
   set('replay-badge', !!L3.replay || FILM.open);
-  const badge = document.getElementById('replay-badge'), bt = FILM.open ? 'Film room' : L3.replay?.review ? 'Under review' : 'Replay';
+  const badge = document.getElementById('replay-badge'), bt = FILM.open ? 'Film room' : L3.replay?.review ? 'Under review' : L3.replay?.highlight ? 'Replay · Space skips' : 'Replay';
   if (badge && badge.textContent !== bt) badge.textContent = bt;
   set('replay-btn', replayReady() && L3.flow === 'PLAY_SELECTION');
   set('film-btn', filmReady() && !L3.replay && L3.flow === 'PLAY_SELECTION');

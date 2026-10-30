@@ -310,6 +310,7 @@ function menuHtml(g, simBtns, coachBox) {
     <h4>Camera <kbd>C</kbd></h4><div class="gm-row seg">${CAMERA_MODES.map(([k, l]) => `<button class="btn tiny ${S.cam === k ? 'on' : ''}" data-act="cam" data-cam="${k}" aria-pressed="${S.cam === k}">${l}</button>`).join('')}</div>
     <h4>Graphics</h4><div class="gm-row seg">${[['auto', 'Auto'], ['high', 'High'], ['low', 'Fast']].map(([k, l]) => `<button class="btn tiny ${S.quality === k ? 'on' : ''}" data-act="quality" data-q="${k}" aria-pressed="${S.quality === k}">${l}</button>`).join('')}</div>
     <label class="check"><input type="checkbox" id="g-wx" ${S.weatherFx ? 'checked' : ''}><span>Weather effects <span class="muted">· ${WEATHER[g.weather].name}</span></span></label>
+    <label class="check"><input type="checkbox" id="g-hl" ${S.highlights ? 'checked' : ''}><span>Instant replay of big plays <span class="muted">· Space skips${reduceMotion ? ', off with reduced motion' : ''}</span></span></label>
     <label class="check"><input type="checkbox" id="g-names" ${S.names ? 'checked' : ''}><span>Name and position over your player</span></label>
     <label class="check"><input type="checkbox" id="g-pips" ${S.pips ? 'checked' : ''}><span>Team markers under every player</span></label>
     <label class="check"><input type="checkbox" id="g-debug" ${S.debug ? 'checked' : ''}><span>Debug view <kbd>\`</kbd><small class="muted">Position labels, formation check, camera calibration</small></span></label>

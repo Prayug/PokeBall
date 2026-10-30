@@ -16,7 +16,7 @@ export const S = {
   draft: { search: '', type: '', rate: 'fit', sort: 'fit', sel: null, clock: 60, autoAll: false, needs: false, queueAuto: false },
   depthSel: null, coach: false, gameTab: 'log', busy: false, setup: { name: 'Pallet Starters', abbr: 'PAL', teams: 8, rounds: 24, legendaries: false, typeCap: true, clock: true, scheme: 'balanced' },
   banner: null, subSel: null, resultIdx: null, offCuts: null, importMsg: '',
-  menuOpen: false, cam: 'gameplay', weatherFx: true, quality: 'auto',
+  menuOpen: false, cam: 'gameplay', weatherFx: true, quality: 'auto', highlights: true,
   names: true, debug: false, csTab: null, cal: cameraDefaults(), calShot: 'gameplay',
   sound: true, vol: { master: 0.8, booth: 0.9, crowd: 0.8, fx: 0.8, music: 0.45 }, booth: true, boothVoice: true, captions: true, realCries: true, music: true, soundOpen: false,
   seenHelp: false, snapped: false, helpOpen: false, csFold: false, difficulty: 'pro', slot: 1, confirmDelete: null,
@@ -100,6 +100,7 @@ export function loadPrefs() {
       const cam = p.camV >= 2 ? p.cam : p.cam === 'broadcast' ? 'gameplay' : CAMERA_ALIASES[p.cam] ?? p.cam;
       if (CAMERA_MODES.some(([k]) => k === cam)) S.cam = cam;
       if (p.weatherFx != null) S.weatherFx = !!p.weatherFx;
+      if (p.highlights != null) S.highlights = !!p.highlights;
       if (['auto', 'high', 'low'].includes(p.quality)) S.quality = p.quality;
       // (Names over your player went on by default in prefs version 2; an older saved "off" was the old default.)
       if (p.names != null && p.namesV >= 2) S.names = !!p.names;
@@ -121,7 +122,7 @@ export function loadPrefs() {
   } catch { /* ignore */ }
 }
 export function savePrefs() {
-  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, spectate: !!S.spectate, setup: S.setup, cam: S.cam, camV: 5, weatherFx: S.weatherFx, quality: S.quality, names: S.names, namesV: 2, pips: !!S.pips, sound: S.sound, vol: S.vol, booth: S.booth, boothVoice: S.boothVoice, captions: S.captions, realCries: S.realCries, music: S.music, seenHelp: S.seenHelp, seenTutorial: !!S.seenTutorial, snapped: !!S.snapped, csFold: !!S.csFold, difficulty: S.difficulty, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
+  try { localStorage.setItem(PREF_KEY, JSON.stringify({ coach: S.coach, watch: S.watch, spectate: !!S.spectate, setup: S.setup, cam: S.cam, camV: 5, weatherFx: S.weatherFx, highlights: !!S.highlights, quality: S.quality, names: S.names, namesV: 2, pips: !!S.pips, sound: S.sound, vol: S.vol, booth: S.booth, boothVoice: S.boothVoice, captions: S.captions, realCries: S.realCries, music: S.music, seenHelp: S.seenHelp, seenTutorial: !!S.seenTutorial, snapped: !!S.snapped, csFold: !!S.csFold, difficulty: S.difficulty, slot: S.slot, camShots: S.cal })); } catch { /* ignore */ }
 }
 export function clearTimers() {
   for (const k of Object.keys(timers)) { clearTimeout(timers[k]); clearInterval(timers[k]); timers[k] = null; }
