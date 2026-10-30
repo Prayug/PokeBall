@@ -524,7 +524,7 @@ export function doCall(call) {
   const off = g.poss === us ? call : aiOffenseCall(g);
   const def = g.poss === us ? aiDefenseCall(g) : call;
   S.coachDown = false; S.takeOver = false;
-  S.csTab = null; S.csPage = 0;
+  S.csTab = null; S.csPage = 0; S.csBook = false;
   const watch = !!S.watch || spectating();
   // A flipped call goes to the other side; the flip is for this call only.
   const flip = g.poss === us && !!S.runFlip;
@@ -557,7 +557,7 @@ function playCall(off, def, tempo, opts) {
 // Two players: the offense's call waits (unseen) for the defense's, then the play lines up
 // with player one on the home team and player two on the away team.
 function twoPlayerCall(g, call) {
-  S.csTab = null; S.csPage = 0;
+  S.csTab = null; S.csPage = 0; S.csBook = false;
   // A kickoff or an extra point leaves the other side nothing to call: it lines up at once.
   const solo = !S.p2Call && ['kickoff', 'xp'].includes(OFF_PLAYS[call]?.kind);
   if (!S.p2Call && !solo) {

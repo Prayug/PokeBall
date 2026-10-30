@@ -14,7 +14,7 @@ import { P, esc, sprite } from '../ui.js';
 import { sfx } from '../audio.js';
 import { POWER_OF, powerLine } from '../powers.js';
 import { autoAdvance, doCall, needsUser, playClockOut, setMode, spectating, toggleTakeOver, twoPlayer, userSide, userTimeout } from './game.js';
-import { clockShortcuts, csBack, csKey, csMove, csOpen, csTabs, cycleForm, psOptions, quickCalls } from './callsheet.js';
+import { clockShortcuts, csBack, csBook, csKey, csMove, csOpen, csTabs, cycleForm, psOptions, quickCalls } from './callsheet.js';
 import { SHADES, audibles, cycleShade, flipRun, hotRoute, setDisguise, startMotion } from '../live/presnap.js';
 import { REVIEW, aiWantsChallenge, applyDeltas, boothReviews, canChallenge, decideReview, fieldRuling } from '../review.js';
 import { FILM, addToReel, clearReel, closeFilm, filmFrame, filmKey, filmReady, openFilm, setReelEntry } from './film.js';
@@ -1283,6 +1283,7 @@ export function onKey(e, down) {
       const hit = csKey(g, code);
       if (hit?.call) { e.preventDefault(); doCall(hit.call); return; }
       if (hit?.tab) { e.preventDefault(); csOpen(hit.tab); return; }
+      if (hit?.book) { e.preventDefault(); csBook(true); return; }
       // Esc or Backspace on a category's cards: back to the categories.
       if ((code === 'Backspace' || code === 'Escape') && csBack()) { e.preventDefault(); return; }
       // Enter calls the play that fits the down; R calls your last call again.

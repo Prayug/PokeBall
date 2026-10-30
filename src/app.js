@@ -1,5 +1,6 @@
 // PokeBall UI entry: picks the screen to render and routes clicks, keys and form input to the
 // screens in screens/ (home, draft room and grades, depth chart, season hub, offseason, game).
+import { startLab } from './animlab.js';
 import { applyGrowth, autoDepthChart } from './ratings.js';
 import { createGame, manualSub, simUntil } from './engine.js';
 import { worldSpots } from './live.js';
@@ -29,7 +30,7 @@ import { L3, clearInput, closeHelp, doSnap, ensureStage, fitStage, mountStage, o
 import { renderLobby } from './screens/lobby.js';
 import { bindUI, create as netCreate, join as netJoin, joinFromHash, leave as netLeave, roomLink, send as netSend, setName as netSetName } from './net.js';
 import { openFilm } from './screens/film.js';
-import { csBack, csMove, csOpen } from './screens/callsheet.js';
+import { csBack, csBook, csMove, csOpen } from './screens/callsheet.js';
 import { beginTutorial, endTutorial, restartTutorial, skipExercise } from './screens/tutorial.js';
 
 const app = document.getElementById('app');
@@ -315,6 +316,8 @@ function onClick(e) {
     case 'csscout': S.csScout = !S.csScout; render(); break;
     case 'ps': presnapAct(el.dataset.ps, el.dataset.arg); break;
     case 'csfold': S.csFold = !S.csFold; savePrefs(); render(); break;
+    case 'csbook': csBook(true); break;
+    case 'csmore': S.csMore = !S.csMore; render(); break;
     case 'csall': S.csAll = !S.csAll; S.csFold = false; render(); break;
     case 'csflip': S.runFlip = !S.runFlip; render(); break;
     case 'formpick': { const k = el.dataset.k || null; if (S.game && S.game.poss === userSide()) S.formPick = k; else S.frontPick = k; render(); break; }
@@ -474,6 +477,8 @@ export function render() {
 }
 
 function start(data) {
+  // Developer only: #animlab opens the animation lab instead of the game.
+  try { if (/[?&#]animlab\b/.test(location.search + location.hash)) { startLab(document.body); return; } } catch { /* no location */ }
   loadPrefs();
   migrateStorage();
   initAudio();

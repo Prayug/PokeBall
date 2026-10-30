@@ -1783,6 +1783,37 @@ tr.me .wmeter i { background: var(--good); }
 .gs-unit b { font-size: var(--t-s); }
 .gs-unit .gmeter { width: 100%; margin: 0; }
 .gs-unit em { font-style: normal; font-size: var(--t-xs); opacity: 0.7; }
+
+/* Step 0: three suggested plays in one low strip, the playbook a key away. */
+.callsheet.lvl-0 { width: min(820px, calc(100% - 24px)); max-height: 34%; padding: 8px 10px 10px; }
+.csq-head { gap: 8px; flex-wrap: wrap; }
+.csq-head .csq-sp { flex: 1; }
+.csq-clock { font: 700 var(--t-xs)/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.06em; color: var(--chalk-dim); }
+.csq-clock.run { color: var(--amber); }
+.csq-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(96px, 0.62fr); gap: 8px; margin-top: 6px; }
+.pcard.q { width: auto; display: grid; grid-template-columns: 112px 1fr; gap: 8px; align-items: center; padding: 6px; border-left: 4px solid var(--fam); }
+.pcard.q .pc-art svg { width: 112px; height: auto; display: block; border-radius: 5px; }
+.pcard.q .pq-txt { display: grid; gap: 3px; min-width: 0; }
+.pcard.q .pname { font-size: 17px; padding: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcard.q .pc-top { display: flex; gap: 6px; align-items: center; }
+.pcard.q .pq-why { font-size: var(--t-xs); line-height: 1.25; color: var(--chalk-dim); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pq-risk { font-style: normal; font-size: 9px; letter-spacing: 1px; color: var(--good); }
+.pq-risk.r2 { color: var(--amber); } .pq-risk.r3 { color: var(--bad); }
+.csq-book { position: relative; display: grid; place-content: center; justify-items: center; gap: 3px; text-align: center; cursor: pointer; color: var(--chalk); padding: 8px;
+  border-radius: 8px; border: 1px dashed color-mix(in srgb, var(--chalk) 40%, transparent); background: rgba(238, 242, 230, 0.04); }
+.csq-book:hover, .csq-book:focus-visible { background: rgba(238, 242, 230, 0.12); border-style: solid; outline: none; }
+.csq-book svg { width: 26px; height: 26px; color: var(--amber); }
+.csq-book b { font: 800 var(--t-m)/1 var(--f-data); text-transform: uppercase; letter-spacing: 0.04em; }
+.csq-book span { font-size: var(--t-xs); color: var(--chalk-dim); }
+.csq-book kbd { position: absolute; top: 4px; right: 4px; }
+.csq-more { display: grid; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--glass-line); }
+.csq-more-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.callsheet.lvl-0.folded .csq-row, .callsheet.lvl-0.folded .csq-more { display: none; }
+@media (max-width: 760px) {
+  .csq-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pcard.q { grid-template-columns: 76px 1fr; } .pcard.q .pc-art svg { width: 76px; }
+  .callsheet.lvl-0 { max-height: 44%; }
+}
 </style>
 <div id="app"></div>
 <!--APP-->
